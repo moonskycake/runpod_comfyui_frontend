@@ -316,7 +316,7 @@ const app = Vue.createApp({
         });
 
         // 加载内置模板
-        TemplateManager.setBuiltinTemplates(BuiltinTemplates);
+        TemplateManager.setBuiltinTemplates(window.BuiltinTemplates || []);
         this.builtinTemplates = TemplateManager.builtinTemplates;
         this.loadUserTemplates();
 
@@ -412,6 +412,22 @@ const app = Vue.createApp({
 
             } catch (e) {
                 this.workflowError = 'JSON 格式错误: ' + e.message;
+
+                // 即使 JSON 暂时无效，也尽量从文本中扫描占位符，方便用户先填参数
+                this.placeholders = PlaceholderEngine.scanText(this.workflowJson);
+
+                const defaults = PlaceholderEngine.getDefaults(this.placeholders);
+                this.placeholderValues = { ...defaults, ...this.placeholderValues };
+
+                if (this.selectedTemplate && this.selectedTemplate.defaults) {
+                    Object.keys(this.selectedTemplate.defaults).forEach(key => {
+                        if (this.placeholderValues.hasOwnProperty(key)) {
+                            this.placeholderValues[key] = this.selectedTemplate.defaults[key];
+                        }
+                    });
+                }
+
+                this.validatePlaceholders();
             }
         },
 
@@ -434,7 +450,16 @@ const app = Vue.createApp({
             const template = TemplateManager.get(this.selectedTemplateId);
             if (template) {
                 this.selectedTemplate = template;
-                this.workflowJson = JSON.stringify(template.workflow, null, 2);
+                let workflow = template.workflow;
+                if (typeof workflow === 'string') {
+                    try {
+                        workflow = JSON.parse(workflow);
+                    } catch (e) {
+                        this.errorMessage = '模板 workflow 解析失败: ' + e.message;
+                        return;
+                    }
+                }
+                this.workflowJson = JSON.stringify(workflow, null, 2);
             }
         },
 
@@ -559,7 +584,7 @@ const app = Vue.createApp({
                 p.width === this.placeholderValues.width &&
                 p.height === this.placeholderValues.height
             );
-            this.selectedSizePreset = match ? match.name : '';
+            this.selectedSizePreset = match || '';
         },
 
         swapSize() {

@@ -73,6 +73,7 @@ const TemplateManager = {
     const newTemplate = {
       id,
       name: template.name || '未命名模板',
+      description: template.description || '',
       workflow: template.workflow,
       defaults: template.defaults || {},
       isBuiltin: false,
@@ -133,6 +134,7 @@ const TemplateManager = {
 
     return JSON.stringify({
       name: template.name,
+      description: template.description || '',
       workflow: template.workflow,
       defaults: template.defaults
     }, null, 2);
@@ -151,14 +153,19 @@ const TemplateManager = {
         throw new Error('无效的模板格式：缺少 workflow');
       }
 
-      // 验证 workflow 是否为有效 JSON
+      let workflowObj;
       if (typeof data.workflow === 'string') {
-        JSON.parse(data.workflow);
+        workflowObj = JSON.parse(data.workflow);
+      } else if (typeof data.workflow === 'object' && data.workflow !== null) {
+        workflowObj = data.workflow;
+      } else {
+        throw new Error('无效的 workflow 类型');
       }
 
       return {
         name: data.name || '导入的模板',
-        workflow: typeof data.workflow === 'string' ? data.workflow : JSON.stringify(data.workflow),
+        description: data.description || '',
+        workflow: workflowObj,
         defaults: data.defaults || {}
       };
     } catch (e) {

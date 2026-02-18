@@ -64,7 +64,7 @@ const PlaceholderEngine = {
       default: 7,
       min: 1,
       max: 30,
-      step: 0.5
+      step: 0.1
     },
     denoise: {
       type: 'range',
@@ -144,6 +144,38 @@ const PlaceholderEngine = {
     traverse(workflow);
 
     // 构建结果
+    found.forEach(name => {
+      const config = this.KNOWN_PLACEHOLDERS[name] || {
+        type: 'text',
+        label: name,
+        default: ''
+      };
+      result.push({
+        name,
+        ...config
+      });
+    });
+
+    return result;
+  },
+
+  /**
+   * 直接从文本中扫描占位符（即使 JSON 还没写完/暂时无效也能工作）
+   * @param {string} text - workflow 文本
+   * @returns {Array} 占位符列表
+   */
+  scanText(text) {
+    const found = new Set();
+    const result = [];
+
+    if (!text) return result;
+
+    let match;
+    while ((match = this.PLACEHOLDER_REGEX.exec(text)) !== null) {
+      found.add(match[1].trim());
+    }
+    this.PLACEHOLDER_REGEX.lastIndex = 0;
+
     found.forEach(name => {
       const config = this.KNOWN_PLACEHOLDERS[name] || {
         type: 'text',
