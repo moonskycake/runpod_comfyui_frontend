@@ -1263,11 +1263,25 @@ const app = Vue.createApp({
         previewPrev() {
             if (!this.previewCanPrev) return;
             this.previewIndex -= 1;
+            this.syncSelectionFromPreview();
         },
 
         previewNext() {
             if (!this.previewCanNext) return;
             this.previewIndex += 1;
+            this.syncSelectionFromPreview();
+        },
+
+        syncSelectionFromPreview() {
+            if (this.previewMode === 'gallery') {
+                this.selectedGalleryIndex = this.previewIndex;
+                return;
+            }
+
+            if (this.previewHistoryId) {
+                this.selectedHistoryId = this.previewHistoryId;
+            }
+            this.selectedHistoryImageIndex = this.previewIndex;
         },
 
         onPreviewTouchStart(e) {
