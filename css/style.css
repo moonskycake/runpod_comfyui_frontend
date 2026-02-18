@@ -155,6 +155,60 @@ textarea.form-control {
     line-height: 1.5;
 }
 
+/* Range/Slider 样式 */
+.rp-range {
+    height: 0.4rem;
+}
+
+.rp-range-number {
+    width: 6rem;
+}
+
+input[type="range"].rp-range {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+}
+
+input[type="range"].rp-range:focus {
+    outline: none;
+}
+
+input[type="range"].rp-range::-webkit-slider-runnable-track {
+    height: 0.4rem;
+    border-radius: 999px;
+    background: #343a40;
+    border: 1px solid #495057;
+}
+
+input[type="range"].rp-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 1.1rem;
+    height: 1.1rem;
+    border-radius: 999px;
+    background: #0d6efd;
+    border: 2px solid #212529;
+    box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.25);
+    margin-top: -0.45rem;
+}
+
+input[type="range"].rp-range::-moz-range-track {
+    height: 0.4rem;
+    border-radius: 999px;
+    background: #343a40;
+    border: 1px solid #495057;
+}
+
+input[type="range"].rp-range::-moz-range-thumb {
+    width: 1.1rem;
+    height: 1.1rem;
+    border-radius: 999px;
+    background: #0d6efd;
+    border: 2px solid #212529;
+    box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.25);
+}
+
 /* 全屏模态框图片 */
 .modal-fullscreen .modal-content {
     background-color: rgba(0, 0, 0, 0.95);

@@ -142,6 +142,7 @@ const app = Vue.createApp({
             workflowError: '',
             workflowObj: null,
             showPreview: false,
+            isWorkflowCollapsed: false,
             cursorPosition: 0,
 
             // ========== 占位符相关 ==========
@@ -149,6 +150,7 @@ const app = Vue.createApp({
             placeholderValues: {},
             placeholderErrors: [],
             selectedSizePreset: '',
+            seedRandomEachRun: false,
 
             // ========== 输入图片 ==========
             inputImages: [],
@@ -266,6 +268,10 @@ const app = Vue.createApp({
             return this.placeholders.some(p =>
                 ['seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler', 'batch_size'].includes(p.name)
             );
+        },
+
+        hasSeedPlaceholder() {
+            return this.placeholders.some(p => p.name === 'seed');
         },
 
         hasInputImagePlaceholder() {
@@ -409,6 +415,7 @@ const app = Vue.createApp({
                 }
 
                 this.validatePlaceholders();
+                this.onSizeChange();
 
             } catch (e) {
                 this.workflowError = 'JSON 格式错误: ' + e.message;
@@ -428,12 +435,33 @@ const app = Vue.createApp({
                 }
 
                 this.validatePlaceholders();
+                this.onSizeChange();
             }
         },
 
         validatePlaceholders() {
             const result = PlaceholderEngine.validate(this.placeholders, this.placeholderValues);
             this.placeholderErrors = Object.values(result.errors);
+        },
+
+        // ========== Seed 随机化 ==========
+        generateRandomSeed() {
+            // 0..2147483647
+            try {
+                if (window.crypto && window.crypto.getRandomValues) {
+                    const arr = new Uint32Array(1);
+                    window.crypto.getRandomValues(arr);
+                    return (arr[0] & 0x7fffffff);
+                }
+            } catch (e) {
+                // ignore
+            }
+            return Math.floor(Math.random() * 2147483648);
+        },
+
+        randomizeSeedOnce() {
+            if (!this.hasSeedPlaceholder) return;
+            this.placeholderValues.seed = this.generateRandomSeed();
         },
 
         // ========== 模板管理 ==========
@@ -633,6 +661,13 @@ const app = Vue.createApp({
             this.showPreview = !this.showPreview;
         },
 
+        toggleWorkflowCollapse() {
+            this.isWorkflowCollapsed = !this.isWorkflowCollapsed;
+            if (this.isWorkflowCollapsed) {
+                this.showPreview = false;
+            }
+        },
+
         handleWorkflowUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -685,6 +720,11 @@ const app = Vue.createApp({
             this.currentJobStatus = '';
             this.jobStats = { delayTime: null, executionTime: null };
             this.shouldStopPolling = false;
+
+            // 每次生成前随机 seed
+            if (this.seedRandomEachRun && this.hasSeedPlaceholder) {
+                this.randomizeSeedOnce();
+            }
 
             // 使用替换后的 workflow
             const finalWorkflow = this.finalWorkflow;
