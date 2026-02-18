@@ -19,21 +19,21 @@ const ImageUploadComponent = {
     template: `
         <section class="init-images">
             <div class="scroll-hide border rounded d-flex flex-wrap align-content-center justify-content-center m-2"
-                 style="background-color: rgb(41, 40, 40);position: relative;" 
+                 style="background-color: rgb(41, 40, 40);position: relative;"
                  :style="'height: ' + uploaderHeight + 'px'">
                 <div class="m-2 text-light d-flex justify-content-center align-content-center align-items-center h-100 w-100"
                      @dragenter.prevent @dragover.prevent @dragleave.prevent @drop.prevent="handleDrop"
-                     @click="triggerFileInput()" 
+                     @click="triggerFileInput()"
                      :class="{ 'cursor-pointer': !disabled }"
-                     id="image-upload-container">
-                    <input type="file" id="image-upload-input" ref="fileInput" @change="handleChooseFile"
+                     ref="uploadContainer">
+                    <input type="file" ref="fileInput" @change="handleChooseFile"
                            style="display: none" accept="image/*">
                     <span v-if="!PreviewimageSrc" class="text-light mx-auto text-center">
                         点击或拖拽上传图片
                     </span>
                     <div v-if="PreviewimageSrc"
                          class="position-absolute top-0 start-0 h-100 w-100 d-flex justify-content-center align-content-center">
-                        <img :src="PreviewimageSrc" alt="" 
+                        <img :src="PreviewimageSrc" alt=""
                              class="m-auto h-auto mh-100 mw-100">
                     </div>
                 </div>
@@ -60,7 +60,7 @@ const ImageUploadComponent = {
                 alert('请选择图片文件');
                 return;
             }
-            
+
             const reader = new FileReader();
             reader.onload = (e) => {
                 const image = new Image();
@@ -71,10 +71,10 @@ const ImageUploadComponent = {
                         alert('图片尺寸过大！最大支持 3000x3000');
                         return;
                     }
-                    
+
                     // 提取 base64 部分（去掉 data:image/xxx;base64, 前缀）
                     const base64Data = e.target.result.split(',')[1];
-                    
+
                     this.PreviewimageSrc = e.target.result;
                     this.$emit('update:uploderimagesrc', base64Data);
                 };
@@ -127,14 +127,35 @@ function formatFileSize(bytes) {
 const app = Vue.createApp({
     data() {
         return {
-            // Workflow 相关
+            // ========== 配置状态 ==========
+            isConfigValid: false,
+            connectionStatus: '未配置',
+
+            // ========== 模板相关 ==========
+            selectedTemplateId: '',
+            builtinTemplates: [],
+            userTemplates: [],
+            selectedTemplate: null,
+
+            // ========== Workflow 相关 ==========
             workflowJson: '',
             workflowError: '',
-            
-            // 输入图片
+            workflowObj: null,
+            showPreview: false,
+            cursorPosition: 0,
+
+            // ========== 占位符相关 ==========
+            placeholders: [],
+            placeholderValues: {},
+            placeholderErrors: [],
+            selectedSizePreset: '',
+
+            // ========== 输入图片 ==========
             inputImages: [],
-            
-            // 生成状态
+            inputImageData: '',
+            inputImageSizeWarning: '',
+
+            // ========== 生成状态 ==========
             isGenerating: false,
             currentJobId: '',
             currentJobStatus: '',
@@ -144,11 +165,11 @@ const app = Vue.createApp({
             },
             errorMessage: '',
             shouldStopPolling: false,
-            
-            // 结果
+
+            // ========== 结果 ==========
             results: [],
-            
-            // 设置相关
+
+            // ========== 设置相关 ==========
             showSettings: false,
             showApiKey: false,
             settingsForm: {
@@ -160,47 +181,129 @@ const app = Vue.createApp({
             },
             testingConnection: false,
             connectionTestResult: null,
-            connectionStatus: '未配置',
-            isConfigValid: false,
-            
-            // 图片预览
+
+            // ========== 模板保存 ==========
+            showSaveTemplate: false,
+            newTemplateName: '',
+            newTemplateDescription: '',
+
+            // ========== 模板导入 ==========
+            showImportTemplate: false,
+            importTemplateJson: '',
+            importError: '',
+
+            // ========== 图片预览 ==========
             showImageModal: false,
             selectedImageIndex: -1
         };
     },
-    
+
     computed: {
         isConfigured() {
             return this.isConfigValid;
         },
-        
+
         canGenerate() {
-            return this.isConfigured && 
-                   this.workflowJson.trim() && 
-                   !this.workflowError;
+            if (!this.isConfigured) return false;
+            if (!this.workflowJson.trim()) return false;
+            if (this.workflowError) return false;
+            if (this.placeholderErrors.length > 0) return false;
+            return true;
         },
-        
+
+        canSaveTemplate() {
+            return this.workflowJson.trim() && !this.workflowError;
+        },
+
+        canUpdateTemplate() {
+            return this.selectedTemplate && !this.selectedTemplate.isBuiltin && this.canSaveTemplate;
+        },
+
+        canDeleteTemplate() {
+            return this.selectedTemplate && !this.selectedTemplate.isBuiltin;
+        },
+
         canTestConnection() {
             return this.settingsForm.endpointId && this.settingsForm.apiKey;
         },
-        
+
         runModeLabel() {
             return this.settingsForm.runMode === 'run' ? '异步' : '同步';
         },
-        
+
         connectionStatusClass() {
             if (!this.isConfigured) return 'bg-secondary';
             return 'bg-success';
         },
-        
+
+        jobStatusClass() {
+            const status = this.currentJobStatus;
+            if (status === 'COMPLETED') return 'bg-success';
+            if (status === 'FAILED' || status === 'TIMED_OUT') return 'bg-danger';
+            if (status === 'CANCELLED') return 'bg-warning';
+            return 'bg-info';
+        },
+
         selectedImage() {
             if (this.selectedImageIndex < 0 || this.selectedImageIndex >= this.results.length) {
                 return null;
             }
             return this.results[this.selectedImageIndex];
+        },
+
+        // 占位符分组
+        hasSizePlaceholders() {
+            return this.placeholders.some(p => p.name === 'width' || p.name === 'height');
+        },
+
+        hasPromptPlaceholders() {
+            return this.placeholders.some(p =>
+                p.name === 'prompt' || p.name === 'negative_prompt'
+            );
+        },
+
+        hasSamplingPlaceholders() {
+            return this.placeholders.some(p =>
+                ['seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler', 'batch_size'].includes(p.name)
+            );
+        },
+
+        hasInputImagePlaceholder() {
+            return this.placeholders.some(p => p.name === 'input_image');
+        },
+
+        promptPlaceholders() {
+            return this.placeholders.filter(p =>
+                p.name === 'prompt' || p.name === 'negative_prompt'
+            );
+        },
+
+        samplingPlaceholders() {
+            return this.placeholders.filter(p =>
+                ['seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler', 'batch_size'].includes(p.name)
+            );
+        },
+
+        otherPlaceholders() {
+            const known = ['width', 'height', 'prompt', 'negative_prompt', 'seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler', 'batch_size', 'input_image'];
+            return this.placeholders.filter(p => !known.includes(p.name));
+        },
+
+        sizePresets() {
+            return PlaceholderEngine.getSizePresets();
+        },
+
+        placeholderChips() {
+            return ['{{width}}', '{{height}}', '{{prompt}}', '{{negative_prompt}}', '{{seed}}', '{{steps}}', '{{cfg}}', '{{input_image}}'];
+        },
+
+        // 最终替换后的 workflow
+        finalWorkflow() {
+            if (!this.workflowObj) return null;
+            return PlaceholderEngine.replace(this.workflowObj, this.placeholderValues);
         }
     },
-    
+
     mounted() {
         // 加载设置
         const settings = Settings.get();
@@ -212,16 +315,21 @@ const app = Vue.createApp({
             apiKey: settings.apiKey
         });
 
-        // 先设置配置有效性，再更新连接状态
+        // 加载内置模板
+        TemplateManager.setBuiltinTemplates(BuiltinTemplates);
+        this.builtinTemplates = TemplateManager.builtinTemplates;
+        this.loadUserTemplates();
+
+        // 更新配置状态
         this.isConfigValid = Settings.isConfigured();
         this.updateConnectionStatus();
     },
-    
+
     watch: {
         workflowJson(val) {
-            this.validateWorkflowJson();
+            this.parseWorkflow();
         },
-        
+
         inputImages: {
             deep: true,
             handler(images) {
@@ -238,75 +346,298 @@ const app = Vue.createApp({
                     }
                 });
             }
+        },
+
+        // 监听占位符值变化，验证
+        placeholderValues: {
+            deep: true,
+            handler() {
+                this.validatePlaceholders();
+            }
+        },
+
+        // 监听输入图片大小
+        inputImageData(val) {
+            if (val) {
+                const size = getBase64Size(val);
+                if (size > 9 * 1024 * 1024) { // 9MB 警告
+                    this.inputImageSizeWarning = `图片较大 (${formatFileSize(size)})，可能导致请求超过 10MB 限制`;
+                } else {
+                    this.inputImageSizeWarning = '';
+                }
+            } else {
+                this.inputImageSizeWarning = '';
+            }
         }
     },
-    
+
     methods: {
-        // 验证 Workflow JSON
-        validateWorkflowJson() {
+        // ========== Workflow 解析 ==========
+        parseWorkflow() {
             this.workflowError = '';
+            this.workflowObj = null;
+            this.placeholders = [];
+
             if (!this.workflowJson.trim()) return;
-            
+
             try {
-                const parsed = JSON.parse(this.workflowJson);
-                
-                // 检查是否是有效的 ComfyUI workflow
-                if (typeof parsed !== 'object' || parsed === null) {
-                    this.workflowError = 'JSON 必须是对象类型';
-                    return;
-                }
-                
+                let parsed = JSON.parse(this.workflowJson);
+
                 // 如果外层有 input.workflow，提取内部
                 if (parsed.input && parsed.input.workflow) {
-                    // 这是完整的 RunPod 请求格式，提取 workflow
-                    this.workflowJson = JSON.stringify(parsed.input.workflow, null, 2);
+                    parsed = parsed.input.workflow;
+                    this.workflowJson = JSON.stringify(parsed, null, 2);
+                    return; // 重新触发 watch
                 }
-                
+
+                this.workflowObj = parsed;
+
+                // 扫描占位符
+                this.placeholders = PlaceholderEngine.scan(parsed);
+
+                // 设置默认值
+                const defaults = PlaceholderEngine.getDefaults(this.placeholders);
+                this.placeholderValues = { ...defaults, ...this.placeholderValues };
+
+                // 如果有模板且模板有 defaults，优先使用模板的
+                if (this.selectedTemplate && this.selectedTemplate.defaults) {
+                    Object.keys(this.selectedTemplate.defaults).forEach(key => {
+                        if (this.placeholderValues.hasOwnProperty(key)) {
+                            this.placeholderValues[key] = this.selectedTemplate.defaults[key];
+                        }
+                    });
+                }
+
+                this.validatePlaceholders();
+
             } catch (e) {
                 this.workflowError = 'JSON 格式错误: ' + e.message;
             }
         },
-        
-        // 上传 Workflow JSON
+
+        validatePlaceholders() {
+            const result = PlaceholderEngine.validate(this.placeholders, this.placeholderValues);
+            this.placeholderErrors = Object.values(result.errors);
+        },
+
+        // ========== 模板管理 ==========
+        loadUserTemplates() {
+            this.userTemplates = TemplateManager.loadUserTemplates();
+        },
+
+        onTemplateSelect() {
+            if (!this.selectedTemplateId) {
+                this.selectedTemplate = null;
+                return;
+            }
+
+            const template = TemplateManager.get(this.selectedTemplateId);
+            if (template) {
+                this.selectedTemplate = template;
+                this.workflowJson = JSON.stringify(template.workflow, null, 2);
+            }
+        },
+
+        saveAsTemplate() {
+            this.newTemplateName = '';
+            this.newTemplateDescription = '';
+            this.showSaveTemplate = true;
+        },
+
+        confirmSaveTemplate() {
+            if (!this.newTemplateName.trim()) {
+                alert('请输入模板名称');
+                return;
+            }
+
+            try {
+                const id = TemplateManager.add({
+                    name: this.newTemplateName,
+                    description: this.newTemplateDescription,
+                    workflow: this.workflowObj,
+                    defaults: { ...this.placeholderValues }
+                });
+
+                this.loadUserTemplates();
+                this.selectedTemplateId = id;
+                this.selectedTemplate = TemplateManager.get(id);
+                this.showSaveTemplate = false;
+
+                alert('模板保存成功！');
+            } catch (e) {
+                alert('保存失败: ' + e.message);
+            }
+        },
+
+        updateTemplate() {
+            if (!this.selectedTemplate || this.selectedTemplate.isBuiltin) return;
+
+            if (confirm('确定要更新模板吗？')) {
+                TemplateManager.update(this.selectedTemplate.id, {
+                    workflow: this.workflowObj,
+                    defaults: { ...this.placeholderValues }
+                });
+                alert('模板已更新！');
+            }
+        },
+
+        deleteTemplate() {
+            if (!this.selectedTemplate || this.selectedTemplate.isBuiltin) return;
+
+            if (confirm('确定要删除此模板吗？')) {
+                TemplateManager.delete(this.selectedTemplate.id);
+                this.loadUserTemplates();
+                this.selectedTemplateId = '';
+                this.selectedTemplate = null;
+            }
+        },
+
+        exportTemplate() {
+            if (!this.selectedTemplate) return;
+
+            const json = TemplateManager.exportTemplate(this.selectedTemplate.id);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${this.selectedTemplate.name}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        },
+
+        importTemplateDialog() {
+            this.importTemplateJson = '';
+            this.importError = '';
+            this.showImportTemplate = true;
+        },
+
+        handleImportFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                this.importTemplateJson = e.target.result;
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        },
+
+        confirmImportTemplate() {
+            if (!this.importTemplateJson.trim()) {
+                this.importError = '请输入模板 JSON';
+                return;
+            }
+
+            try {
+                const imported = TemplateManager.importTemplate(this.importTemplateJson);
+                const id = TemplateManager.add(imported);
+
+                this.loadUserTemplates();
+                this.selectedTemplateId = id;
+                this.onTemplateSelect();
+                this.showImportTemplate = false;
+
+                alert('模板导入成功！');
+            } catch (e) {
+                this.importError = e.message;
+            }
+        },
+
+        // ========== 尺寸预设 ==========
+        applySizePreset() {
+            if (!this.selectedSizePreset) return;
+            this.placeholderValues.width = this.selectedSizePreset.width;
+            this.placeholderValues.height = this.selectedSizePreset.height;
+        },
+
+        onSizeChange() {
+            // 检查是否匹配某个预设
+            const match = this.sizePresets.find(p =>
+                p.width === this.placeholderValues.width &&
+                p.height === this.placeholderValues.height
+            );
+            this.selectedSizePreset = match ? match.name : '';
+        },
+
+        swapSize() {
+            const temp = this.placeholderValues.width;
+            this.placeholderValues.width = this.placeholderValues.height;
+            this.placeholderValues.height = temp;
+            this.onSizeChange();
+        },
+
+        resetToDefaults() {
+            if (this.selectedTemplate && this.selectedTemplate.defaults) {
+                this.placeholderValues = { ...this.selectedTemplate.defaults };
+            } else {
+                const defaults = PlaceholderEngine.getDefaults(this.placeholders);
+                this.placeholderValues = { ...defaults };
+            }
+            this.onSizeChange();
+        },
+
+        // ========== Workflow 编辑 ==========
+        saveCursorPosition() {
+            const textarea = this.$refs.workflowTextarea;
+            if (textarea) {
+                this.cursorPosition = textarea.selectionStart;
+            }
+        },
+
+        insertPlaceholder(placeholder) {
+            const textarea = this.$refs.workflowTextarea;
+            if (!textarea) return;
+
+            const before = this.workflowJson.substring(0, this.cursorPosition);
+            const after = this.workflowJson.substring(this.cursorPosition);
+            this.workflowJson = before + placeholder + after;
+
+            this.$nextTick(() => {
+                const newPos = this.cursorPosition + placeholder.length;
+                textarea.selectionStart = newPos;
+                textarea.selectionEnd = newPos;
+                textarea.focus();
+                this.cursorPosition = newPos;
+            });
+        },
+
+        togglePreview() {
+            this.showPreview = !this.showPreview;
+        },
+
         handleWorkflowUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
-            
+
             const reader = new FileReader();
             reader.onload = (e) => {
                 try {
-                    // 先尝试解析验证
-                    JSON.parse(e.target.result);
+                    JSON.parse(e.target.result); // 验证 JSON
                     this.workflowJson = e.target.result;
+                    this.selectedTemplateId = '';
+                    this.selectedTemplate = null;
                 } catch (err) {
-                    alert('JSON 文件格式错误: ' + err.message);
+                    this.errorMessage = 'JSON 文件格式错误: ' + err.message;
                 }
             };
             reader.readAsText(file);
-            
-            // 清空文件输入，允许重复选择同一文件
             event.target.value = '';
         },
-        
-        // 加载示例 workflow
-        async loadExampleWorkflow() {
-            try {
-                const response = await fetch('./ComfyUI_temp_pabtb_00004_ (2).json');
-                if (!response.ok) throw new Error('加载失败');
-                const data = await response.json();
-                this.workflowJson = JSON.stringify(data, null, 2);
-            } catch (err) {
-                alert('加载示例失败: ' + err.message);
-            }
-        },
-        
-        // 清空 workflow
+
         clearWorkflow() {
             this.workflowJson = '';
-            this.workflowError = '';
+            this.workflowObj = null;
+            this.placeholders = [];
+            this.placeholderValues = {};
+            this.selectedTemplateId = '';
+            this.selectedTemplate = null;
+            this.errorMessage = '';
         },
-        
-        // 添加输入图片
+
+        // ========== 输入图片 ==========
         addInputImage() {
             this.inputImages.push({
                 name: `input_${this.inputImages.length + 1}.png`,
@@ -314,51 +645,57 @@ const app = Vue.createApp({
                 sizeWarning: ''
             });
         },
-        
-        // 移除输入图片
+
         removeInputImage(index) {
             this.inputImages.splice(index, 1);
         },
-        
-        // 生成
+
+        // ========== 生成 ==========
         async generate() {
             if (!this.canGenerate) return;
-            
+
             this.isGenerating = true;
             this.errorMessage = '';
             this.currentJobId = '';
             this.currentJobStatus = '';
             this.jobStats = { delayTime: null, executionTime: null };
             this.shouldStopPolling = false;
-            
-            // 构建 payload
-            let workflow;
-            try {
-                workflow = JSON.parse(this.workflowJson);
-            } catch (err) {
-                this.errorMessage = 'Workflow JSON 解析失败';
-                this.isGenerating = false;
-                return;
-            }
-            
+
+            // 使用替换后的 workflow
+            const finalWorkflow = this.finalWorkflow;
+
             const payload = {
                 input: {
-                    workflow: workflow
+                    workflow: finalWorkflow
                 }
             };
-            
+
             // 添加输入图片
-            const validImages = this.inputImages
+            const validImages = [];
+
+            // 1. 处理占位符形式的输入图片
+            if (this.hasInputImagePlaceholder && this.inputImageData) {
+                const imageName = this.placeholderValues.input_image || 'input.png';
+                validImages.push({
+                    name: imageName,
+                    image: this.inputImageData
+                });
+            }
+
+            // 2. 处理列表形式的输入图片（向后兼容）
+            this.inputImages
                 .filter(img => img.image && img.name)
-                .map(img => ({
-                    name: img.name,
-                    image: img.image
-                }));
-            
+                .forEach(img => {
+                    validImages.push({
+                        name: img.name,
+                        image: img.image
+                    });
+                });
+
             if (validImages.length > 0) {
                 payload.input.images = validImages;
             }
-            
+
             // 估算请求大小
             const payloadSize = JSON.stringify(payload).length;
             if (payloadSize > 10 * 1024 * 1024) {
@@ -366,34 +703,31 @@ const app = Vue.createApp({
                 this.isGenerating = false;
                 return;
             }
-            
+
             const settings = Settings.get();
-            
+
             try {
                 if (settings.runMode === 'runsync') {
-                    // 同步模式
-                    this.currentJobStatus = '执行中...';
-                    const result = await RunpodClient.runSync(payload, 300000); // 最多等待 5 分钟
-                    
+                    this.currentJobStatus = 'IN_PROGRESS';
+                    const result = await RunpodClient.runSync(payload, 300000);
+
                     if (result.success) {
                         this.handleCompletedResult(result.data);
                     } else {
                         this.errorMessage = result.message;
                     }
                 } else {
-                    // 异步模式
                     const runResult = await RunpodClient.run(payload);
-                    
+
                     if (!runResult.success) {
                         this.errorMessage = runResult.message;
                         this.isGenerating = false;
                         return;
                     }
-                    
+
                     this.currentJobId = runResult.data.id;
                     this.currentJobStatus = runResult.data.status;
-                    
-                    // 轮询状态
+
                     const pollResult = await RunpodClient.poll(this.currentJobId, {
                         intervalMs: settings.pollIntervalMs,
                         onStatus: (data) => {
@@ -404,12 +738,14 @@ const app = Vue.createApp({
                         },
                         shouldStop: () => this.shouldStopPolling
                     });
-                    
+
                     if (pollResult.success) {
                         this.handleCompletedResult(pollResult.data);
                     } else if (pollResult.cancelled) {
+                        this.currentJobStatus = 'CANCELLED';
                         this.errorMessage = '已取消';
                     } else {
+                        this.currentJobStatus = pollResult.status || 'FAILED';
                         this.errorMessage = pollResult.message;
                     }
                 }
@@ -417,26 +753,24 @@ const app = Vue.createApp({
                 this.errorMessage = '生成失败: ' + err.message;
             } finally {
                 this.isGenerating = false;
-                this.currentJobStatus = '';
             }
         },
-        
-        // 处理完成的结果
+
         handleCompletedResult(data) {
+            this.currentJobStatus = 'COMPLETED';
+
             if (data.executionTime !== undefined) {
                 this.jobStats.executionTime = data.executionTime;
             }
-            
+
             const output = data.output;
             if (!output) {
                 this.errorMessage = '返回结果中没有 output 字段';
                 return;
             }
-            
-            // 解析图片结果
+
             const images = [];
-            
-            // v5.0.0+ 格式: output.images[]
+
             if (output.images && Array.isArray(output.images)) {
                 output.images.forEach(img => {
                     if (img.type === 'base64') {
@@ -454,53 +788,44 @@ const app = Vue.createApp({
                         });
                     }
                 });
+            } else if (output.message && output.message.includes('data:image')) {
+                images.push({
+                    filename: 'image.png',
+                    type: 'base64',
+                    data: output.message.split(',')[1],
+                    imageUrl: output.message
+                });
             }
-            // 旧格式兼容: output.message
-            else if (output.message) {
-                // 尝试解析 base64 图片
-                if (output.message.includes('data:image')) {
-                    images.push({
-                        filename: 'image.png',
-                        type: 'base64',
-                        data: output.message.split(',')[1],
-                        imageUrl: output.message
-                    });
-                } else {
-                    this.errorMessage = '检测到旧格式输出，但无法解析图片';
-                }
-            }
-            
+
             if (images.length === 0) {
                 this.errorMessage = '未在返回结果中找到图片';
-                console.log('完整输出:', output);
                 return;
             }
-            
+
             this.results = images;
         },
-        
-        // 取消生成
+
         async cancelGeneration() {
             this.shouldStopPolling = true;
-            
+
             if (this.currentJobId) {
                 try {
                     await RunpodClient.cancel(this.currentJobId);
                 } catch (err) {
-                    console.error('取消失败:', err);
+                    // 忽略取消错误
                 }
             }
-            
+
             this.isGenerating = false;
-            this.currentJobStatus = '已取消';
+            this.currentJobStatus = 'CANCELLED';
         },
-        
-        // 设置相关
+
+        // ========== 设置 ==========
         closeSettings() {
             this.showSettings = false;
             this.connectionTestResult = null;
         },
-        
+
         saveSettings() {
             Settings.save({
                 endpointId: this.settingsForm.endpointId,
@@ -509,13 +834,12 @@ const app = Vue.createApp({
                 runMode: this.settingsForm.runMode,
                 pollIntervalMs: this.settingsForm.pollIntervalMs
             });
-            
-            // 更新客户端配置
+
             RunpodClient.setConfig({
                 endpointId: this.settingsForm.endpointId,
                 apiKey: this.settingsForm.apiKey
             });
-            
+
             this.isConfigValid = Settings.isConfigured();
             this.updateConnectionStatus();
             this.closeSettings();
@@ -524,48 +848,41 @@ const app = Vue.createApp({
         extractEndpointId() {
             this.settingsForm.endpointId = Settings.extractEndpointId(this.settingsForm.endpointId);
         },
-        
+
         async testConnection() {
             if (!this.canTestConnection) return;
-            
+
             this.testingConnection = true;
             this.connectionTestResult = null;
-            
-            // 临时设置配置进行测试
+
             RunpodClient.setConfig({
                 endpointId: this.settingsForm.endpointId,
                 apiKey: this.settingsForm.apiKey
             });
-            
+
             const result = await RunpodClient.health();
             this.connectionTestResult = result;
-            
             this.testingConnection = false;
         },
-        
+
         updateConnectionStatus() {
-            if (!this.isConfigured) {
-                this.connectionStatus = '未配置';
-            } else {
-                this.connectionStatus = '已配置';
-            }
+            this.connectionStatus = this.isConfigured ? '已配置' : '未配置';
         },
-        
-        // 图片预览
+
+        // ========== 图片预览 ==========
         openImageModal(index) {
             this.selectedImageIndex = index;
             this.showImageModal = true;
         },
-        
+
         closeImageModal() {
             this.showImageModal = false;
             this.selectedImageIndex = -1;
         },
-        
-        // 下载图片
+
         downloadImage(result) {
             if (result.type !== 'base64') return;
-            
+
             const link = document.createElement('a');
             link.href = result.imageUrl;
             link.download = result.filename;

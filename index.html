@@ -35,83 +35,294 @@
                 请先点击右上角"设置"配置 Endpoint ID 和 API Key
             </div>
 
-            <!-- Workflow 输入区 -->
+            <!-- 模板选择区 -->
             <section class="mb-4">
                 <div class="card bg-dark border-secondary">
                     <div class="card-header border-secondary">
                         <h5 class="mb-0 text-light">
-                            <i class="bi bi-file-code"></i> Workflow JSON
+                            <i class="bi bi-journal-bookmark"></i> 模板
                         </h5>
                     </div>
                     <div class="card-body">
-                        <!-- 上传 JSON -->
+                        <div class="row g-3">
+                            <!-- 模板下拉 -->
+                            <div class="col-md-6">
+                                <label class="form-label text-light">选择模板</label>
+                                <select class="form-select bg-dark text-light border-secondary"
+                                        v-model="selectedTemplateId"
+                                        @change="onTemplateSelect"
+                                        :disabled="isGenerating">
+                                    <option value="">-- 自定义 Workflow --</option>
+                                    <optgroup label="内置模板">
+                                        <option v-for="t in builtinTemplates" :key="t.id" :value="t.id">
+                                            {{ t.name }}
+                                        </option>
+                                    </optgroup>
+                                    <optgroup label="我的模板" v-if="userTemplates.length > 0">
+                                        <option v-for="t in userTemplates" :key="t.id" :value="t.id">
+                                            {{ t.name }}
+                                        </option>
+                                    </optgroup>
+                                </select>
+                            </div>
+
+                            <!-- 模板操作按钮 -->
+                            <div class="col-md-6 d-flex align-items-end">
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <button class="btn btn-outline-primary btn-sm" @click="saveAsTemplate"
+                                            :disabled="!canSaveTemplate">
+                                        <i class="bi bi-save"></i> 保存为模板
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm" @click="updateTemplate"
+                                            :disabled="!canUpdateTemplate">
+                                        <i class="bi bi-arrow-repeat"></i> 更新
+                                    </button>
+                                    <button class="btn btn-outline-danger btn-sm" @click="deleteTemplate"
+                                            :disabled="!canDeleteTemplate">
+                                        <i class="bi bi-trash"></i> 删除
+                                    </button>
+                                    <button class="btn btn-outline-info btn-sm" @click="exportTemplate"
+                                            :disabled="!selectedTemplate">
+                                        <i class="bi bi-download"></i> 导出
+                                    </button>
+                                    <button class="btn btn-outline-warning btn-sm" @click="importTemplateDialog">
+                                        <i class="bi bi-upload"></i> 导入
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 模板描述 -->
+                        <div v-if="selectedTemplate && selectedTemplate.description" class="mt-3">
+                            <p class="text-muted mb-0">
+                                <i class="bi bi-info-circle"></i> {{ selectedTemplate.description }}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 参数面板 -->
+            <section class="mb-4" v-if="placeholders.length > 0">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0 text-light">
+                            <i class="bi bi-sliders"></i> 参数
+                        </h5>
+                        <button class="btn btn-outline-secondary btn-sm" @click="resetToDefaults">
+                            <i class="bi bi-arrow-counterclockwise"></i> 重置
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <!-- 图片尺寸（如果检测到 width/height）-->
+                        <div v-if="hasSizePlaceholders" class="mb-4 p-3 border rounded">
+                            <h6 class="text-light mb-3">
+                                <i class="bi bi-aspect-ratio"></i> 图片尺寸
+                            </h6>
+                            <div class="row g-3">
+                                <!-- 预设 -->
+                                <div class="col-12">
+                                    <label class="form-label text-light small">预设</label>
+                                    <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                            v-model="selectedSizePreset"
+                                            @change="applySizePreset">
+                                        <option value="">-- 自定义 --</option>
+                                        <option v-for="preset in sizePresets" :key="preset.name" :value="preset">
+                                            {{ preset.name }} ({{ preset.width }}x{{ preset.height }})
+                                        </option>
+                                    </select>
+                                </div>
+
+                                <!-- 宽高 -->
+                                <div class="col-md-5">
+                                    <label class="form-label text-light small">宽度</label>
+                                    <input type="number" class="form-control bg-dark text-light border-secondary"
+                                           v-model.number="placeholderValues.width"
+                                           @change="onSizeChange"
+                                           min="64" max="2048" step="64">
+                                </div>
+                                <div class="col-md-2 d-flex align-items-end justify-content-center">
+                                    <button class="btn btn-outline-secondary btn-sm" @click="swapSize">
+                                        <i class="bi bi-arrow-left-right"></i>
+                                    </button>
+                                </div>
+                                <div class="col-md-5">
+                                    <label class="form-label text-light small">高度</label>
+                                    <input type="number" class="form-control bg-dark text-light border-secondary"
+                                           v-model.number="placeholderValues.height"
+                                           @change="onSizeChange"
+                                           min="64" max="2048" step="64">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 提示词 -->
+                        <div v-if="hasPromptPlaceholders" class="mb-4">
+                            <div v-for="p in promptPlaceholders" :key="p.name" class="mb-3">
+                                <label class="form-label text-light">{{ p.label }}</label>
+                                <textarea class="form-control bg-dark text-light border-secondary"
+                                          v-model="placeholderValues[p.name]"
+                                          :rows="p.rows || 3"
+                                          :placeholder="p.default"></textarea>
+                            </div>
+                        </div>
+
+                        <!-- 采样参数 -->
+                        <div v-if="hasSamplingPlaceholders" class="mb-4">
+                            <h6 class="text-light mb-3">
+                                <i class="bi bi-speedometer2"></i> 采样参数
+                            </h6>
+                            <div class="row g-3">
+                                <template v-for="p in samplingPlaceholders" :key="p.name">
+                                    <!-- 下拉选择 -->
+                                    <div v-if="p.type === 'select'" class="col-md-6">
+                                        <label class="form-label text-light">{{ p.label }}</label>
+                                        <select class="form-select bg-dark text-light border-secondary"
+                                                v-model="placeholderValues[p.name]">
+                                            <option v-for="opt in p.options" :key="opt" :value="opt">
+                                                {{ opt }}
+                                            </option>
+                                        </select>
+                                    </div>
+
+                                    <!-- 滑块 -->
+                                    <div v-else-if="p.type === 'range'" class="col-md-6">
+                                        <label class="form-label text-light d-flex justify-content-between">
+                                            <span>{{ p.label }}</span>
+                                            <span class="text-muted">{{ placeholderValues[p.name] }}</span>
+                                        </label>
+                                        <input type="range" class="form-range"
+                                               v-model.number="placeholderValues[p.name]"
+                                               :min="p.min" :max="p.max" :step="p.step">
+                                    </div>
+
+                                    <!-- 数字输入 -->
+                                    <div v-else class="col-md-6">
+                                        <label class="form-label text-light">{{ p.label }}</label>
+                                        <input type="number" class="form-control bg-dark text-light border-secondary"
+                                               v-model.number="placeholderValues[p.name]"
+                                               :min="p.min" :max="p.max" :step="p.step">
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- 输入图片（占位符形式）-->
+                        <div v-if="hasInputImagePlaceholder" class="mb-4 p-3 border rounded">
+                            <h6 class="text-light mb-3">
+                                <i class="bi bi-image"></i> 输入图片
+                                <small class="text-muted ms-2">文件名: {{ placeholderValues.input_image }}</small>
+                            </h6>
+                            <div class="mb-2">
+                                <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2"
+                                       v-model="placeholderValues.input_image"
+                                       placeholder="输入图片文件名（如 input.png）">
+                            </div>
+                            <image-upload uploader-height="200"
+                                          v-model:uploderimagesrc="inputImageData"
+                                          :disabled="isGenerating"></image-upload>
+                            <div v-if="inputImageSizeWarning" class="alert alert-warning mt-2 mb-0 py-1">
+                                <i class="bi bi-exclamation-triangle"></i> {{ inputImageSizeWarning }}
+                            </div>
+                        </div>
+
+                        <!-- 其他占位符（未分类的） -->
+                        <div v-if="otherPlaceholders.length > 0" class="mb-4">
+                            <h6 class="text-light mb-3">
+                                <i class="bi bi-three-dots"></i> 其他参数
+                            </h6>
+                            <div class="row g-3">
+                                <template v-for="p in otherPlaceholders" :key="p.name">
+                                    <div class="col-md-6">
+                                        <label class="form-label text-light">{{ p.label }}</label>
+                                        <input type="text" class="form-control bg-dark text-light border-secondary"
+                                               v-model="placeholderValues[p.name]"
+                                               :placeholder="p.default">
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- 占位符错误 -->
+                        <div v-if="placeholderErrors.length > 0" class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <ul class="mb-0">
+                                <li v-for="error in placeholderErrors" :key="error">{{ error }}</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Workflow 编辑区 -->
+            <section class="mb-4">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0 text-light">
+                            <i class="bi bi-file-code"></i> Workflow JSON
+                        </h5>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-info btn-sm" @click="togglePreview"
+                                    :disabled="!workflowJson">
+                                <i class="bi bi-eye"></i> {{ showPreview ? '隐藏' : '预览' }}
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- 快速插入占位符 -->
                         <div class="mb-3">
-                            <input type="file" ref="workflowFile" @change="handleWorkflowUpload" 
+                            <label class="form-label text-light small">快速插入占位符</label>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <button v-for="chip in placeholderChips" :key="chip"
+                                        class="btn btn-outline-secondary btn-sm"
+                                        @click="insertPlaceholder(chip)"
+                                        :disabled="isGenerating">
+                                    {{ chip }}
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 上传/操作按钮 -->
+                        <div class="mb-3">
+                            <input type="file" ref="workflowFile" @change="handleWorkflowUpload"
                                    accept=".json" class="d-none">
                             <div class="d-flex gap-2">
-                                <button class="btn btn-outline-secondary" @click="$refs.workflowFile.click()"
+                                <button class="btn btn-outline-secondary btn-sm" @click="$refs.workflowFile.click()"
                                         :disabled="isGenerating">
                                     <i class="bi bi-upload"></i> 上传 JSON
                                 </button>
-                                <button class="btn btn-outline-secondary" @click="loadExampleWorkflow"
-                                        :disabled="isGenerating">
-                                    <i class="bi bi-file-earmark-text"></i> 加载示例
-                                </button>
-                                <button class="btn btn-outline-secondary" @click="clearWorkflow"
+                                <button class="btn btn-outline-secondary btn-sm" @click="clearWorkflow"
                                         :disabled="isGenerating || !workflowJson">
                                     <i class="bi bi-trash"></i> 清空
                                 </button>
                             </div>
                         </div>
 
-                        <!-- JSON 文本框 -->
+                        <!-- JSON 编辑区 -->
                         <div class="form-group">
-                            <textarea class="form-control bg-dark text-light border-secondary" 
-                                      rows="12" 
+                            <textarea class="form-control bg-dark text-light border-secondary font-monospace"
+                                      style="font-size: 0.85rem;"
+                                      rows="12"
                                       v-model="workflowJson"
-                                      placeholder="在此粘贴 ComfyUI Workflow JSON（使用 Workflow > Export API 导出）"
-                                      :disabled="isGenerating"></textarea>
+                                      @focus="saveCursorPosition"
+                                      @keyup="saveCursorPosition"
+                                      @click="saveCursorPosition"
+                                      placeholder="在此粘贴 ComfyUI Workflow JSON（使用 Workflow > Export API 导出）&#10;支持占位符如 {{width}}, {{height}}, {{prompt}} 等"
+                                      :disabled="isGenerating"
+                                      ref="workflowTextarea"></textarea>
                         </div>
 
                         <!-- JSON 错误提示 -->
                         <div v-if="workflowError" class="alert alert-danger mt-2 mb-0">
                             <i class="bi bi-exclamation-circle"></i> {{ workflowError }}
                         </div>
-                    </div>
-                </div>
-            </section>
 
-            <!-- 输入图片区 -->
-            <section class="mb-4">
-                <div class="card bg-dark border-secondary">
-                    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0 text-light">
-                            <i class="bi bi-images"></i> 输入图片（可选）
-                        </h5>
-                        <button class="btn btn-outline-secondary btn-sm" @click="addInputImage"
-                                :disabled="isGenerating">
-                            <i class="bi bi-plus"></i> 添加图片
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <div v-if="inputImages.length === 0" class="text-muted text-center py-3">
-                            没有输入图片
-                        </div>
-                        <div v-for="(img, index) in inputImages" :key="index" class="mb-3 border rounded p-2">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary w-50" 
-                                       v-model="img.name" placeholder="图片名称（如 input_1.png）">
-                                <button class="btn btn-outline-danger btn-sm" @click="removeInputImage(index)"
-                                        :disabled="isGenerating">
-                                    <i class="bi bi-trash"></i> 移除
-                                </button>
-                            </div>
-                            <image-upload uploader-height="200" 
-                                          v-model:uploderimagesrc="img.image"
-                                          :disabled="isGenerating"></image-upload>
-                            <div v-if="img.sizeWarning" class="alert alert-warning mt-2 mb-0 py-1">
-                                <i class="bi bi-exclamation-triangle"></i> {{ img.sizeWarning }}
-                            </div>
+                        <!-- 替换后预览 -->
+                        <div v-if="showPreview && finalWorkflow" class="mt-3">
+                            <label class="form-label text-light small">
+                                <i class="bi bi-eye"></i> 替换后的 Workflow（只读）
+                            </label>
+                            <pre class="bg-dark text-light border rounded p-3" style="max-height: 300px; overflow: auto; font-size: 0.75rem;">{{ JSON.stringify(finalWorkflow, null, 2) }}</pre>
                         </div>
                     </div>
                 </div>
@@ -119,9 +330,9 @@
 
             <!-- 执行控制 -->
             <section class="mb-4">
-                <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
                     <div>
-                        <button class="btn btn-primary btn-lg me-2" 
+                        <button class="btn btn-primary btn-lg me-2"
                                 @click="generate"
                                 :disabled="!canGenerate || isGenerating">
                             <span v-if="!isGenerating">
@@ -131,7 +342,7 @@
                                 <span class="spinner-border spinner-border-sm"></span> 生成中...
                             </span>
                         </button>
-                        <button class="btn btn-secondary btn-lg" 
+                        <button class="btn btn-secondary btn-lg"
                                 @click="cancelGeneration"
                                 :disabled="!isGenerating">
                             <i class="bi bi-x-circle"></i> 取消
@@ -139,15 +350,17 @@
                     </div>
                     <div class="text-light">
                         <span class="badge bg-secondary me-2">{{ runModeLabel }}</span>
-                        <span v-if="currentJobId" class="badge bg-info">{{ currentJobStatus }}</span>
+                        <span v-if="currentJobStatus" class="badge" :class="jobStatusClass">
+                            {{ currentJobStatus }}
+                        </span>
                     </div>
                 </div>
 
                 <!-- 状态显示 -->
-                <div v-if="currentJobId" class="mt-3">
+                <div v-if="currentJobId || jobStats.executionTime" class="mt-3">
                     <div class="card bg-dark border-secondary">
                         <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
+                            <div v-if="currentJobId" class="d-flex justify-content-between align-items-center mb-2">
                                 <span class="text-light small">任务 ID:</span>
                                 <code class="text-info small">{{ currentJobId }}</code>
                             </div>
@@ -184,13 +397,13 @@
                                 <div class="card bg-dark border-secondary h-100">
                                     <div class="position-relative">
                                         <!-- base64 图片 -->
-                                        <img v-if="result.type === 'base64'" 
-                                             :src="result.imageUrl" 
+                                        <img v-if="result.type === 'base64'"
+                                             :src="result.imageUrl"
                                              class="card-img-top"
                                              style="object-fit: contain; max-height: 400px; cursor: pointer;"
                                              @click="openImageModal(index)">
                                         <!-- S3 链接 -->
-                                        <div v-else-if="result.type === 's3_url'" 
+                                        <div v-else-if="result.type === 's3_url'"
                                              class="d-flex align-items-center justify-content-center"
                                              style="height: 200px;">
                                             <a :href="result.data" target="_blank" class="btn btn-outline-light">
@@ -202,14 +415,14 @@
                                              style="height: 200px;">
                                             未知格式: {{ result.type }}
                                         </div>
-                                        
+
                                         <!-- 文件名标签 -->
                                         <span class="badge bg-dark position-absolute top-0 start-0 m-2">
                                             {{ result.filename }}
                                         </span>
                                     </div>
                                     <div class="card-footer border-secondary">
-                                        <button class="btn btn-outline-light btn-sm w-100" 
+                                        <button class="btn btn-outline-light btn-sm w-100"
                                                 @click="downloadImage(result)"
                                                 :disabled="result.type !== 'base64'">
                                             <i class="bi bi-download"></i> 下载
@@ -250,7 +463,7 @@
                         <div class="mb-3">
                             <label class="form-label text-light">API Key</label>
                             <div class="input-group">
-                                <input :type="showApiKey ? 'text' : 'password'" 
+                                <input :type="showApiKey ? 'text' : 'password'"
                                        class="form-control bg-dark text-light border-secondary"
                                        v-model="settingsForm.apiKey"
                                        placeholder="输入 RunPod API Key">
@@ -272,7 +485,7 @@
                         <!-- 运行模式 -->
                         <div class="mb-3">
                             <label class="form-label text-light">运行模式</label>
-                            <select class="form-select bg-dark text-light border-secondary" 
+                            <select class="form-select bg-dark text-light border-secondary"
                                     v-model="settingsForm.runMode">
                                 <option value="run">异步 (/run) - 推荐</option>
                                 <option value="runsync">同步 (/runsync) - 最多等待 5 分钟</option>
@@ -292,7 +505,7 @@
 
                         <!-- 测试连接 -->
                         <div class="mb-3">
-                            <button class="btn btn-outline-info" @click="testConnection" 
+                            <button class="btn btn-outline-info" @click="testConnection"
                                     :disabled="!canTestConnection || testingConnection">
                                 <span v-if="testingConnection">
                                     <span class="spinner-border spinner-border-sm"></span> 测试中...
@@ -304,14 +517,13 @@
                         </div>
 
                         <!-- 测试结果 -->
-                        <div v-if="connectionTestResult" class="alert" 
+                        <div v-if="connectionTestResult" class="alert"
                              :class="connectionTestResult.success ? 'alert-success' : 'alert-danger'">
                             <strong>{{ connectionTestResult.success ? '连接成功' : '连接失败' }}</strong>
                             <div v-if="connectionTestResult.message" class="mt-1">
                                 {{ connectionTestResult.message }}
                             </div>
-                            <pre v-if="connectionTestResult.data" class="mt-2 mb-0 small">
-{{ JSON.stringify(connectionTestResult.data, null, 2) }}</pre>
+                            <pre v-if="connectionTestResult.data" class="mt-2 mb-0 small">{{ JSON.stringify(connectionTestResult.data, null, 2) }}</pre>
                         </div>
                     </div>
                     <div class="modal-footer border-secondary">
@@ -325,12 +537,87 @@
         <!-- 设置模态框背景遮罩 -->
         <div v-if="showSettings" class="modal-backdrop fade show"></div>
 
+        <!-- 保存模板模态框 -->
+        <div class="modal fade" :class="{ show: showSaveTemplate }" :style="{ display: showSaveTemplate ? 'block' : 'none' }">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content bg-dark border-secondary">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title text-light">
+                            <i class="bi bi-save"></i> 保存模板
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" @click="showSaveTemplate = false"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label text-light">模板名称</label>
+                            <input type="text" class="form-control bg-dark text-light border-secondary"
+                                   v-model="newTemplateName"
+                                   placeholder="输入模板名称">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">描述（可选）</label>
+                            <textarea class="form-control bg-dark text-light border-secondary"
+                                      v-model="newTemplateDescription"
+                                      rows="2"
+                                      placeholder="描述这个模板的用途"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary">
+                        <button type="button" class="btn btn-secondary" @click="showSaveTemplate = false">取消</button>
+                        <button type="button" class="btn btn-primary" @click="confirmSaveTemplate">保存</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 保存模板遮罩 -->
+        <div v-if="showSaveTemplate" class="modal-backdrop fade show"></div>
+
+        <!-- 导入模板模态框 -->
+        <div class="modal fade" :class="{ show: showImportTemplate }" :style="{ display: showImportTemplate ? 'block' : 'none' }">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content bg-dark border-secondary">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title text-light">
+                            <i class="bi bi-upload"></i> 导入模板
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" @click="showImportTemplate = false"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="file" ref="importFile" @change="handleImportFile" accept=".json" class="d-none">
+                        <div class="mb-3">
+                            <button class="btn btn-outline-secondary" @click="$refs.importFile.click()">
+                                <i class="bi bi-file-earmark-arrow-up"></i> 从文件导入
+                            </button>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">或粘贴 JSON</label>
+                            <textarea class="form-control bg-dark text-light border-secondary font-monospace"
+                                      v-model="importTemplateJson"
+                                      rows="10"
+                                      placeholder="粘贴模板 JSON..."></textarea>
+                        </div>
+                        <div v-if="importError" class="alert alert-danger">
+                            <i class="bi bi-exclamation-circle"></i> {{ importError }}
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary">
+                        <button type="button" class="btn btn-secondary" @click="showImportTemplate = false">取消</button>
+                        <button type="button" class="btn btn-primary" @click="confirmImportTemplate">导入</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导入模板遮罩 -->
+        <div v-if="showImportTemplate" class="modal-backdrop fade show"></div>
+
         <!-- 图片预览模态框 -->
         <div class="modal fade" :class="{ show: showImageModal }" :style="{ display: showImageModal ? 'block' : 'none' }">
             <div class="modal-dialog modal-fullscreen">
                 <div class="modal-content bg-dark">
                     <div class="modal-body d-flex align-items-center justify-content-center p-0">
-                        <img v-if="selectedImage" :src="selectedImage.imageUrl" 
+                        <img v-if="selectedImage" :src="selectedImage.imageUrl"
                              class="img-fluid" style="max-height: 95vh; max-width: 95vw;">
                         <button class="btn btn-light position-absolute top-0 end-0 m-3" @click="closeImageModal">
                             <i class="bi bi-x-lg"></i>
@@ -347,6 +634,9 @@
     <script src="./js/axios.min.js"></script>
     <script src="./js/settings.js"></script>
     <script src="./js/runpod-client.js"></script>
+    <script src="./js/templates.js"></script>
+    <script src="./js/placeholders.js"></script>
+    <script src="./js/builtin-templates.js"></script>
     <script src="./bootstrap/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
     <script src="./js/main.js"></script>
 </body>
