@@ -253,3 +253,112 @@ input[type="range"].rp-range::-moz-range-thumb {
     border-color: #0f5132;
     color: #75b798;
 }
+
+/* 结果区 Tabs */
+.rp-tabs {
+    border-bottom: 1px solid #495057;
+}
+
+.rp-tabs .nav-link {
+    color: #adb5bd;
+    border: 1px solid transparent;
+}
+
+.rp-tabs .nav-link:hover {
+    color: #e9ecef;
+}
+
+.rp-tabs .nav-link.active {
+    color: #fff;
+    background-color: #1a1d20;
+    border-color: #495057 #495057 #1a1d20;
+}
+
+/* 请求历史列表 */
+.rp-list .list-group-item {
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.rp-list .list-group-item:hover {
+    background-color: #1a1d20;
+}
+
+.rp-list .list-group-item.active {
+    background-color: rgba(13, 110, 253, 0.15);
+    border-color: rgba(13, 110, 253, 0.45);
+    color: #fff;
+}
+
+/* 缩略图 */
+.rp-thumb {
+    cursor: pointer;
+    background-color: #111;
+}
+
+.rp-thumb:hover {
+    outline: 2px solid rgba(13, 110, 253, 0.35);
+    outline-offset: 0;
+}
+
+/* Details */
+.rp-details-block summary {
+    cursor: pointer;
+    user-select: none;
+}
+
+.rp-details-block pre {
+    max-height: 260px;
+    overflow: auto;
+}
+
+/* 预览模态框 */
+.rp-preview-top {
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0));
+}
+
+.rp-preview-img {
+    max-height: 95vh;
+    max-width: 95vw;
+    object-fit: contain;
+}
+
+.rp-preview-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3rem;
+    height: 3rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(6px);
+}
+
+.rp-preview-nav:disabled {
+    opacity: 0.25;
+}
+
+.rp-preview-prev {
+    left: 1rem;
+}
+
+.rp-preview-next {
+    right: 1rem;
+}
+
+@media (max-width: 768px) {
+    .rp-preview-nav {
+        width: 2.75rem;
+        height: 2.75rem;
+    }
+    .rp-preview-prev {
+        left: 0.75rem;
+    }
+    .rp-preview-next {
+        right: 0.75rem;
+    }
+}

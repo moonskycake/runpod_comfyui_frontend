@@ -102,7 +102,7 @@
             </section>
 
             <!-- 参数面板 -->
-            <section class="mb-4" v-if="placeholders.length > 0">
+            <section class="mb-4" v-if="placeholders.length > 0" id="params-panel">
                 <div class="card bg-dark border-secondary">
                     <div class="card-header border-secondary d-flex justify-content-between align-items-center">
                         <h5 class="mb-0 text-light">
@@ -418,52 +418,173 @@
                 </div>
             </section>
 
-            <!-- 结果展示 -->
-            <section v-if="results.length > 0" class="mb-4">
+            <!-- 结果展示（请求历史 / 图库） -->
+            <section v-if="hasResultsSection" class="mb-4">
                 <div class="card bg-dark border-secondary">
-                    <div class="card-header border-secondary">
+                    <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <h5 class="mb-0 text-light">
                             <i class="bi bi-image"></i> 生成结果
-                            <span class="badge bg-secondary ms-2">{{ results.length }}</span>
                         </h5>
+                        <div class="text-muted small">
+                            {{ requestHistory.length }} 次请求 · {{ galleryImages.length }} 张图片
+                        </div>
                     </div>
                     <div class="card-body">
-                        <div class="row g-3">
-                            <div v-for="(result, index) in results" :key="index" class="col-md-6 col-lg-4">
-                                <div class="card bg-dark border-secondary h-100">
-                                    <div class="position-relative">
-                                        <!-- base64 图片 -->
-                                        <img v-if="result.type === 'base64'"
-                                             :src="result.imageUrl"
-                                             class="card-img-top"
-                                             style="object-fit: contain; max-height: 400px; cursor: pointer;"
-                                             @click="openImageModal(index)">
-                                        <!-- S3 链接 -->
-                                        <div v-else-if="result.type === 's3_url'"
-                                             class="d-flex align-items-center justify-content-center"
-                                             style="height: 200px;">
-                                            <a :href="result.data" target="_blank" class="btn btn-outline-light">
-                                                <i class="bi bi-box-arrow-up-right"></i> 查看图片
-                                            </a>
-                                        </div>
-                                        <!-- 其他类型 -->
-                                        <div v-else class="d-flex align-items-center justify-content-center text-muted"
-                                             style="height: 200px;">
-                                            未知格式: {{ result.type }}
-                                        </div>
+                        <ul class="nav nav-tabs rp-tabs mb-3">
+                            <li class="nav-item">
+                                <a class="nav-link" href="#" :class="{ active: resultsTab === 'history' }" @click.prevent="resultsTab = 'history'">
+                                    请求历史
+                                    <span class="badge bg-secondary ms-1">{{ requestHistory.length }}</span>
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" href="#" :class="{ active: resultsTab === 'gallery' }" @click.prevent="resultsTab = 'gallery'">
+                                    图库
+                                    <span class="badge bg-secondary ms-1">{{ galleryImages.length }}</span>
+                                </a>
+                            </li>
+                        </ul>
 
-                                        <!-- 文件名标签 -->
-                                        <span class="badge bg-dark position-absolute top-0 start-0 m-2">
-                                            {{ result.filename }}
-                                        </span>
-                                    </div>
-                                    <div class="card-footer border-secondary">
-                                        <button class="btn btn-outline-light btn-sm w-100"
-                                                @click="downloadImage(result)"
-                                                :disabled="result.type !== 'base64'">
-                                            <i class="bi bi-download"></i> 下载
+                        <!-- 请求历史 -->
+                        <div v-show="resultsTab === 'history'">
+                            <div class="row g-3">
+                                <div class="col-lg-4">
+                                    <div class="list-group rp-list">
+                                        <button v-for="item in requestHistory" :key="item.id"
+                                                type="button"
+                                                class="list-group-item list-group-item-action bg-dark text-light border-secondary"
+                                                :class="{ active: selectedHistoryRecord && selectedHistoryRecord.id === item.id }"
+                                                @click="selectHistoryRecord(item.id)">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div class="fw-semibold text-truncate" style="max-width: 70%;">
+                                                    {{ item.templateName || '自定义 Workflow' }}
+                                                </div>
+                                                <span class="badge" :class="getStatusBadgeClass(item.status)">{{ item.status }}</span>
+                                            </div>
+                                            <div class="small text-muted mt-1">
+                                                {{ formatDateTime(item.createdAt) }}
+                                                <span v-if="item.images && item.images.length"> · {{ item.images.length }} 张</span>
+                                            </div>
+                                            <div class="small text-muted" v-if="item.jobId">Job: {{ item.jobId }}</div>
+                                            <div class="small text-danger" v-if="item.errorMessage">{{ item.errorMessage }}</div>
                                         </button>
                                     </div>
+                                </div>
+
+                                <div class="col-lg-8">
+                                    <div v-if="selectedHistoryRecord" class="card bg-dark border-secondary">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                                                <div>
+                                                    <div class="h6 text-light mb-1">{{ selectedHistoryRecord.templateName || '自定义 Workflow' }}</div>
+                                                    <div class="small text-muted">
+                                                        {{ formatDateTime(selectedHistoryRecord.createdAt) }}
+                                                        <span v-if="selectedHistoryRecord.jobId"> · Job: {{ selectedHistoryRecord.jobId }}</span>
+                                                    </div>
+                                                </div>
+                                                <div class="d-flex gap-2 flex-wrap">
+                                                    <button class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(selectedHistoryRecord)">
+                                                        <i class="bi bi-arrow-up"></i> 应用参数
+                                                    </button>
+                                                    <button class="btn btn-outline-light btn-sm" @click="resultsTab = 'gallery'">
+                                                        <i class="bi bi-grid-3x3-gap"></i> 打开图库
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div class="row g-2 mt-3">
+                                                <div class="col-md-6">
+                                                    <div class="small text-muted">状态</div>
+                                                    <span class="badge" :class="getStatusBadgeClass(selectedHistoryRecord.status)">{{ selectedHistoryRecord.status }}</span>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="small text-muted">执行时间</div>
+                                                    <div class="text-light small">{{ selectedHistoryRecord.executionTime !== null ? selectedHistoryRecord.executionTime + 'ms' : '-' }}</div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="small text-muted">排队时间</div>
+                                                    <div class="text-light small">{{ selectedHistoryRecord.delayTime !== null ? selectedHistoryRecord.delayTime + 'ms' : '-' }}</div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="small text-muted">图片数</div>
+                                                    <div class="text-light small">{{ (selectedHistoryRecord.images || []).length }}</div>
+                                                </div>
+                                            </div>
+
+                                            <div class="mt-3" v-if="selectedHistoryRecord.placeholderValues">
+                                                <details class="rp-details-block">
+                                                    <summary class="text-light small">生成参数（点击展开）</summary>
+                                                    <pre class="mt-2 mb-0 small">{{ JSON.stringify(selectedHistoryRecord.placeholderValues, null, 2) }}</pre>
+                                                </details>
+                                            </div>
+
+                                            <div v-if="selectedHistoryImages.length > 0" class="mt-3">
+                                                <div class="row g-2">
+                                                    <div v-for="(img, idx) in selectedHistoryImages" :key="img.id" class="col-6 col-md-4">
+                                                        <div class="rp-thumb border border-secondary rounded overflow-hidden position-relative" @click="openPreviewFromHistory(selectedHistoryRecord.id, idx)">
+                                                            <img :src="img.imageUrl" class="w-100" style="height: 160px; object-fit: cover;">
+                                                            <span class="badge bg-dark position-absolute top-0 start-0 m-2">{{ idx + 1 }}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div v-else class="text-muted text-center py-5">暂无历史记录</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 图库 -->
+                        <div v-show="resultsTab === 'gallery'">
+                            <div class="row g-3">
+                                <div class="col-lg-8">
+                                    <div v-if="galleryImages.length === 0" class="text-muted text-center py-5">图库暂无图片</div>
+                                    <div v-else class="row g-2">
+                                        <div v-for="(img, idx) in galleryImages" :key="img.id" class="col-6 col-md-4">
+                                            <div class="rp-thumb border border-secondary rounded overflow-hidden position-relative" @click="openPreviewFromGallery(idx)">
+                                                <img :src="img.imageUrl" class="w-100" style="height: 180px; object-fit: cover;">
+                                                <span class="badge bg-dark position-absolute top-0 start-0 m-2">{{ idx + 1 }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col-lg-4">
+                                    <div v-if="detailImage && detailRecord" class="card bg-dark border-secondary">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                                <div class="text-truncate">
+                                                    <div class="text-light fw-semibold">图片详情</div>
+                                                    <div class="small text-muted">{{ detailImage.filename || 'image.png' }}</div>
+                                                </div>
+                                                <div class="d-flex gap-2">
+                                                    <button class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(detailRecord)" title="应用参数">
+                                                        <i class="bi bi-arrow-up"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-light btn-sm" @click="downloadImage(detailImage)" title="下载/打开">
+                                                        <i class="bi bi-download"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div class="mt-3 rp-thumb border border-secondary rounded overflow-hidden">
+                                                <img :src="detailImage.imageUrl" class="w-100" style="max-height: 260px; object-fit: contain; background:#111;" @click="openPreviewFromGallery(selectedGalleryIndex)">
+                                            </div>
+
+                                            <div class="mt-3 small text-muted">
+                                                <div>请求: {{ detailRecord.templateName || '自定义 Workflow' }}</div>
+                                                <div>时间: {{ formatDateTime(detailRecord.createdAt) }}</div>
+                                                <div v-if="detailRecord.jobId">Job: {{ detailRecord.jobId }}</div>
+                                            </div>
+
+                                            <details class="rp-details-block mt-3" v-if="detailRecord.placeholderValues">
+                                                <summary class="text-light small">生成参数（点击展开）</summary>
+                                                <pre class="mt-2 mb-0 small">{{ JSON.stringify(detailRecord.placeholderValues, null, 2) }}</pre>
+                                            </details>
+                                        </div>
+                                    </div>
+                                    <div v-else class="text-muted text-center py-5">请选择一张图片</div>
                                 </div>
                             </div>
                         </div>
@@ -652,12 +773,30 @@
         <div class="modal fade" :class="{ show: showImageModal }" :style="{ display: showImageModal ? 'block' : 'none' }">
             <div class="modal-dialog modal-fullscreen">
                 <div class="modal-content bg-dark">
-                    <div class="modal-body d-flex align-items-center justify-content-center p-0">
-                        <img v-if="selectedImage" :src="selectedImage.imageUrl"
-                             class="img-fluid" style="max-height: 95vh; max-width: 95vw;">
-                        <button class="btn btn-light position-absolute top-0 end-0 m-3" @click="closeImageModal">
-                            <i class="bi bi-x-lg"></i>
+                    <div class="modal-body d-flex align-items-center justify-content-center p-0 position-relative"
+                         @touchstart="onPreviewTouchStart" @touchend="onPreviewTouchEnd">
+                        <div class="rp-preview-top position-absolute top-0 start-0 w-100 d-flex justify-content-between align-items-center p-3">
+                            <div class="text-light small d-flex align-items-center gap-2">
+                                <span class="badge bg-dark border border-secondary">{{ previewIndicatorText }}</span>
+                                <span v-if="previewImage" class="text-truncate d-inline-block" style="max-width: 60vw;">
+                                    {{ previewImage.filename }}
+                                </span>
+                            </div>
+                            <button class="btn btn-light btn-sm" @click.stop="closeImageModal">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+
+                        <button class="rp-preview-nav rp-preview-prev" type="button"
+                                @click.stop="previewPrev" :disabled="!previewCanPrev" aria-label="Previous image">
+                            <i class="bi bi-chevron-left"></i>
                         </button>
+                        <button class="rp-preview-nav rp-preview-next" type="button"
+                                @click.stop="previewNext" :disabled="!previewCanNext" aria-label="Next image">
+                            <i class="bi bi-chevron-right"></i>
+                        </button>
+
+                        <img v-if="previewImage" :src="previewImage.imageUrl" class="img-fluid rp-preview-img">
                     </div>
                 </div>
             </div>

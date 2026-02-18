@@ -124,6 +124,24 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+/**
+ * 生成本地唯一 ID
+ * @param {string} prefix
+ * @returns {string}
+ */
+function generateLocalId(prefix) {
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * 深拷贝（仅用于可 JSON 序列化的数据）
+ * @param {any} value
+ * @returns {any}
+ */
+function deepCloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
 const app = Vue.createApp({
     data() {
         return {
@@ -161,6 +179,7 @@ const app = Vue.createApp({
             isGenerating: false,
             currentJobId: '',
             currentJobStatus: '',
+            currentHistoryId: '',
             jobStats: {
                 delayTime: null,
                 executionTime: null
@@ -169,7 +188,11 @@ const app = Vue.createApp({
             shouldStopPolling: false,
 
             // ========== 结果 ==========
-            results: [],
+            resultsTab: 'history', // 'history' | 'gallery'
+            requestHistory: [],
+            selectedHistoryId: '',
+            selectedHistoryImageIndex: 0,
+            selectedGalleryIndex: 0,
 
             // ========== 设置相关 ==========
             showSettings: false,
@@ -197,7 +220,11 @@ const app = Vue.createApp({
 
             // ========== 图片预览 ==========
             showImageModal: false,
-            selectedImageIndex: -1
+            previewMode: 'history', // 'history' | 'gallery'
+            previewHistoryId: '',
+            previewIndex: 0,
+            previewTouchStartX: 0,
+            previewTouchStartY: 0
         };
     },
 
@@ -247,11 +274,99 @@ const app = Vue.createApp({
             return 'bg-info';
         },
 
-        selectedImage() {
-            if (this.selectedImageIndex < 0 || this.selectedImageIndex >= this.results.length) {
-                return null;
+        // ========== 结果视图 ==========
+        hasResultsSection() {
+            return this.requestHistory.length > 0;
+        },
+
+        selectedHistoryRecord() {
+            if (this.requestHistory.length === 0) return null;
+            const found = this.requestHistory.find(r => r.id === this.selectedHistoryId);
+            return found || this.requestHistory[0];
+        },
+
+        selectedHistoryImages() {
+            const record = this.selectedHistoryRecord;
+            return record && Array.isArray(record.images) ? record.images : [];
+        },
+
+        selectedHistoryImage() {
+            const images = this.selectedHistoryImages;
+            if (images.length === 0) return null;
+            const idx = Math.max(0, Math.min(this.selectedHistoryImageIndex, images.length - 1));
+            return images[idx];
+        },
+
+        galleryImages() {
+            const images = [];
+            this.requestHistory.forEach(record => {
+                (record.images || []).forEach((img, indexInRequest) => {
+                    images.push({
+                        ...img,
+                        requestId: record.id,
+                        requestJobId: record.jobId || '',
+                        requestCreatedAt: record.createdAt,
+                        requestTemplateId: record.templateId || '',
+                        requestTemplateName: record.templateName || '',
+                        indexInRequest
+                    });
+                });
+            });
+            return images;
+        },
+
+        selectedGalleryImage() {
+            const images = this.galleryImages;
+            if (images.length === 0) return null;
+            const idx = Math.max(0, Math.min(this.selectedGalleryIndex, images.length - 1));
+            return images[idx];
+        },
+
+        detailRecord() {
+            if (this.resultsTab === 'gallery') {
+                const img = this.selectedGalleryImage;
+                if (!img) return null;
+                return this.requestHistory.find(r => r.id === img.requestId) || null;
             }
-            return this.results[this.selectedImageIndex];
+            return this.selectedHistoryRecord;
+        },
+
+        detailImage() {
+            return this.resultsTab === 'gallery' ? this.selectedGalleryImage : this.selectedHistoryImage;
+        },
+
+        // ========== 图片预览 ==========
+        previewImages() {
+            if (this.previewMode === 'gallery') {
+                return this.galleryImages;
+            }
+
+            const historyId = this.previewHistoryId || (this.selectedHistoryRecord ? this.selectedHistoryRecord.id : '');
+            const record = this.requestHistory.find(r => r.id === historyId);
+            return record && Array.isArray(record.images) ? record.images : [];
+        },
+
+        previewImage() {
+            const images = this.previewImages;
+            if (images.length === 0) return null;
+            const idx = Math.max(0, Math.min(this.previewIndex, images.length - 1));
+            return images[idx];
+        },
+
+        previewCanPrev() {
+            return this.previewImages.length > 0 && this.previewIndex > 0;
+        },
+
+        previewCanNext() {
+            const images = this.previewImages;
+            return images.length > 0 && this.previewIndex < images.length - 1;
+        },
+
+        previewIndicatorText() {
+            const total = this.previewImages.length;
+            if (!total) return '';
+            const idx = Math.max(0, Math.min(this.previewIndex, total - 1));
+            return `${idx + 1} / ${total}`;
         },
 
         // 占位符分组
@@ -330,6 +445,13 @@ const app = Vue.createApp({
         // 更新配置状态
         this.isConfigValid = Settings.isConfigured();
         this.updateConnectionStatus();
+
+        // 全局按键（图片预览）
+        window.addEventListener('keydown', this.onGlobalKeydown);
+    },
+
+    beforeUnmount() {
+        window.removeEventListener('keydown', this.onGlobalKeydown);
     },
 
     watch: {
@@ -724,6 +846,112 @@ const app = Vue.createApp({
             this.inputImages.splice(index, 1);
         },
 
+        // ========== 请求历史 ==========
+        createHistoryEntry(meta) {
+            const now = Date.now();
+            const templateName = this.selectedTemplate ? this.selectedTemplate.name : '';
+
+            return {
+                id: generateLocalId('req'),
+                createdAt: now,
+                updatedAt: now,
+                status: 'SUBMITTING',
+                runMode: meta.runMode || '',
+                endpointId: meta.endpointId || '',
+                jobId: '',
+                templateId: this.selectedTemplateId || '',
+                templateName,
+                workflowJson: this.workflowJson,
+                placeholderValues: deepCloneJson(this.placeholderValues),
+                payloadSize: meta.payloadSize || 0,
+                imageCount: meta.imageCount || 0,
+                delayTime: null,
+                executionTime: null,
+                errorMessage: '',
+                images: []
+            };
+        },
+
+        updateHistoryEntry(entryId, patch) {
+            const idx = this.requestHistory.findIndex(r => r.id === entryId);
+            if (idx === -1) return;
+
+            this.requestHistory[idx] = {
+                ...this.requestHistory[idx],
+                ...patch,
+                updatedAt: Date.now()
+            };
+        },
+
+        extractImagesFromRunpodData(data) {
+            const output = data && data.output ? data.output : null;
+            if (!output) return [];
+
+            const images = [];
+
+            if (output.images && Array.isArray(output.images)) {
+                output.images.forEach(img => {
+                    if (img.type === 'base64') {
+                        images.push({
+                            id: generateLocalId('img'),
+                            filename: img.filename || 'image.png',
+                            type: 'base64',
+                            data: img.data,
+                            imageUrl: `data:image/png;base64,${img.data}`
+                        });
+                    } else if (img.type === 's3_url') {
+                        images.push({
+                            id: generateLocalId('img'),
+                            filename: img.filename || 'image.png',
+                            type: 's3_url',
+                            data: img.data,
+                            imageUrl: img.data
+                        });
+                    }
+                });
+            } else if (output.message && typeof output.message === 'string' && output.message.includes('data:image')) {
+                images.push({
+                    id: generateLocalId('img'),
+                    filename: 'image.png',
+                    type: 'base64',
+                    data: output.message.split(',')[1],
+                    imageUrl: output.message
+                });
+            }
+
+            return images;
+        },
+
+        finalizeHistoryEntry(entryId, data) {
+            const images = this.extractImagesFromRunpodData(data);
+
+            if (data && data.executionTime !== undefined) {
+                this.jobStats.executionTime = data.executionTime;
+            }
+
+            if (images.length === 0) {
+                const msg = '未在返回结果中找到图片';
+                this.errorMessage = msg;
+                this.updateHistoryEntry(entryId, {
+                    status: 'FAILED',
+                    errorMessage: msg,
+                    executionTime: data && data.executionTime !== undefined ? data.executionTime : null
+                });
+                return;
+            }
+
+            this.updateHistoryEntry(entryId, {
+                status: 'COMPLETED',
+                images,
+                executionTime: data && data.executionTime !== undefined ? data.executionTime : null
+            });
+
+            // 默认切换到最新图片
+            this.selectedHistoryId = entryId;
+            this.selectedHistoryImageIndex = 0;
+            this.selectedGalleryIndex = 0;
+        },
+
         // ========== 生成 ==========
         async generate() {
             if (!this.canGenerate) return;
@@ -732,6 +960,7 @@ const app = Vue.createApp({
             this.errorMessage = '';
             this.currentJobId = '';
             this.currentJobStatus = '';
+            this.currentHistoryId = '';
             this.jobStats = { delayTime: null, executionTime: null };
             this.shouldStopPolling = false;
 
@@ -785,27 +1014,46 @@ const app = Vue.createApp({
 
             const settings = Settings.get();
 
+            // 创建请求历史记录
+            const historyEntry = this.createHistoryEntry({
+                runMode: settings.runMode,
+                endpointId: settings.endpointId,
+                payloadSize,
+                imageCount: validImages.length
+            });
+            this.requestHistory.unshift(historyEntry);
+            this.selectedHistoryId = historyEntry.id;
+            this.selectedHistoryImageIndex = 0;
+            this.resultsTab = 'history';
+            this.currentHistoryId = historyEntry.id;
+
             try {
                 if (settings.runMode === 'runsync') {
                     this.currentJobStatus = 'IN_PROGRESS';
+                    this.updateHistoryEntry(historyEntry.id, { status: 'IN_PROGRESS' });
                     const result = await RunpodClient.runSync(payload, 300000);
 
                     if (result.success) {
-                        this.handleCompletedResult(result.data);
+                        this.currentJobStatus = 'COMPLETED';
+                        this.finalizeHistoryEntry(historyEntry.id, result.data);
                     } else {
                         this.errorMessage = result.message;
+                        this.currentJobStatus = 'FAILED';
+                        this.updateHistoryEntry(historyEntry.id, { status: 'FAILED', errorMessage: result.message });
                     }
                 } else {
                     const runResult = await RunpodClient.run(payload);
 
                     if (!runResult.success) {
                         this.errorMessage = runResult.message;
-                        this.isGenerating = false;
+                        this.currentJobStatus = 'FAILED';
+                        this.updateHistoryEntry(historyEntry.id, { status: 'FAILED', errorMessage: runResult.message });
                         return;
                     }
 
                     this.currentJobId = runResult.data.id;
                     this.currentJobStatus = runResult.data.status;
+                    this.updateHistoryEntry(historyEntry.id, { jobId: this.currentJobId, status: this.currentJobStatus });
 
                     const pollResult = await RunpodClient.poll(this.currentJobId, {
                         intervalMs: settings.pollIntervalMs,
@@ -814,78 +1062,44 @@ const app = Vue.createApp({
                             if (data.delayTime !== undefined) {
                                 this.jobStats.delayTime = data.delayTime;
                             }
+
+                            this.updateHistoryEntry(historyEntry.id, {
+                                status: data.status,
+                                delayTime: data.delayTime !== undefined ? data.delayTime : null
+                            });
                         },
                         shouldStop: () => this.shouldStopPolling
                     });
 
                     if (pollResult.success) {
-                        this.handleCompletedResult(pollResult.data);
+                        this.currentJobStatus = 'COMPLETED';
+                        this.finalizeHistoryEntry(historyEntry.id, pollResult.data);
                     } else if (pollResult.cancelled) {
                         this.currentJobStatus = 'CANCELLED';
                         this.errorMessage = '已取消';
+                        this.updateHistoryEntry(historyEntry.id, { status: 'CANCELLED', errorMessage: '已取消' });
                     } else {
                         this.currentJobStatus = pollResult.status || 'FAILED';
                         this.errorMessage = pollResult.message;
+                        this.updateHistoryEntry(historyEntry.id, { status: this.currentJobStatus, errorMessage: pollResult.message });
                     }
                 }
             } catch (err) {
                 this.errorMessage = '生成失败: ' + err.message;
+                this.currentJobStatus = 'FAILED';
+                this.updateHistoryEntry(historyEntry.id, { status: 'FAILED', errorMessage: this.errorMessage });
             } finally {
                 this.isGenerating = false;
+                this.currentHistoryId = '';
             }
-        },
-
-        handleCompletedResult(data) {
-            this.currentJobStatus = 'COMPLETED';
-
-            if (data.executionTime !== undefined) {
-                this.jobStats.executionTime = data.executionTime;
-            }
-
-            const output = data.output;
-            if (!output) {
-                this.errorMessage = '返回结果中没有 output 字段';
-                return;
-            }
-
-            const images = [];
-
-            if (output.images && Array.isArray(output.images)) {
-                output.images.forEach(img => {
-                    if (img.type === 'base64') {
-                        images.push({
-                            filename: img.filename || 'image.png',
-                            type: 'base64',
-                            data: img.data,
-                            imageUrl: `data:image/png;base64,${img.data}`
-                        });
-                    } else if (img.type === 's3_url') {
-                        images.push({
-                            filename: img.filename || 'image.png',
-                            type: 's3_url',
-                            data: img.data
-                        });
-                    }
-                });
-            } else if (output.message && output.message.includes('data:image')) {
-                images.push({
-                    filename: 'image.png',
-                    type: 'base64',
-                    data: output.message.split(',')[1],
-                    imageUrl: output.message
-                });
-            }
-
-            if (images.length === 0) {
-                this.errorMessage = '未在返回结果中找到图片';
-                return;
-            }
-
-            this.results = images;
         },
 
         async cancelGeneration() {
             this.shouldStopPolling = true;
+
+            if (this.currentHistoryId) {
+                this.updateHistoryEntry(this.currentHistoryId, { status: 'CANCELLED', errorMessage: '用户取消' });
+            }
 
             if (this.currentJobId) {
                 try {
@@ -897,6 +1111,7 @@ const app = Vue.createApp({
 
             this.isGenerating = false;
             this.currentJobStatus = 'CANCELLED';
+            this.currentHistoryId = '';
         },
 
         // ========== 设置 ==========
@@ -948,26 +1163,167 @@ const app = Vue.createApp({
             this.connectionStatus = this.isConfigured ? '已配置' : '未配置';
         },
 
+        // ========== 结果视图 ==========
+        formatDateTime(ts) {
+            if (!ts) return '-';
+            try {
+                return new Date(ts).toLocaleString();
+            } catch (e) {
+                return String(ts);
+            }
+        },
+
+        getStatusBadgeClass(status) {
+            if (status === 'COMPLETED') return 'bg-success';
+            if (status === 'FAILED' || status === 'TIMED_OUT') return 'bg-danger';
+            if (status === 'CANCELLED') return 'bg-warning text-dark';
+            if (status === 'IN_PROGRESS') return 'bg-info';
+            if (status === 'IN_QUEUE') return 'bg-secondary';
+            return 'bg-secondary';
+        },
+
+        selectHistoryRecord(id) {
+            this.resultsTab = 'history';
+            this.selectedHistoryId = id;
+            this.selectedHistoryImageIndex = 0;
+        },
+
+        selectGalleryImage(index) {
+            this.resultsTab = 'gallery';
+            this.selectedGalleryIndex = index;
+        },
+
+        // ========== 参数回填 ==========
+        applyParamsFromRecord(record) {
+            if (!record) return;
+
+            const hasChanges = this.workflowJson.trim();
+            if (hasChanges) {
+                const ok = confirm('这会覆盖当前的模板/参数设置，是否继续？');
+                if (!ok) return;
+            }
+
+            const applyValues = () => {
+                this.placeholderValues = deepCloneJson(record.placeholderValues || {});
+                this.validatePlaceholders();
+                this.onSizeChange();
+
+                const el = document.getElementById('params-panel');
+                if (el && el.scrollIntoView) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            };
+
+            const templateExists = record.templateId && TemplateManager.get(record.templateId);
+            if (templateExists) {
+                this.selectedTemplateId = record.templateId;
+                this.$nextTick(() => this.$nextTick(applyValues));
+                return;
+            }
+
+            // 自定义 workflow
+            this.selectedTemplateId = '';
+            this.selectedTemplate = null;
+            if (record.workflowJson) {
+                this.workflowJson = record.workflowJson;
+                this.$nextTick(() => this.$nextTick(applyValues));
+            } else {
+                applyValues();
+            }
+        },
+
         // ========== 图片预览 ==========
-        openImageModal(index) {
-            this.selectedImageIndex = index;
+        openPreviewFromHistory(historyId, index) {
+            this.previewMode = 'history';
+            this.previewHistoryId = historyId;
+            this.previewIndex = index;
             this.showImageModal = true;
+
+            this.selectedHistoryId = historyId;
+            this.selectedHistoryImageIndex = index;
+            this.resultsTab = 'history';
+        },
+
+        openPreviewFromGallery(index) {
+            this.previewMode = 'gallery';
+            this.previewHistoryId = '';
+            this.previewIndex = index;
+            this.showImageModal = true;
+
+            this.selectedGalleryIndex = index;
+            this.resultsTab = 'gallery';
         },
 
         closeImageModal() {
             this.showImageModal = false;
-            this.selectedImageIndex = -1;
+            this.previewIndex = 0;
+            this.previewHistoryId = '';
         },
 
-        downloadImage(result) {
-            if (result.type !== 'base64') return;
+        previewPrev() {
+            if (!this.previewCanPrev) return;
+            this.previewIndex -= 1;
+        },
 
-            const link = document.createElement('a');
-            link.href = result.imageUrl;
-            link.download = result.filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+        previewNext() {
+            if (!this.previewCanNext) return;
+            this.previewIndex += 1;
+        },
+
+        onPreviewTouchStart(e) {
+            if (!e || !e.touches || e.touches.length !== 1) return;
+            const t = e.touches[0];
+            this.previewTouchStartX = t.clientX;
+            this.previewTouchStartY = t.clientY;
+        },
+
+        onPreviewTouchEnd(e) {
+            if (!e || !e.changedTouches || e.changedTouches.length !== 1) return;
+            const t = e.changedTouches[0];
+            const dx = t.clientX - this.previewTouchStartX;
+            const dy = t.clientY - this.previewTouchStartY;
+
+            const absX = Math.abs(dx);
+            const absY = Math.abs(dy);
+            const SWIPE_THRESHOLD = 50;
+
+            if (absX < SWIPE_THRESHOLD || absX < absY) return;
+
+            if (dx > 0) {
+                this.previewPrev();
+            } else {
+                this.previewNext();
+            }
+        },
+
+        onGlobalKeydown(e) {
+            if (!this.showImageModal) return;
+            if (!e) return;
+
+            if (e.key === 'Escape') {
+                this.closeImageModal();
+            } else if (e.key === 'ArrowLeft') {
+                this.previewPrev();
+            } else if (e.key === 'ArrowRight') {
+                this.previewNext();
+            }
+        },
+
+        downloadImage(image) {
+            if (!image) return;
+            if (image.type === 'base64') {
+                const link = document.createElement('a');
+                link.href = image.imageUrl;
+                link.download = image.filename || 'image.png';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                return;
+            }
+
+            if (image.type === 's3_url' && image.data) {
+                window.open(image.data, '_blank');
+            }
         }
     }
 });
