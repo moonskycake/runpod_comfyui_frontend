@@ -459,6 +459,10 @@ const app = Vue.createApp({
             this.onTemplateSelect();
         },
 
+        selectedSizePreset() {
+            this.applySizePreset();
+        },
+
         workflowJson(val) {
             this.parseWorkflow();
         },
@@ -738,6 +742,7 @@ const app = Vue.createApp({
         // ========== 尺寸预设 ==========
         applySizePreset() {
             if (!this.selectedSizePreset) return;
+            if (this.placeholderValues.width === undefined || this.placeholderValues.height === undefined) return;
             this.placeholderValues.width = this.selectedSizePreset.width;
             this.placeholderValues.height = this.selectedSizePreset.height;
         },
@@ -1173,6 +1178,13 @@ const app = Vue.createApp({
             }
         },
 
+        formatBytes(bytes) {
+            if (bytes === undefined || bytes === null) return '-';
+            const num = Number(bytes);
+            if (Number.isNaN(num)) return '-';
+            return formatFileSize(num);
+        },
+
         getStatusBadgeClass(status) {
             if (status === 'COMPLETED') return 'bg-success';
             if (status === 'FAILED' || status === 'TIMED_OUT') return 'bg-danger';
@@ -1186,6 +1198,25 @@ const app = Vue.createApp({
             this.resultsTab = 'history';
             this.selectedHistoryId = id;
             this.selectedHistoryImageIndex = 0;
+        },
+
+        setHistoryImageIndex(index) {
+            const images = this.selectedHistoryImages;
+            if (!images || images.length === 0) return;
+            const idx = Math.max(0, Math.min(index, images.length - 1));
+            this.selectedHistoryImageIndex = idx;
+        },
+
+        historyPrevImage() {
+            if (this.selectedHistoryImageIndex <= 0) return;
+            this.selectedHistoryImageIndex -= 1;
+        },
+
+        historyNextImage() {
+            const images = this.selectedHistoryImages;
+            if (!images || images.length === 0) return;
+            if (this.selectedHistoryImageIndex >= images.length - 1) return;
+            this.selectedHistoryImageIndex += 1;
         },
 
         selectGalleryImage(index) {

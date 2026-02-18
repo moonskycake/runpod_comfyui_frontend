@@ -300,6 +300,99 @@ input[type="range"].rp-range::-moz-range-thumb {
     outline-offset: 0;
 }
 
+/* 请求历史右侧：主图与缩略条 */
+.rp-history-main {
+    background-color: #111;
+}
+
+.rp-history-main-img {
+    height: 420px;
+    object-fit: contain;
+    background-color: #111;
+}
+
+.rp-history-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(6px);
+}
+
+.rp-history-nav:disabled {
+    opacity: 0.25;
+}
+
+.rp-history-prev {
+    left: 0.75rem;
+}
+
+.rp-history-next {
+    right: 0.75rem;
+}
+
+.rp-thumb-strip {
+    scrollbar-width: thin;
+}
+
+.rp-thumb-mini {
+    cursor: pointer;
+    background-color: #111;
+    flex: 0 0 auto;
+}
+
+.rp-thumb-mini-active {
+    border-color: rgba(13, 110, 253, 0.8) !important;
+    outline: 2px solid rgba(13, 110, 253, 0.35);
+}
+
+/* Key-Value grid */
+.rp-kv-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.rp-kv {
+    border: 1px solid #495057;
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    background-color: #1a1d20;
+}
+
+@media (max-width: 768px) {
+    .rp-history-main-img {
+        height: 320px;
+    }
+    .rp-kv-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 文本截断 */
+.rp-clamp-2,
+.rp-clamp-3 {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.rp-clamp-2 {
+    -webkit-line-clamp: 2;
+}
+
+.rp-clamp-3 {
+    -webkit-line-clamp: 3;
+}
+
 /* Details */
 .rp-details-block summary {
     cursor: pointer;

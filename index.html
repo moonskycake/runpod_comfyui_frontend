@@ -108,7 +108,7 @@
                         <h5 class="mb-0 text-light">
                             <i class="bi bi-sliders"></i> 参数
                         </h5>
-                        <button class="btn btn-outline-secondary btn-sm" @click="resetToDefaults">
+                        <button class="btn btn-outline-light btn-sm" @click="resetToDefaults" title="重置参数为默认值">
                             <i class="bi bi-arrow-counterclockwise"></i> 重置
                         </button>
                     </div>
@@ -124,7 +124,7 @@
                                     <label class="form-label text-light small">预设</label>
                                     <select class="form-select form-select-sm bg-dark text-light border-secondary"
                                             v-model="selectedSizePreset"
-                                            @change="applySizePreset">
+                                            >
                                         <option value="">-- 自定义 --</option>
                                         <option v-for="preset in sizePresets" :key="preset.name" :value="preset">
                                             {{ preset.name }} ({{ preset.width }}x{{ preset.height }})
@@ -297,8 +297,7 @@
                                     :disabled="!workflowJson">
                                 <i class="bi bi-eye"></i> {{ showPreview ? '隐藏' : '预览' }}
                             </button>
-                            <button class="btn btn-outline-secondary btn-sm" @click="toggleWorkflowCollapse"
-                                    :disabled="isGenerating">
+                            <button class="btn btn-outline-light btn-sm" @click="toggleWorkflowCollapse" title="收起/展开工作流编辑区">
                                 <i class="bi" :class="isWorkflowCollapsed ? 'bi-chevron-down' : 'bi-chevron-up'"></i>
                                 {{ isWorkflowCollapsed ? '展开' : '收起' }}
                             </button>
@@ -475,13 +474,24 @@
                                     <div v-if="selectedHistoryRecord" class="card bg-dark border-secondary">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-                                                <div>
-                                                    <div class="h6 text-light mb-1">{{ selectedHistoryRecord.templateName || '自定义 Workflow' }}</div>
-                                                    <div class="small text-muted">
+                                                <div class="min-w-0">
+                                                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                        <div class="h6 text-light mb-0 text-truncate" style="max-width: 60vw;">
+                                                            {{ selectedHistoryRecord.templateName || '自定义 Workflow' }}
+                                                        </div>
+                                                        <span class="badge" :class="getStatusBadgeClass(selectedHistoryRecord.status)">
+                                                            {{ selectedHistoryRecord.status }}
+                                                        </span>
+                                                    </div>
+                                                    <div class="small text-muted mt-1">
                                                         {{ formatDateTime(selectedHistoryRecord.createdAt) }}
                                                         <span v-if="selectedHistoryRecord.jobId"> · Job: {{ selectedHistoryRecord.jobId }}</span>
                                                     </div>
+                                                    <div class="small text-danger mt-1" v-if="selectedHistoryRecord.errorMessage">
+                                                        {{ selectedHistoryRecord.errorMessage }}
+                                                    </div>
                                                 </div>
+
                                                 <div class="d-flex gap-2 flex-wrap">
                                                     <button class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(selectedHistoryRecord)">
                                                         <i class="bi bi-arrow-up"></i> 应用参数
@@ -492,41 +502,94 @@
                                                 </div>
                                             </div>
 
-                                            <div class="row g-2 mt-3">
-                                                <div class="col-md-6">
-                                                    <div class="small text-muted">状态</div>
-                                                    <span class="badge" :class="getStatusBadgeClass(selectedHistoryRecord.status)">{{ selectedHistoryRecord.status }}</span>
+                                            <!-- 主图预览 + 缩略图条 -->
+                                            <div v-if="selectedHistoryImage" class="mt-3">
+                                                <div class="rp-history-main border border-secondary rounded overflow-hidden position-relative"
+                                                     @click="openPreviewFromHistory(selectedHistoryRecord.id, selectedHistoryImageIndex)">
+                                                    <img :src="selectedHistoryImage.imageUrl" class="w-100 rp-history-main-img" alt="">
+
+                                                    <button class="rp-history-nav rp-history-prev" type="button"
+                                                            @click.stop="historyPrevImage"
+                                                            :disabled="selectedHistoryImageIndex <= 0" aria-label="Previous image">
+                                                        <i class="bi bi-chevron-left"></i>
+                                                    </button>
+                                                    <button class="rp-history-nav rp-history-next" type="button"
+                                                            @click.stop="historyNextImage"
+                                                            :disabled="selectedHistoryImageIndex >= selectedHistoryImages.length - 1" aria-label="Next image">
+                                                        <i class="bi bi-chevron-right"></i>
+                                                    </button>
+
+                                                    <span class="badge bg-dark border border-secondary position-absolute bottom-0 end-0 m-2">
+                                                        {{ selectedHistoryImageIndex + 1 }} / {{ selectedHistoryImages.length }}
+                                                    </span>
                                                 </div>
-                                                <div class="col-md-6">
-                                                    <div class="small text-muted">执行时间</div>
-                                                    <div class="text-light small">{{ selectedHistoryRecord.executionTime !== null ? selectedHistoryRecord.executionTime + 'ms' : '-' }}</div>
+
+                                                <div class="rp-thumb-strip mt-2 d-flex gap-2 overflow-auto pb-1" v-if="selectedHistoryImages.length > 1">
+                                                    <div v-for="(img, idx) in selectedHistoryImages" :key="img.id"
+                                                         class="rp-thumb-mini border border-secondary rounded overflow-hidden"
+                                                         :class="{ 'rp-thumb-mini-active': idx === selectedHistoryImageIndex }"
+                                                         @click.stop="setHistoryImageIndex(idx)">
+                                                        <img :src="img.imageUrl" alt="" style="width: 96px; height: 72px; object-fit: cover;">
+                                                    </div>
                                                 </div>
-                                                <div class="col-md-6">
+                                            </div>
+
+                                            <!-- 元信息 -->
+                                            <div class="rp-kv-grid mt-3">
+                                                <div class="rp-kv">
+                                                    <div class="small text-muted">运行模式</div>
+                                                    <div class="text-light small">{{ selectedHistoryRecord.runMode || '-' }}</div>
+                                                </div>
+                                                <div class="rp-kv">
+                                                    <div class="small text-muted">Endpoint</div>
+                                                    <div class="text-light small text-truncate">{{ selectedHistoryRecord.endpointId || '-' }}</div>
+                                                </div>
+                                                <div class="rp-kv">
                                                     <div class="small text-muted">排队时间</div>
                                                     <div class="text-light small">{{ selectedHistoryRecord.delayTime !== null ? selectedHistoryRecord.delayTime + 'ms' : '-' }}</div>
                                                 </div>
-                                                <div class="col-md-6">
+                                                <div class="rp-kv">
+                                                    <div class="small text-muted">执行时间</div>
+                                                    <div class="text-light small">{{ selectedHistoryRecord.executionTime !== null ? selectedHistoryRecord.executionTime + 'ms' : '-' }}</div>
+                                                </div>
+                                                <div class="rp-kv">
                                                     <div class="small text-muted">图片数</div>
                                                     <div class="text-light small">{{ (selectedHistoryRecord.images || []).length }}</div>
                                                 </div>
+                                                <div class="rp-kv">
+                                                    <div class="small text-muted">请求大小</div>
+                                                    <div class="text-light small">{{ formatBytes(selectedHistoryRecord.payloadSize) }}</div>
+                                                </div>
                                             </div>
 
-                                            <div class="mt-3" v-if="selectedHistoryRecord.placeholderValues">
-                                                <details class="rp-details-block">
-                                                    <summary class="text-light small">生成参数（点击展开）</summary>
+                                            <!-- 参数摘要 -->
+                                            <div v-if="selectedHistoryRecord.placeholderValues" class="mt-3">
+                                                <div class="d-flex flex-wrap gap-2">
+                                                    <span v-if="selectedHistoryRecord.placeholderValues.width && selectedHistoryRecord.placeholderValues.height" class="badge bg-secondary">
+                                                        尺寸 {{ selectedHistoryRecord.placeholderValues.width }}x{{ selectedHistoryRecord.placeholderValues.height }}
+                                                    </span>
+                                                    <span v-if="selectedHistoryRecord.placeholderValues.seed !== undefined" class="badge bg-secondary">Seed {{ selectedHistoryRecord.placeholderValues.seed }}</span>
+                                                    <span v-if="selectedHistoryRecord.placeholderValues.steps !== undefined" class="badge bg-secondary">Steps {{ selectedHistoryRecord.placeholderValues.steps }}</span>
+                                                    <span v-if="selectedHistoryRecord.placeholderValues.cfg !== undefined" class="badge bg-secondary">CFG {{ selectedHistoryRecord.placeholderValues.cfg }}</span>
+                                                    <span v-if="selectedHistoryRecord.placeholderValues.sampler_name" class="badge bg-secondary">Sampler {{ selectedHistoryRecord.placeholderValues.sampler_name }}</span>
+                                                    <span v-if="selectedHistoryRecord.placeholderValues.scheduler" class="badge bg-secondary">Scheduler {{ selectedHistoryRecord.placeholderValues.scheduler }}</span>
+                                                    <span v-if="selectedHistoryRecord.placeholderValues.denoise !== undefined" class="badge bg-secondary">Denoise {{ selectedHistoryRecord.placeholderValues.denoise }}</span>
+                                                </div>
+
+                                                <div class="mt-2">
+                                                    <div class="small text-muted">Prompt</div>
+                                                    <div class="text-light small rp-clamp-3">{{ selectedHistoryRecord.placeholderValues.prompt || '-' }}</div>
+                                                </div>
+
+                                                <div class="mt-2" v-if="selectedHistoryRecord.placeholderValues.negative_prompt">
+                                                    <div class="small text-muted">Negative Prompt</div>
+                                                    <div class="text-light small rp-clamp-2">{{ selectedHistoryRecord.placeholderValues.negative_prompt }}</div>
+                                                </div>
+
+                                                <details class="rp-details-block mt-3">
+                                                    <summary class="text-light small">生成参数 JSON（点击展开）</summary>
                                                     <pre class="mt-2 mb-0 small">{{ JSON.stringify(selectedHistoryRecord.placeholderValues, null, 2) }}</pre>
                                                 </details>
-                                            </div>
-
-                                            <div v-if="selectedHistoryImages.length > 0" class="mt-3">
-                                                <div class="row g-2">
-                                                    <div v-for="(img, idx) in selectedHistoryImages" :key="img.id" class="col-6 col-md-4">
-                                                        <div class="rp-thumb border border-secondary rounded overflow-hidden position-relative" @click="openPreviewFromHistory(selectedHistoryRecord.id, idx)">
-                                                            <img :src="img.imageUrl" class="w-100" style="height: 160px; object-fit: cover;">
-                                                            <span class="badge bg-dark position-absolute top-0 start-0 m-2">{{ idx + 1 }}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
                                             </div>
                                         </div>
                                     </div>
