@@ -193,6 +193,7 @@ const app = Vue.createApp({
             showImportTemplate: false,
             importTemplateJson: '',
             importError: '',
+            importTemplateFileName: '',
 
             // ========== 图片预览 ==========
             showImageModal: false,
@@ -332,6 +333,10 @@ const app = Vue.createApp({
     },
 
     watch: {
+        selectedTemplateId() {
+            this.onTemplateSelect();
+        },
+
         workflowJson(val) {
             this.parseWorkflow();
         },
@@ -563,12 +568,15 @@ const app = Vue.createApp({
         importTemplateDialog() {
             this.importTemplateJson = '';
             this.importError = '';
+            this.importTemplateFileName = '';
             this.showImportTemplate = true;
         },
 
         handleImportFile(event) {
             const file = event.target.files[0];
             if (!file) return;
+
+            this.importTemplateFileName = file.name;
 
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -580,17 +588,23 @@ const app = Vue.createApp({
 
         confirmImportTemplate() {
             if (!this.importTemplateJson.trim()) {
-                this.importError = '请输入模板 JSON';
+                this.importError = '请输入模板/工作流 JSON';
                 return;
             }
 
             try {
                 const imported = TemplateManager.importTemplate(this.importTemplateJson);
+
+                // 若导入的是纯工作流文件，默认用文件名作为模板名
+                const fileBaseName = (this.importTemplateFileName || '').replace(/\.json$/i, '');
+                if (fileBaseName && (imported.name === '导入的模板' || imported.name === '导入的工作流')) {
+                    imported.name = fileBaseName;
+                }
+
                 const id = TemplateManager.add(imported);
 
                 this.loadUserTemplates();
                 this.selectedTemplateId = id;
-                this.onTemplateSelect();
                 this.showImportTemplate = false;
 
                 alert('模板导入成功！');

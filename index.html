@@ -50,7 +50,6 @@
                                 <label class="form-label text-light">选择模板</label>
                                 <select class="form-select bg-dark text-light border-secondary"
                                         v-model="selectedTemplateId"
-                                        @change="onTemplateSelect"
                                         :disabled="isGenerating">
                                     <option value="">-- 自定义 Workflow --</option>
                                     <optgroup label="内置模板">
@@ -628,11 +627,11 @@
                             </button>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label text-light">或粘贴 JSON</label>
+                            <label class="form-label text-light">或粘贴 JSON（模板/工作流）</label>
                             <textarea class="form-control bg-dark text-light border-secondary font-monospace"
                                       v-model="importTemplateJson"
                                       rows="10"
-                                      placeholder="粘贴模板 JSON..."></textarea>
+                                      placeholder="粘贴模板 JSON 或 ComfyUI workflow JSON..."></textarea>
                         </div>
                         <div v-if="importError" class="alert alert-danger">
                             <i class="bi bi-exclamation-circle"></i> {{ importError }}

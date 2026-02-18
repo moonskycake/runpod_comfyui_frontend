@@ -149,25 +149,46 @@ const TemplateManager = {
     try {
       const data = JSON.parse(jsonString);
 
-      if (!data.workflow) {
-        throw new Error('无效的模板格式：缺少 workflow');
+      // 1) 我们自己的模板格式: { name, description?, workflow, defaults? }
+      if (data && typeof data === 'object' && !Array.isArray(data) && data.workflow !== undefined) {
+        let workflowObj;
+        if (typeof data.workflow === 'string') {
+          workflowObj = JSON.parse(data.workflow);
+        } else if (typeof data.workflow === 'object' && data.workflow !== null && !Array.isArray(data.workflow)) {
+          workflowObj = data.workflow;
+        } else {
+          throw new Error('无效的 workflow 类型');
+        }
+
+        return {
+          name: data.name || '导入的模板',
+          description: data.description || '',
+          workflow: workflowObj,
+          defaults: data.defaults || {}
+        };
       }
 
-      let workflowObj;
-      if (typeof data.workflow === 'string') {
-        workflowObj = JSON.parse(data.workflow);
-      } else if (typeof data.workflow === 'object' && data.workflow !== null) {
-        workflowObj = data.workflow;
-      } else {
-        throw new Error('无效的 workflow 类型');
+      // 2) RunPod 请求格式: { input: { workflow: ... } }
+      if (data && typeof data === 'object' && !Array.isArray(data) && data.input && data.input.workflow) {
+        return {
+          name: data.name || '导入的工作流',
+          description: data.description || '',
+          workflow: data.input.workflow,
+          defaults: data.defaults || {}
+        };
       }
 
-      return {
-        name: data.name || '导入的模板',
-        description: data.description || '',
-        workflow: workflowObj,
-        defaults: data.defaults || {}
-      };
+      // 3) 纯 ComfyUI workflow JSON（API Export）: 直接把整个对象当 workflow
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        return {
+          name: '导入的工作流',
+          description: '',
+          workflow: data,
+          defaults: {}
+        };
+      }
+
+      throw new Error('无效的 JSON：必须是对象类型');
     } catch (e) {
       throw new Error('导入失败: ' + e.message);
     }

@@ -47,7 +47,8 @@ const PlaceholderEngine = {
       label: '种子',
       default: -1,
       min: -1,
-      max: 2147483647,
+      // ComfyUI 允许较大 seed；这里限制在 JS 安全整数范围内
+      max: 9007199254740991,
       step: 1
     },
     steps: {
@@ -92,6 +93,7 @@ const PlaceholderEngine = {
         'euler', 'euler_ancestral', 'heun', 'heunpp2',
         'dpm_2', 'dpm_2_ancestral', 'lms', 'dpm_fast',
         'dpm_adaptive', 'dpmpp_2s_ancestral', 'dpmpp_sde',
+        'er_sde',
         'dpmpp_sde_gpu', 'dpmpp_2m', 'dpmpp_2m_sde',
         'dpmpp_2m_sde_gpu', 'ddim', 'uni_pc', 'uni_pc_bh2'
       ]
