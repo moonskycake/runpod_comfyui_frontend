@@ -233,6 +233,9 @@ const app = Vue.createApp({
             previewIndex: 0,
             previewTransitionName: 'rp-slide-next',
             showPreviewParams: false,
+            previewDragX: 0,
+            previewIsDragging: false,
+            previewIsSwiping: false,
             previewTouchStartX: 0,
             previewTouchStartY: 0
         };
@@ -412,7 +415,16 @@ const app = Vue.createApp({
 
             if (this.previewMode === 'favorites') {
                 const fav = (this.favorites || []).find(f => f && f.id === img.id);
-                return normalize(fav && fav.placeholderValues);
+                const fromFav = normalize(fav && fav.placeholderValues);
+                if (fromFav) return fromFav;
+
+                // 收藏缺少参数时，尝试从历史记录补齐
+                if (fav && fav.requestId) {
+                    const rec = this.requestHistory.find(r => r.id === fav.requestId);
+                    return normalize(rec && rec.placeholderValues);
+                }
+
+                return null;
             }
 
             if (this.previewMode === 'gallery') {
@@ -441,6 +453,12 @@ const app = Vue.createApp({
             if (!total) return '';
             const idx = Math.max(0, Math.min(this.previewIndex, total - 1));
             return `${idx + 1} / ${total}`;
+        },
+
+        previewMediaStyle() {
+            const x = Number(this.previewDragX || 0);
+            if (!this.previewIsDragging || !x) return {};
+            return { transform: `translateX(${x}px)` };
         },
 
         // 占位符分组
@@ -1803,6 +1821,10 @@ const app = Vue.createApp({
 
         // ========== 图片预览 ==========
         togglePreviewParams() {
+            if (!this.previewParamValues) {
+                alert('该图片暂无参数信息（可能是旧收藏或对应请求已被裁剪）。');
+                return;
+            }
             this.showPreviewParams = !this.showPreviewParams;
         },
 
@@ -1811,6 +1833,9 @@ const app = Vue.createApp({
             this.previewHistoryId = historyId;
             this.previewIndex = index;
             this.showPreviewParams = false;
+            this.previewDragX = 0;
+            this.previewIsDragging = false;
+            this.previewIsSwiping = false;
             this.showImageModal = true;
 
             this.selectedHistoryId = historyId;
@@ -1823,6 +1848,9 @@ const app = Vue.createApp({
             this.previewHistoryId = '';
             this.previewIndex = index;
             this.showPreviewParams = false;
+            this.previewDragX = 0;
+            this.previewIsDragging = false;
+            this.previewIsSwiping = false;
             this.showImageModal = true;
 
             this.selectedGalleryIndex = index;
@@ -1839,6 +1867,9 @@ const app = Vue.createApp({
             this.previewIndex = idx;
             this.selectedFavoriteIndex = idx;
             this.showPreviewParams = false;
+            this.previewDragX = 0;
+            this.previewIsDragging = false;
+            this.previewIsSwiping = false;
             this.showImageModal = true;
 
             // 打开预览时收起侧边栏
@@ -1850,11 +1881,17 @@ const app = Vue.createApp({
             this.previewIndex = 0;
             this.previewHistoryId = '';
             this.showPreviewParams = false;
+            this.previewDragX = 0;
+            this.previewIsDragging = false;
+            this.previewIsSwiping = false;
         },
 
         previewPrev() {
             if (!this.previewCanPrev) return;
             this.previewTransitionName = 'rp-slide-prev';
+            this.previewDragX = 0;
+            this.previewIsDragging = false;
+            this.previewIsSwiping = false;
             this.previewIndex -= 1;
             this.syncSelectionFromPreview();
         },
@@ -1862,6 +1899,9 @@ const app = Vue.createApp({
         previewNext() {
             if (!this.previewCanNext) return;
             this.previewTransitionName = 'rp-slide-next';
+            this.previewDragX = 0;
+            this.previewIsDragging = false;
+            this.previewIsSwiping = false;
             this.previewIndex += 1;
             this.syncSelectionFromPreview();
         },
@@ -1887,6 +1927,41 @@ const app = Vue.createApp({
             const t = e.touches[0];
             this.previewTouchStartX = t.clientX;
             this.previewTouchStartY = t.clientY;
+
+            this.previewIsDragging = true;
+            this.previewIsSwiping = false;
+            this.previewDragX = 0;
+        },
+
+        onPreviewTouchMove(e) {
+            if (!this.showImageModal) return;
+            if (!this.previewIsDragging) return;
+            if (!e || !e.touches || e.touches.length !== 1) return;
+
+            const t = e.touches[0];
+            const dx = t.clientX - this.previewTouchStartX;
+            const dy = t.clientY - this.previewTouchStartY;
+
+            const absX = Math.abs(dx);
+            const absY = Math.abs(dy);
+            const START_THRESHOLD = 10;
+
+            if (!this.previewIsSwiping) {
+                if (absX > absY && absX > START_THRESHOLD) {
+                    this.previewIsSwiping = true;
+                } else if (absY > absX && absY > START_THRESHOLD) {
+                    // 更像是纵向手势，不进入横向拖拽
+                    this.previewIsDragging = false;
+                    this.previewDragX = 0;
+                    return;
+                } else {
+                    return;
+                }
+            }
+
+            // 横向拖拽：提供跟手的视觉反馈
+            this.previewDragX = dx;
+            if (e.cancelable) e.preventDefault();
         },
 
         onPreviewTouchEnd(e) {
@@ -1899,6 +1974,15 @@ const app = Vue.createApp({
             const absY = Math.abs(dy);
             const SWIPE_THRESHOLD = 50;
 
+            // 结束拖拽
+            this.previewIsDragging = false;
+            const wasSwiping = this.previewIsSwiping;
+            this.previewIsSwiping = false;
+
+            // 回弹
+            this.previewDragX = 0;
+
+            if (!wasSwiping) return;
             if (absX < SWIPE_THRESHOLD || absX < absY) return;
 
             // 避免滑动后触发 click 误关闭预览

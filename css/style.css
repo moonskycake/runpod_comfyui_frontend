@@ -453,14 +453,24 @@ input[type="range"].rp-range::-moz-range-thumb {
     display: flex;
     align-items: center;
     justify-content: center;
-    pointer-events: auto;
+    pointer-events: none;
     will-change: transform;
+}
+
+.rp-preview-media {
+    pointer-events: auto;
+    transition: transform 160ms ease;
+}
+
+.rp-preview-dragging .rp-preview-media {
+    transition: none;
 }
 
 .rp-preview-img {
     max-height: 95vh;
     max-width: 95vw;
     object-fit: contain;
+    pointer-events: auto;
 }
 
 .rp-preview-nav {
