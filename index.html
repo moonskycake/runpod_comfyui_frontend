@@ -200,12 +200,26 @@
 
                         <!-- 提示词 -->
                         <div v-if="hasPromptPlaceholders" class="mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="text-light mb-0">
+                                    <i class="bi bi-chat-left-text"></i> 提示词
+                                </h6>
+                                <button class="btn btn-outline-warning btn-sm" @click="openPromptPresets">
+                                    <i class="bi bi-bookmark-star"></i> 预设
+                                </button>
+                            </div>
+
                             <div v-for="p in promptPlaceholders" :key="p.name" class="mb-3">
                                 <label class="form-label text-light">{{ p.label }}</label>
-                                <textarea class="form-control bg-dark text-light border-secondary"
-                                          v-model="placeholderValues[p.name]"
-                                          :rows="p.rows || 3"
-                                          :placeholder="p.default"></textarea>
+                                <prompt-textarea
+                                    v-model="placeholderValues[p.name]"
+                                    :rows="p.rows || 3"
+                                    :placeholder="p.default"
+                                    :disabled="isGenerating"
+                                ></prompt-textarea>
+                                <div class="rp-ac-hint mt-1" v-if="p.name === 'prompt'">
+                                    输入标签可联想；以 <span class="rp-ac-tag">@</span> 开头将仅匹配画师标签
+                                </div>
                             </div>
                         </div>
 
@@ -909,6 +923,127 @@
         <!-- 导入模板遮罩 -->
         <div v-if="showImportTemplate" class="modal-backdrop fade show"></div>
 
+        <!-- 提示词预设模态框 -->
+        <div class="modal fade" :class="{ show: showPromptPresets }" :style="{ display: showPromptPresets ? 'block' : 'none' }">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content bg-dark border-secondary">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title text-light">
+                            <i class="bi bi-bookmark-star"></i> 提示词预设
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" @click="closePromptPresets"></button>
+                    </div>
+                    <div class="modal-body">
+                        <ul class="nav nav-tabs rp-tabs mb-3">
+                            <li class="nav-item">
+                                <button class="nav-link" :class="{ active: promptPresetTab === 'blocks' }" @click="promptPresetTab = 'blocks'">
+                                    整块替换
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" :class="{ active: promptPresetTab === 'snippets' }" @click="promptPresetTab = 'snippets'">
+                                    复制片段
+                                </button>
+                            </li>
+                        </ul>
+
+                        <div v-if="promptPresetMessage" class="alert" :class="promptPresetMessageClass">
+                            <i class="bi" :class="promptPresetMessageIcon"></i> {{ promptPresetMessage }}
+                        </div>
+
+                        <!-- 整块替换 -->
+                        <div v-show="promptPresetTab === 'blocks'">
+                            <div class="text-muted small mb-2">应用会覆盖当前正向/负向提示词。</div>
+                            <div class="d-flex gap-2 flex-wrap mb-3">
+                                <input type="text" class="form-control bg-dark text-light border-secondary" style="max-width: 320px"
+                                       v-model="newPromptBlockName" placeholder="预设名称">
+                                <button class="btn btn-primary" @click="saveCurrentAsBlockPreset">
+                                    <i class="bi bi-plus-lg"></i> 保存当前
+                                </button>
+                            </div>
+
+                            <div v-if="promptBlockPresets.length === 0" class="text-muted text-center py-4">暂无整块预设</div>
+                            <div v-else class="list-group">
+                                <div v-for="p in promptBlockPresets" :key="p.id" class="list-group-item bg-dark border-secondary">
+                                    <div class="d-flex justify-content-between align-items-start gap-3">
+                                        <div class="min-w-0">
+                                            <div class="text-light fw-semibold text-truncate">{{ p.name }}</div>
+                                            <div class="small text-muted rp-clamp-2">正: {{ p.prompt || '-' }}</div>
+                                            <div class="small text-muted rp-clamp-2">负: {{ p.negative_prompt || '-' }}</div>
+                                        </div>
+                                        <div class="d-flex gap-2 flex-wrap">
+                                            <button class="btn btn-outline-primary btn-sm" @click="applyBlockPreset(p)">
+                                                <i class="bi bi-check2"></i> 应用
+                                            </button>
+                                            <button class="btn btn-outline-secondary btn-sm" @click="updateBlockPreset(p)">
+                                                <i class="bi bi-arrow-repeat"></i> 更新
+                                            </button>
+                                            <button class="btn btn-outline-danger btn-sm" @click="deleteBlockPreset(p)">
+                                                <i class="bi bi-trash"></i> 删除
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 复制片段 -->
+                        <div v-show="promptPresetTab === 'snippets'">
+                            <div class="text-muted small mb-2">片段仅用于复制（不自动替换当前提示词）。</div>
+
+                            <div class="row g-2 mb-3">
+                                <div class="col-md-4">
+                                    <input type="text" class="form-control bg-dark text-light border-secondary"
+                                           v-model="newPromptSnippetName" placeholder="片段名称">
+                                </div>
+                                <div class="col-md-8">
+                                    <textarea class="form-control bg-dark text-light border-secondary" rows="3"
+                                              v-model="newPromptSnippetText" placeholder="片段内容（例如画师/风格串）"></textarea>
+                                </div>
+                                <div class="col-12 d-flex gap-2 flex-wrap">
+                                    <button class="btn btn-primary" @click="saveSnippetPreset">
+                                        <i class="bi bi-plus-lg"></i> 保存片段
+                                    </button>
+                                    <button class="btn btn-outline-light" @click="fillSnippetFromCurrent('prompt')" :disabled="!placeholderValues.prompt">
+                                        <i class="bi bi-arrow-down"></i> 从正向填充
+                                    </button>
+                                    <button class="btn btn-outline-light" @click="fillSnippetFromCurrent('negative_prompt')" :disabled="!placeholderValues.negative_prompt">
+                                        <i class="bi bi-arrow-down"></i> 从负向填充
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div v-if="promptSnippetPresets.length === 0" class="text-muted text-center py-4">暂无片段</div>
+                            <div v-else class="list-group">
+                                <div v-for="s in promptSnippetPresets" :key="s.id" class="list-group-item bg-dark border-secondary">
+                                    <div class="d-flex justify-content-between align-items-start gap-3">
+                                        <div class="min-w-0">
+                                            <div class="text-light fw-semibold text-truncate">{{ s.name }}</div>
+                                            <div class="small text-muted rp-clamp-2">{{ s.text }}</div>
+                                        </div>
+                                        <div class="d-flex gap-2 flex-wrap">
+                                            <button class="btn btn-outline-light btn-sm" @click="copySnippet(s.text)">
+                                                <i class="bi bi-clipboard"></i> 复制
+                                            </button>
+                                            <button class="btn btn-outline-danger btn-sm" @click="deleteSnippetPreset(s)">
+                                                <i class="bi bi-trash"></i> 删除
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary">
+                        <button type="button" class="btn btn-secondary" @click="closePromptPresets">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 提示词预设遮罩 -->
+        <div v-if="showPromptPresets" class="modal-backdrop fade show"></div>
+
         <!-- 图片预览模态框 -->
         <div class="modal fade" :class="{ show: showImageModal }" :style="{ display: showImageModal ? 'block' : 'none' }">
             <div class="modal-dialog modal-fullscreen">
@@ -1006,6 +1141,7 @@
     <script src="./js/templates.js"></script>
     <script src="./js/placeholders.js"></script>
     <script src="./js/builtin-templates.js"></script>
+    <script src="./js/tag-index.js"></script>
     <script src="./js/history-store.js"></script>
     <script src="./bootstrap/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
     <script src="./js/main.js"></script>

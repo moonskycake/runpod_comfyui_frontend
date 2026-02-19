@@ -142,6 +142,288 @@ function deepCloneJson(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
+/**
+ * PromptTextareaComponent
+ * - Tag autocomplete for danbooru tags (positive & negative prompt)
+ * - Special: token starts with '@' => artist-only search (danbooru category=1)
+ */
+const PromptTextareaComponent = {
+    props: {
+        modelValue: {
+            type: String,
+            default: ''
+        },
+        rows: {
+            type: Number,
+            default: 3
+        },
+        placeholder: {
+            type: String,
+            default: ''
+        },
+        disabled: {
+            type: Boolean,
+            default: false
+        }
+    },
+    emits: ['update:modelValue'],
+    template: `
+        <div class="position-relative">
+            <textarea
+                ref="ta"
+                class="form-control bg-dark text-light border-secondary"
+                :rows="rows"
+                :placeholder="placeholder"
+                :disabled="disabled"
+                :value="modelValue"
+                @input="onInput"
+                @keydown="onKeydown"
+                @focus="onFocus"
+                @blur="onBlur"
+                @compositionstart="onCompositionStart"
+                @compositionend="onCompositionEnd"
+            ></textarea>
+
+            <div v-if="menuOpen" class="rp-ac-menu position-absolute start-0 top-100 mt-1 w-100">
+                <div v-if="menuLoading" class="px-3 py-2 rp-ac-hint">加载词库中...</div>
+                <div v-else-if="menuError" class="px-3 py-2 text-danger small">{{ menuError }}</div>
+                <div v-else-if="menuItems.length === 0" class="px-3 py-2 rp-ac-hint">无匹配</div>
+                <button
+                    v-for="(item, idx) in menuItems"
+                    :key="item.tag"
+                    type="button"
+                    class="list-group-item list-group-item-action rp-ac-item d-flex justify-content-between align-items-center"
+                    :class="{ active: idx === activeIndex }"
+                    @mousedown.prevent="onItemMouseDown(idx)"
+                >
+                    <span class="d-flex align-items-center gap-2 min-w-0">
+                        <span class="rp-ac-tag text-truncate">{{ item.tag }}</span>
+                        <span v-if="item.catLabel" class="badge bg-secondary">{{ item.catLabel }}</span>
+                    </span>
+                    <span class="text-muted small ms-2">{{ formatCount(item.count) }}</span>
+                </button>
+            </div>
+        </div>
+    `,
+    data() {
+        return {
+            isComposing: false,
+            menuOpen: false,
+            menuLoading: false,
+            menuError: '',
+            menuItems: [],
+            activeIndex: 0,
+            lastToken: null,
+            searchSeq: 0
+        };
+    },
+    methods: {
+        formatCount(count) {
+            const n = Number(count);
+            if (!Number.isFinite(n)) return '';
+            try {
+                return n.toLocaleString();
+            } catch (e) {
+                return String(n);
+            }
+        },
+
+        getCatLabel(cat) {
+            if (cat === 1) return '画师';
+            if (cat === 4) return '角色';
+            if (cat === 3) return '作品';
+            if (cat === 5) return 'Meta';
+            if (cat === 0) return '';
+            return '';
+        },
+
+        findToken(value, cursorPos) {
+            const v = String(value || '');
+            const pos = typeof cursorPos === 'number' ? cursorPos : v.length;
+
+            let start = 0;
+            for (let i = pos - 1; i >= 0; i--) {
+                const ch = v[i];
+                if (ch === ',' || ch === '\n') {
+                    start = i + 1;
+                    break;
+                }
+            }
+
+            let end = v.length;
+            for (let i = pos; i < v.length; i++) {
+                const ch = v[i];
+                if (ch === ',' || ch === '\n') {
+                    end = i;
+                    break;
+                }
+            }
+
+            const raw = v.slice(start, end);
+            const lead = (raw.match(/^\s*/) || [''])[0];
+            const core = raw.trim();
+
+            let artistOnly = false;
+            let query = core;
+            if (query.startsWith('@')) {
+                artistOnly = true;
+                query = query.slice(1).trim();
+            }
+
+            return { start, end, raw, lead, core, query, artistOnly };
+        },
+
+        closeMenu() {
+            this.menuOpen = false;
+            this.menuLoading = false;
+            this.menuError = '';
+            this.menuItems = [];
+            this.activeIndex = 0;
+        },
+
+        async updateMenu() {
+            if (this.isComposing) return;
+            const el = this.$refs.ta;
+            if (!el) return;
+
+            const value = el.value || '';
+            const pos = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
+            const token = this.findToken(value, pos);
+            this.lastToken = token;
+
+            const q = (token.query || '').toLowerCase();
+            if (!q || q.length < 2) {
+                this.closeMenu();
+                return;
+            }
+
+            const seq = ++this.searchSeq;
+            this.menuOpen = true;
+            this.menuLoading = true;
+            this.menuError = '';
+
+            try {
+                if (!window.TagIndex || !window.TagIndex.ensureLoaded) {
+                    throw new Error('TagIndex 未加载');
+                }
+                await window.TagIndex.ensureLoaded();
+                if (seq !== this.searchSeq) return;
+
+                const results = window.TagIndex.search(q, { limit: 20, artistOnly: token.artistOnly });
+                this.menuItems = (results || []).map(r => ({
+                    tag: r.tag,
+                    category: r.category,
+                    catLabel: this.getCatLabel(r.category),
+                    count: r.count
+                }));
+                this.activeIndex = 0;
+                this.menuLoading = false;
+            } catch (e) {
+                if (seq !== this.searchSeq) return;
+                this.menuLoading = false;
+                this.menuError = (e && e.message) ? e.message : String(e);
+            }
+        },
+
+        applySelection(item) {
+            if (!item || !item.tag) return;
+
+            const el = this.$refs.ta;
+            if (!el) return;
+            const value = el.value || '';
+
+            const pos = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
+            const token = this.lastToken || this.findToken(value, pos);
+
+            const before = value.slice(0, token.start);
+            const after = value.slice(token.end);
+            const replacement = `${token.lead || ''}${item.tag}`;
+
+            let nextValue = before + replacement + after;
+            let caretPos = (before + replacement).length;
+
+            // 如果是在末尾选择，自动补一个 ", " 方便继续输入
+            if (!after) {
+                const trimmed = nextValue.trimEnd();
+                if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) {
+                    nextValue += ', ';
+                    caretPos += 2;
+                }
+            }
+
+            el.value = nextValue;
+            try {
+                el.setSelectionRange(caretPos, caretPos);
+            } catch (e) {
+                // ignore
+            }
+
+            this.$emit('update:modelValue', nextValue);
+            this.closeMenu();
+        },
+
+        onItemMouseDown(idx) {
+            const item = this.menuItems[idx];
+            this.applySelection(item);
+            this.$nextTick(() => {
+                const el = this.$refs.ta;
+                if (el && el.focus) el.focus();
+            });
+        },
+
+        onInput(e) {
+            const v = e && e.target ? e.target.value : '';
+            this.$emit('update:modelValue', v);
+            this.updateMenu();
+        },
+
+        onFocus() {
+            // 懒加载 + 初始化一次搜索
+            this.updateMenu();
+        },
+
+        onBlur() {
+            // 延迟关闭，给鼠标点击选择留时间（mousedown 先于 blur）
+            setTimeout(() => {
+                this.closeMenu();
+            }, 120);
+        },
+
+        onCompositionStart() {
+            this.isComposing = true;
+        },
+
+        onCompositionEnd() {
+            this.isComposing = false;
+            this.updateMenu();
+        },
+
+        onKeydown(e) {
+            if (!e) return;
+            if (this.isComposing) return;
+            if (!this.menuOpen) return;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (this.menuItems.length === 0) return;
+                this.activeIndex = (this.activeIndex + 1) % this.menuItems.length;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (this.menuItems.length === 0) return;
+                this.activeIndex = (this.activeIndex - 1 + this.menuItems.length) % this.menuItems.length;
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                this.closeMenu();
+            } else if (e.key === 'Enter' || e.key === 'Tab') {
+                if (this.menuItems.length === 0) return;
+                e.preventDefault();
+                const item = this.menuItems[this.activeIndex];
+                this.applySelection(item);
+            }
+        }
+    }
+};
+
 const app = Vue.createApp({
     data() {
         return {
@@ -169,6 +451,17 @@ const app = Vue.createApp({
             placeholderErrors: [],
             selectedSizePreset: '',
             seedRandomEachRun: false,
+
+            // ========== 提示词预设 ==========
+            showPromptPresets: false,
+            promptPresetTab: 'blocks', // 'blocks' | 'snippets'
+            promptPresetMessage: '',
+            promptPresetMessageType: '', // 'success' | 'danger' | 'warning' | ''
+            newPromptBlockName: '',
+            promptBlockPresets: [],
+            newPromptSnippetName: '',
+            newPromptSnippetText: '',
+            promptSnippetPresets: [],
 
             // ========== 输入图片 ==========
             inputImages: [],
@@ -277,6 +570,22 @@ const app = Vue.createApp({
         connectionStatusClass() {
             if (!this.isConfigured) return 'bg-secondary';
             return 'bg-success';
+        },
+
+        promptPresetMessageClass() {
+            const t = this.promptPresetMessageType;
+            if (t === 'success') return 'alert-success';
+            if (t === 'danger') return 'alert-danger';
+            if (t === 'warning') return 'alert-warning';
+            return 'alert-secondary';
+        },
+
+        promptPresetMessageIcon() {
+            const t = this.promptPresetMessageType;
+            if (t === 'success') return 'bi-check-circle';
+            if (t === 'danger') return 'bi-exclamation-circle';
+            if (t === 'warning') return 'bi-exclamation-triangle';
+            return 'bi-info-circle';
         },
 
         jobStatusClass() {
@@ -541,6 +850,9 @@ const app = Vue.createApp({
         // 加载持久化历史
         this.loadPersistedHistory();
 
+        // 加载提示词预设
+        this.loadPromptPresets();
+
         // 全局按键（图片预览）
         window.addEventListener('keydown', this.onGlobalKeydown);
     },
@@ -551,6 +863,11 @@ const app = Vue.createApp({
         if (this._persistTimer) {
             clearTimeout(this._persistTimer);
             this._persistTimer = null;
+        }
+
+        if (this._promptPresetMsgTimer) {
+            clearTimeout(this._promptPresetMsgTimer);
+            this._promptPresetMsgTimer = null;
         }
     },
 
@@ -693,6 +1010,248 @@ const app = Vue.createApp({
         randomizeSeedOnce() {
             if (!this.hasSeedPlaceholder) return;
             this.placeholderValues.seed = this.generateRandomSeed();
+        },
+
+        // ========== 提示词预设 ==========
+        safeJsonParse(text, fallback) {
+            try {
+                const parsed = JSON.parse(text);
+                return parsed;
+            } catch (e) {
+                return fallback;
+            }
+        },
+
+        setPromptPresetMessage(text, type) {
+            this.promptPresetMessage = text || '';
+            this.promptPresetMessageType = type || '';
+
+            if (this._promptPresetMsgTimer) {
+                clearTimeout(this._promptPresetMsgTimer);
+                this._promptPresetMsgTimer = null;
+            }
+
+            if (this.promptPresetMessage) {
+                this._promptPresetMsgTimer = setTimeout(() => {
+                    this.promptPresetMessage = '';
+                    this.promptPresetMessageType = '';
+                    this._promptPresetMsgTimer = null;
+                }, 1600);
+            }
+        },
+
+        loadPromptPresets() {
+            const blocksRaw = localStorage.getItem('runpod_prompt_block_presets_v1') || '[]';
+            const snippetsRaw = localStorage.getItem('runpod_prompt_snippet_presets_v1') || '[]';
+
+            const blocks = this.safeJsonParse(blocksRaw, []);
+            const snippets = this.safeJsonParse(snippetsRaw, []);
+
+            this.promptBlockPresets = Array.isArray(blocks) ? blocks.filter(p => p && p.id && p.name) : [];
+            this.promptSnippetPresets = Array.isArray(snippets) ? snippets.filter(s => s && s.id && s.name) : [];
+
+            // 最新在前
+            this.promptBlockPresets.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+            this.promptSnippetPresets.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+        },
+
+        persistPromptPresets() {
+            try {
+                localStorage.setItem('runpod_prompt_block_presets_v1', JSON.stringify(this.promptBlockPresets || []));
+                localStorage.setItem('runpod_prompt_snippet_presets_v1', JSON.stringify(this.promptSnippetPresets || []));
+            } catch (e) {
+                this.setPromptPresetMessage('保存失败：存储空间不足或浏览器限制', 'danger');
+            }
+        },
+
+        openPromptPresets() {
+            this.loadPromptPresets();
+            this.promptPresetTab = 'blocks';
+            this.showPromptPresets = true;
+        },
+
+        closePromptPresets() {
+            this.showPromptPresets = false;
+        },
+
+        saveCurrentAsBlockPreset() {
+            const name = (this.newPromptBlockName || '').trim();
+            if (!name) {
+                this.setPromptPresetMessage('请输入预设名称', 'warning');
+                return;
+            }
+
+            const promptVal = this.placeholderValues && this.placeholderValues.prompt !== undefined
+                ? String(this.placeholderValues.prompt || '')
+                : '';
+            const negVal = this.placeholderValues && this.placeholderValues.negative_prompt !== undefined
+                ? String(this.placeholderValues.negative_prompt || '')
+                : '';
+
+            const existing = (this.promptBlockPresets || []).find(p => p && p.name === name);
+            const now = Date.now();
+
+            if (existing) {
+                if (!confirm('已存在同名预设，是否覆盖更新？')) return;
+                existing.prompt = promptVal;
+                existing.negative_prompt = negVal;
+                existing.updatedAt = now;
+                this.persistPromptPresets();
+                this.newPromptBlockName = '';
+                this.setPromptPresetMessage('已更新整块预设', 'success');
+                return;
+            }
+
+            const preset = {
+                id: generateLocalId('pb'),
+                name,
+                prompt: promptVal,
+                negative_prompt: negVal,
+                createdAt: now,
+                updatedAt: now
+            };
+
+            this.promptBlockPresets = [preset, ...(this.promptBlockPresets || [])].slice(0, 60);
+            this.persistPromptPresets();
+            this.newPromptBlockName = '';
+            this.setPromptPresetMessage('已保存整块预设', 'success');
+        },
+
+        applyBlockPreset(p) {
+            if (!p) return;
+
+            if (this.placeholderValues && this.placeholderValues.prompt !== undefined) {
+                this.placeholderValues.prompt = String(p.prompt || '');
+            }
+            if (this.placeholderValues && this.placeholderValues.negative_prompt !== undefined) {
+                this.placeholderValues.negative_prompt = String(p.negative_prompt || '');
+            }
+
+            this.setPromptPresetMessage('已应用预设', 'success');
+        },
+
+        updateBlockPreset(p) {
+            if (!p || !p.id) return;
+            const now = Date.now();
+
+            p.prompt = this.placeholderValues && this.placeholderValues.prompt !== undefined
+                ? String(this.placeholderValues.prompt || '')
+                : '';
+            p.negative_prompt = this.placeholderValues && this.placeholderValues.negative_prompt !== undefined
+                ? String(this.placeholderValues.negative_prompt || '')
+                : '';
+            p.updatedAt = now;
+
+            this.promptBlockPresets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+            this.persistPromptPresets();
+            this.setPromptPresetMessage('已更新预设内容', 'success');
+        },
+
+        deleteBlockPreset(p) {
+            if (!p || !p.id) return;
+            if (!confirm(`确定要删除预设 “${p.name}” 吗？`)) return;
+            this.promptBlockPresets = (this.promptBlockPresets || []).filter(x => x && x.id !== p.id);
+            this.persistPromptPresets();
+            this.setPromptPresetMessage('已删除预设', 'success');
+        },
+
+        fillSnippetFromCurrent(field) {
+            const f = field === 'negative_prompt' ? 'negative_prompt' : 'prompt';
+            const text = this.placeholderValues && this.placeholderValues[f] !== undefined
+                ? String(this.placeholderValues[f] || '')
+                : '';
+            this.newPromptSnippetText = text;
+            if (!(this.newPromptSnippetName || '').trim()) {
+                const label = f === 'negative_prompt' ? '负向' : '正向';
+                this.newPromptSnippetName = `${label}_${new Date().toLocaleString()}`;
+            }
+        },
+
+        saveSnippetPreset() {
+            const name = (this.newPromptSnippetName || '').trim();
+            const text = String(this.newPromptSnippetText || '').trim();
+            if (!name) {
+                this.setPromptPresetMessage('请输入片段名称', 'warning');
+                return;
+            }
+            if (!text) {
+                this.setPromptPresetMessage('请输入片段内容', 'warning');
+                return;
+            }
+
+            const existing = (this.promptSnippetPresets || []).find(s => s && s.name === name);
+            const now = Date.now();
+            if (existing) {
+                if (!confirm('已存在同名片段，是否覆盖更新？')) return;
+                existing.text = text;
+                existing.updatedAt = now;
+                this.persistPromptPresets();
+                this.newPromptSnippetName = '';
+                this.newPromptSnippetText = '';
+                this.setPromptPresetMessage('已更新片段', 'success');
+                return;
+            }
+
+            const s = {
+                id: generateLocalId('ps'),
+                name,
+                text,
+                createdAt: now,
+                updatedAt: now
+            };
+            this.promptSnippetPresets = [s, ...(this.promptSnippetPresets || [])].slice(0, 120);
+            this.persistPromptPresets();
+            this.newPromptSnippetName = '';
+            this.newPromptSnippetText = '';
+            this.setPromptPresetMessage('已保存片段', 'success');
+        },
+
+        async copyToClipboard(text) {
+            const t = String(text || '');
+            if (!t) return false;
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                try {
+                    await navigator.clipboard.writeText(t);
+                    return true;
+                } catch (e) {
+                    // fallback
+                }
+            }
+
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = t;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.left = '-10000px';
+                ta.style.top = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                ta.setSelectionRange(0, t.length);
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch (e) {
+                return false;
+            }
+        },
+
+        async copySnippet(text) {
+            const ok = await this.copyToClipboard(text);
+            if (ok) {
+                this.setPromptPresetMessage('已复制到剪贴板', 'success');
+            } else {
+                this.setPromptPresetMessage('复制失败：浏览器权限限制', 'danger');
+            }
+        },
+
+        deleteSnippetPreset(s) {
+            if (!s || !s.id) return;
+            if (!confirm(`确定要删除片段 “${s.name}” 吗？`)) return;
+            this.promptSnippetPresets = (this.promptSnippetPresets || []).filter(x => x && x.id !== s.id);
+            this.persistPromptPresets();
+            this.setPromptPresetMessage('已删除片段', 'success');
         },
 
         // ========== 模板管理 ==========
@@ -2035,4 +2594,5 @@ const app = Vue.createApp({
 });
 
 app.component('image-upload', ImageUploadComponent);
+app.component('prompt-textarea', PromptTextareaComponent);
 app.mount('#app');

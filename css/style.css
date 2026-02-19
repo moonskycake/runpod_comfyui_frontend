@@ -686,3 +686,40 @@ input[type="range"].rp-range::-moz-range-thumb {
         height: 120px;
     }
 }
+
+/* Prompt tag autocomplete */
+.rp-ac-menu {
+    z-index: 1200;
+    max-height: 280px;
+    overflow: auto;
+    background-color: #0f1114;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 0.5rem;
+    box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.55);
+}
+
+.rp-ac-item {
+    background-color: transparent;
+    color: #e9ecef;
+    border-color: rgba(255, 255, 255, 0.08);
+    text-align: left;
+}
+
+.rp-ac-item:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.rp-ac-item.active {
+    background-color: rgba(13, 110, 253, 0.18);
+    border-color: rgba(13, 110, 253, 0.4);
+    color: #fff;
+}
+
+.rp-ac-tag {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.rp-ac-hint {
+    font-size: 0.75rem;
+    color: #b7c0c9;
+}
