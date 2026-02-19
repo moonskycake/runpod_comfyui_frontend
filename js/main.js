@@ -164,6 +164,14 @@ const PromptTextareaComponent = {
         disabled: {
             type: Boolean,
             default: false
+        },
+        insertOptions: {
+            type: Object,
+            default: () => ({
+                keepUnderscore: true,
+                escapeParentheses: true,
+                keepAtPrefix: false
+            })
         }
     },
     emits: ['update:modelValue'],
@@ -197,7 +205,7 @@ const PromptTextareaComponent = {
                     @mousedown.prevent="onItemMouseDown(idx)"
                 >
                     <span class="d-flex align-items-center gap-2 min-w-0">
-                        <span class="rp-ac-tag text-truncate">{{ item.tag }}</span>
+                        <span class="rp-ac-tag text-truncate">{{ formatDisplayTag(item.tag) }}</span>
                         <span v-if="item.catLabel" class="badge bg-secondary">{{ item.catLabel }}</span>
                     </span>
                     <span class="text-muted small ms-2">{{ formatCount(item.count) }}</span>
@@ -237,14 +245,35 @@ const PromptTextareaComponent = {
             return '';
         },
 
+        formatDisplayTag(tag) {
+            const s = String(tag || '');
+            const opts = this.insertOptions || {};
+            if (opts.keepUnderscore === false) {
+                return s.replace(/_/g, ' ');
+            }
+            return s;
+        },
+
         findToken(value, cursorPos) {
             const v = String(value || '');
             const pos = typeof cursorPos === 'number' ? cursorPos : v.length;
 
+            const isDelimiterAt = (idx) => {
+                const ch = v[idx];
+                if (ch === ',' || ch === '\n') return true;
+                if (ch === '.') {
+                    // 不把数字小数点当分隔符（例如 1.2）
+                    const prev = idx > 0 ? v[idx - 1] : '';
+                    const next = idx < v.length - 1 ? v[idx + 1] : '';
+                    if (/\d/.test(prev) && /\d/.test(next)) return false;
+                    return true;
+                }
+                return false;
+            };
+
             let start = 0;
             for (let i = pos - 1; i >= 0; i--) {
-                const ch = v[i];
-                if (ch === ',' || ch === '\n') {
+                if (isDelimiterAt(i)) {
                     start = i + 1;
                     break;
                 }
@@ -252,8 +281,7 @@ const PromptTextareaComponent = {
 
             let end = v.length;
             for (let i = pos; i < v.length; i++) {
-                const ch = v[i];
-                if (ch === ',' || ch === '\n') {
+                if (isDelimiterAt(i)) {
                     end = i;
                     break;
                 }
@@ -337,7 +365,19 @@ const PromptTextareaComponent = {
 
             const before = value.slice(0, token.start);
             const after = value.slice(token.end);
-            const replacement = `${token.lead || ''}${item.tag}`;
+
+            const opts = this.insertOptions || {};
+            const shouldKeepAt = !!opts.keepAtPrefix && !!token.artistOnly;
+            const atPrefix = shouldKeepAt ? '@' : '';
+            let tagText = String(item.tag);
+            if (opts.keepUnderscore === false) {
+                tagText = tagText.replace(/_/g, ' ');
+            }
+            if (opts.escapeParentheses) {
+                tagText = tagText.replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+            }
+
+            const replacement = `${token.lead || ''}${atPrefix}${tagText}`;
 
             let nextValue = before + replacement + after;
             let caretPos = (before + replacement).length;
@@ -457,11 +497,20 @@ const app = Vue.createApp({
             promptPresetTab: 'blocks', // 'blocks' | 'snippets'
             promptPresetMessage: '',
             promptPresetMessageType: '', // 'success' | 'danger' | 'warning' | ''
+            promptPresetSearch: '',
             newPromptBlockName: '',
             promptBlockPresets: [],
             newPromptSnippetName: '',
             newPromptSnippetText: '',
             promptSnippetPresets: [],
+
+            // ========== 提示词输入体验 ==========
+            showPromptInputOptions: false,
+            promptInsertOptions: {
+                keepUnderscore: true,
+                escapeParentheses: true,
+                keepAtPrefix: false
+            },
 
             // ========== 输入图片 ==========
             inputImages: [],
@@ -586,6 +635,31 @@ const app = Vue.createApp({
             if (t === 'danger') return 'bi-exclamation-circle';
             if (t === 'warning') return 'bi-exclamation-triangle';
             return 'bi-info-circle';
+        },
+
+        filteredPromptBlockPresets() {
+            const q = String(this.promptPresetSearch || '').trim().toLowerCase();
+            const list = Array.isArray(this.promptBlockPresets) ? this.promptBlockPresets : [];
+            if (!q) return list;
+            return list.filter(p => {
+                if (!p) return false;
+                const name = String(p.name || '').toLowerCase();
+                const pos = String(p.prompt || '').toLowerCase();
+                const neg = String(p.negative_prompt || '').toLowerCase();
+                return name.includes(q) || pos.includes(q) || neg.includes(q);
+            });
+        },
+
+        filteredPromptSnippetPresets() {
+            const q = String(this.promptPresetSearch || '').trim().toLowerCase();
+            const list = Array.isArray(this.promptSnippetPresets) ? this.promptSnippetPresets : [];
+            if (!q) return list;
+            return list.filter(s => {
+                if (!s) return false;
+                const name = String(s.name || '').toLowerCase();
+                const text = String(s.text || '').toLowerCase();
+                return name.includes(q) || text.includes(q);
+            });
         },
 
         jobStatusClass() {
@@ -853,6 +927,9 @@ const app = Vue.createApp({
         // 加载提示词预设
         this.loadPromptPresets();
 
+        // 加载提示词输入选项
+        this.loadPromptInsertOptions();
+
         // 全局按键（图片预览）
         window.addEventListener('keydown', this.onGlobalKeydown);
     },
@@ -1013,6 +1090,36 @@ const app = Vue.createApp({
         },
 
         // ========== 提示词预设 ==========
+        loadPromptInsertOptions() {
+            const raw = localStorage.getItem('runpod_prompt_insert_options_v1');
+            if (!raw) return;
+            const parsed = this.safeJsonParse(raw, null);
+            if (!parsed || typeof parsed !== 'object') return;
+
+            const keepUnderscore = parsed.keepUnderscore;
+            const escapeParentheses = parsed.escapeParentheses;
+            const keepAtPrefix = parsed.keepAtPrefix;
+            if (typeof keepUnderscore === 'boolean') this.promptInsertOptions.keepUnderscore = keepUnderscore;
+            if (typeof escapeParentheses === 'boolean') this.promptInsertOptions.escapeParentheses = escapeParentheses;
+            if (typeof keepAtPrefix === 'boolean') this.promptInsertOptions.keepAtPrefix = keepAtPrefix;
+        },
+
+        persistPromptInsertOptions() {
+            try {
+                localStorage.setItem('runpod_prompt_insert_options_v1', JSON.stringify({
+                    keepUnderscore: !!this.promptInsertOptions.keepUnderscore,
+                    escapeParentheses: !!this.promptInsertOptions.escapeParentheses,
+                    keepAtPrefix: !!this.promptInsertOptions.keepAtPrefix
+                }));
+            } catch (e) {
+                // ignore
+            }
+        },
+
+        togglePromptInputOptions() {
+            this.showPromptInputOptions = !this.showPromptInputOptions;
+        },
+
         safeJsonParse(text, fallback) {
             try {
                 const parsed = JSON.parse(text);
@@ -1067,6 +1174,7 @@ const app = Vue.createApp({
         openPromptPresets() {
             this.loadPromptPresets();
             this.promptPresetTab = 'blocks';
+            this.promptPresetSearch = '';
             this.showPromptPresets = true;
         },
 

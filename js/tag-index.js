@@ -26,6 +26,12 @@
     return String(q).trim().toLowerCase();
   }
 
+  function normalizeForMatch(q) {
+    const s = normalizeQuery(q);
+    if (!s) return '';
+    return s.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
   function getPrefix(tag) {
     const t = (tag || '').toLowerCase();
     if (!t) return '';
@@ -101,14 +107,17 @@
    * @returns {Array<{tag:string, category:number, count:number}>}
    */
   function search(query, opts) {
-    const q = normalizeQuery(query);
+    const qRaw = normalizeQuery(query);
+    const qNorm = normalizeForMatch(query);
     if (!state.loaded) return [];
-    if (!q) return [];
+    if (!qNorm) return [];
 
     const limit = opts && opts.limit ? Math.max(1, Math.min(opts.limit, 100)) : 20;
     const artistOnly = !!(opts && opts.artistOnly);
 
-    const p = q.length <= PREFIX_LEN ? q : q.slice(0, PREFIX_LEN);
+    // prefixMap 的 key 基于原始 tag（下划线形式），因此 query 中的空格需要先转成下划线
+    const qPrefixRaw = qRaw.replace(/\s+/g, '_');
+    const p = qPrefixRaw.length <= PREFIX_LEN ? qPrefixRaw : qPrefixRaw.slice(0, PREFIX_LEN);
     const bucket = state.prefixMap[p] || [];
 
     const out = [];
@@ -116,8 +125,12 @@
       const t = state.tags[bucket[i]];
       if (!t) continue;
       if (artistOnly && t.category !== 1) continue;
-      if (!t.tag || t.tag.length < q.length) continue;
-      if (t.tag.toLowerCase().startsWith(q)) {
+      if (!t.tag) continue;
+
+      const tagNorm = normalizeForMatch(t.tag);
+      if (!tagNorm) continue;
+
+      if (tagNorm.startsWith(qNorm)) {
         out.push(t);
         if (out.length >= limit) break;
       }

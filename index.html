@@ -204,9 +204,44 @@
                                 <h6 class="text-light mb-0">
                                     <i class="bi bi-chat-left-text"></i> 提示词
                                 </h6>
-                                <button class="btn btn-outline-warning btn-sm" @click="openPromptPresets">
-                                    <i class="bi bi-bookmark-star"></i> 预设
-                                </button>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-outline-secondary btn-sm" @click="togglePromptInputOptions" title="输入选项">
+                                        <i class="bi bi-sliders"></i>
+                                    </button>
+                                    <button class="btn btn-outline-warning btn-sm" @click="openPromptPresets">
+                                        <i class="bi bi-bookmark-star"></i> 预设
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div v-if="showPromptInputOptions" class="mb-3 p-3 border border-secondary rounded">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="promptKeepUnderscoreToggle"
+                                           v-model="promptInsertOptions.keepUnderscore"
+                                           @change="persistPromptInsertOptions">
+                                    <label class="form-check-label text-light" for="promptKeepUnderscoreToggle">
+                                        保留下划线（如 long_hair）
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch mt-2">
+                                    <input class="form-check-input" type="checkbox" id="promptEscapeParenToggle"
+                                           v-model="promptInsertOptions.escapeParentheses"
+                                           @change="persistPromptInsertOptions">
+                                    <label class="form-check-label text-light" for="promptEscapeParenToggle">
+                                        括号自动转义（如 photoshop_(medium)）
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch mt-2">
+                                    <input class="form-check-input" type="checkbox" id="promptKeepAtPrefixToggle"
+                                           v-model="promptInsertOptions.keepAtPrefix"
+                                           @change="persistPromptInsertOptions">
+                                    <label class="form-check-label text-light" for="promptKeepAtPrefixToggle">
+                                        保留 @ 前缀（画师联想插入为 @xxx）
+                                    </label>
+                                </div>
+                                <div class="rp-ac-hint mt-2">
+                                    提示：输入 <span class="rp-ac-tag">@</span> 开头将仅匹配画师标签
+                                </div>
                             </div>
 
                             <div v-for="p in promptPlaceholders" :key="p.name" class="mb-3">
@@ -216,10 +251,8 @@
                                     :rows="p.rows || 3"
                                     :placeholder="p.default"
                                     :disabled="isGenerating"
+                                    :insert-options="promptInsertOptions"
                                 ></prompt-textarea>
-                                <div class="rp-ac-hint mt-1" v-if="p.name === 'prompt'">
-                                    输入标签可联想；以 <span class="rp-ac-tag">@</span> 开头将仅匹配画师标签
-                                </div>
                             </div>
                         </div>
 
@@ -938,14 +971,28 @@
                             <li class="nav-item">
                                 <button class="nav-link" :class="{ active: promptPresetTab === 'blocks' }" @click="promptPresetTab = 'blocks'">
                                     整块替换
+                                    <span class="badge bg-secondary ms-1">{{ promptBlockPresets.length }}</span>
                                 </button>
                             </li>
                             <li class="nav-item">
                                 <button class="nav-link" :class="{ active: promptPresetTab === 'snippets' }" @click="promptPresetTab = 'snippets'">
                                     复制片段
+                                    <span class="badge bg-secondary ms-1">{{ promptSnippetPresets.length }}</span>
                                 </button>
                             </li>
                         </ul>
+
+                        <div class="input-group mb-3">
+                            <span class="input-group-text bg-dark text-light border-secondary">
+                                <i class="bi bi-search"></i>
+                            </span>
+                            <input type="text" class="form-control bg-dark text-light border-secondary"
+                                   v-model="promptPresetSearch" placeholder="搜索预设/片段（名称或内容）">
+                            <button class="btn btn-outline-secondary" type="button"
+                                    @click="promptPresetSearch = ''" :disabled="!promptPresetSearch">
+                                清除
+                            </button>
+                        </div>
 
                         <div v-if="promptPresetMessage" class="alert" :class="promptPresetMessageClass">
                             <i class="bi" :class="promptPresetMessageIcon"></i> {{ promptPresetMessage }}
@@ -962,9 +1009,11 @@
                                 </button>
                             </div>
 
-                            <div v-if="promptBlockPresets.length === 0" class="text-muted text-center py-4">暂无整块预设</div>
+                            <div v-if="filteredPromptBlockPresets.length === 0" class="text-muted text-center py-4">
+                                {{ promptPresetSearch ? '无匹配' : '暂无整块预设' }}
+                            </div>
                             <div v-else class="list-group">
-                                <div v-for="p in promptBlockPresets" :key="p.id" class="list-group-item bg-dark border-secondary">
+                                <div v-for="p in filteredPromptBlockPresets" :key="p.id" class="list-group-item bg-dark border-secondary">
                                     <div class="d-flex justify-content-between align-items-start gap-3">
                                         <div class="min-w-0">
                                             <div class="text-light fw-semibold text-truncate">{{ p.name }}</div>
@@ -1013,9 +1062,11 @@
                                 </div>
                             </div>
 
-                            <div v-if="promptSnippetPresets.length === 0" class="text-muted text-center py-4">暂无片段</div>
+                            <div v-if="filteredPromptSnippetPresets.length === 0" class="text-muted text-center py-4">
+                                {{ promptPresetSearch ? '无匹配' : '暂无片段' }}
+                            </div>
                             <div v-else class="list-group">
-                                <div v-for="s in promptSnippetPresets" :key="s.id" class="list-group-item bg-dark border-secondary">
+                                <div v-for="s in filteredPromptSnippetPresets" :key="s.id" class="list-group-item bg-dark border-secondary">
                                     <div class="d-flex justify-content-between align-items-start gap-3">
                                         <div class="min-w-0">
                                             <div class="text-light fw-semibold text-truncate">{{ s.name }}</div>
