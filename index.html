@@ -939,7 +939,7 @@
 
                         <div class="rp-preview-stage">
                             <transition :name="previewTransitionName">
-                                <div v-if="previewImage" :key="previewImage.id" class="rp-preview-frame" @click.stop>
+                                <div v-if="previewImage" :key="previewImage.id" class="rp-preview-frame">
                                     <img :src="previewImage.imageUrl" class="img-fluid rp-preview-img" alt="">
                                 </div>
                             </transition>
@@ -965,7 +965,7 @@
                             </div>
                         </div>
 
-                        <div v-if="showPreviewParams && previewParamValues" class="rp-preview-params" @click.stop>
+                        <div v-if="showPreviewParams && previewParamValues" class="rp-preview-params">
                             <div class="card bg-dark border-secondary">
                                 <div class="card-header border-secondary d-flex justify-content-between align-items-center py-2">
                                     <div class="text-light small">
