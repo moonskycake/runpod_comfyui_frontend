@@ -544,17 +544,18 @@
                                                 class="list-group-item list-group-item-action bg-dark text-light border-secondary"
                                                 :class="{ active: selectedHistoryRecord && selectedHistoryRecord.id === item.id }"
                                                 @click="selectHistoryRecord(item.id)">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <div class="fw-semibold text-truncate" style="max-width: 70%;">
+                                            <div class="d-flex justify-content-between align-items-center gap-2">
+                                                <div class="fw-semibold text-truncate min-w-0">
                                                     {{ item.templateName || '自定义 Workflow' }}
                                                 </div>
                                                 <span class="badge" :class="getStatusBadgeClass(item.status)">{{ item.status }}</span>
                                             </div>
-                                                 <div class="small text-muted mt-1">
-                                                     {{ formatDateTime(item.createdAt) }}
-                                                     <span v-if="item.images && item.images.length"> · {{ item.images.length }} 张</span>
-                                                     <span v-if="item.deletedImages && item.deletedImages.length"> · 已删 {{ item.deletedImages.length }}</span>
-                                                 </div>
+
+                                            <div class="small text-muted mt-1">
+                                                <i class="bi bi-clock"></i> {{ formatDateTime(item.createdAt) }}
+                                                <span v-if="item.images && item.images.length"> · {{ item.images.length }} 张</span>
+                                                <span v-if="item.deletedImages && item.deletedImages.length"> · 已删 {{ item.deletedImages.length }}</span>
+                                            </div>
                                             <div class="small text-muted" v-if="item.jobId">Job: {{ item.jobId }}</div>
                                             <div class="small text-danger" v-if="item.errorMessage">{{ item.errorMessage }}</div>
                                         </button>
@@ -684,19 +685,19 @@
                                                     <span v-if="selectedHistoryRecord.placeholderValues.denoise !== undefined" class="badge bg-secondary">Denoise {{ selectedHistoryRecord.placeholderValues.denoise }}</span>
                                                 </div>
 
-                                                <div class="mt-2">
-                                                    <div class="small text-muted">Prompt</div>
-                                                    <div class="text-light small rp-clamp-3">{{ selectedHistoryRecord.placeholderValues.prompt || '-' }}</div>
+                                                <div class="mt-3">
+                                                    <div class="small text-muted mb-1">Prompt</div>
+                                                    <pre class="rp-prompt-box small mb-0">{{ selectedHistoryRecord.placeholderValues.prompt || '-' }}</pre>
                                                 </div>
 
-                                                <div class="mt-2" v-if="selectedHistoryRecord.placeholderValues.negative_prompt">
-                                                    <div class="small text-muted">Negative Prompt</div>
-                                                    <div class="text-light small rp-clamp-2">{{ selectedHistoryRecord.placeholderValues.negative_prompt }}</div>
+                                                <div class="mt-3" v-if="selectedHistoryRecord.placeholderValues.negative_prompt">
+                                                    <div class="small text-muted mb-1">Negative Prompt</div>
+                                                    <pre class="rp-prompt-box rp-prompt-box-negative small mb-0">{{ selectedHistoryRecord.placeholderValues.negative_prompt }}</pre>
                                                 </div>
 
                                                  <details class="rp-details-block mt-3">
-                                                     <summary class="text-light small">生成参数 JSON（点击展开）</summary>
-                                                     <pre class="mt-2 mb-0 small">{{ JSON.stringify(selectedHistoryRecord.placeholderValues, null, 2) }}</pre>
+                                                     <summary class="text-light small">生成参数 JSON（不含 Prompt，点击展开）</summary>
+                                                     <pre class="mt-2 mb-0 small">{{ JSON.stringify(selectedHistoryParamsForJson, null, 2) }}</pre>
                                                  </details>
 
                                                  <details class="rp-details-block mt-3" v-if="selectedHistoryRecord.deletedImages && selectedHistoryRecord.deletedImages.length">

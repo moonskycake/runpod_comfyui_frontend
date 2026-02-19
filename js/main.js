@@ -681,6 +681,18 @@ const app = Vue.createApp({
             return found || this.requestHistory[0];
         },
 
+        selectedHistoryParamsForJson() {
+            const record = this.selectedHistoryRecord;
+            const values = record && record.placeholderValues ? record.placeholderValues : null;
+            if (!values || typeof values !== 'object') return {};
+
+            // 避免与上方 Prompt / Negative Prompt 重复
+            const out = { ...values };
+            delete out.prompt;
+            delete out.negative_prompt;
+            return out;
+        },
+
         selectedHistoryImages() {
             const record = this.selectedHistoryRecord;
             return record && Array.isArray(record.images) ? record.images : [];

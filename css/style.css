@@ -13,6 +13,11 @@
     cursor: pointer;
 }
 
+/* Utilities */
+.min-w-0 {
+    min-width: 0 !important;
+}
+
 /* 暗色主题表单样式覆盖 */
 .form-control:focus {
     background-color: #212529;
@@ -412,6 +417,23 @@ input[type="range"].rp-range::-moz-range-thumb {
 .rp-details-block pre {
     max-height: 260px;
     overflow: auto;
+}
+
+/* Prompt blocks (history panel) */
+.rp-prompt-box {
+    background-color: #0f1114;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    color: #e9ecef;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 220px;
+    overflow: auto;
+}
+
+.rp-prompt-box-negative {
+    border-color: rgba(220, 53, 69, 0.35);
 }
 
 /* 预览模态框 */
