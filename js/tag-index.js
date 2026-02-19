@@ -1,7 +1,7 @@
 /**
  * TagIndex
  * - Loads danbooru tag CSV from ./tags/danbooru.csv (lazy)
- * - Provides fast prefix search for autocomplete
+ * - Provides fast word-prefix search for autocomplete
  *
  * CSV format (danbooru.csv):
  *   tag,category,count,aliases
@@ -13,12 +13,12 @@
   const DANBOORU_URL = './tags/danbooru.csv';
   const PREFIX_LEN = 2;
 
-  /** @type {{ loaded: boolean, loadingPromise: Promise<void>|null, tags: Array<{tag:string, category:number, count:number}>, prefixMap: Record<string, number[]> }} */
+  /** @type {{ loaded: boolean, loadingPromise: Promise<void>|null, tags: Array<{tag:string, category:number, count:number}>, wordPrefixMap: Record<string, number[]> }} */
   const state = {
     loaded: false,
     loadingPromise: null,
     tags: [],
-    prefixMap: Object.create(null)
+    wordPrefixMap: Object.create(null)
   };
 
   function normalizeQuery(q) {
@@ -32,10 +32,14 @@
     return s.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
-  function getPrefix(tag) {
-    const t = (tag || '').toLowerCase();
+  function getPrefix(text) {
+    const t = (text || '').toLowerCase();
     if (!t) return '';
     return t.length <= PREFIX_LEN ? t : t.slice(0, PREFIX_LEN);
+  }
+
+  function stripParens(text) {
+    return String(text || '').replace(/[()]/g, '');
   }
 
   function parseDanbooruLine(line) {
@@ -73,7 +77,7 @@
       const lines = text.split(/\r?\n/);
 
       const tags = [];
-      const prefixMap = Object.create(null);
+      const wordPrefixMap = Object.create(null);
 
       for (let i = 0; i < lines.length; i++) {
         const parsed = parseDanbooruLine(lines[i]);
@@ -82,14 +86,24 @@
         const idx = tags.length;
         tags.push(parsed);
 
-        const p = getPrefix(parsed.tag);
-        if (!p) continue;
-        if (!prefixMap[p]) prefixMap[p] = [];
-        prefixMap[p].push(idx);
+        // Build word-prefix index so "hair" can match "black_hair".
+        const key = stripParens(parsed.tag).toLowerCase();
+        const parts = key.split('_');
+        const seen = Object.create(null);
+        for (let j = 0; j < parts.length; j++) {
+          const w = parts[j];
+          if (!w) continue;
+          const p = getPrefix(w);
+          if (!p) continue;
+          if (seen[p]) continue;
+          seen[p] = 1;
+          if (!wordPrefixMap[p]) wordPrefixMap[p] = [];
+          wordPrefixMap[p].push(idx);
+        }
       }
 
       state.tags = tags;
-      state.prefixMap = prefixMap;
+      state.wordPrefixMap = wordPrefixMap;
       state.loaded = true;
     })();
 
@@ -101,13 +115,12 @@
   }
 
   /**
-   * Search tags by prefix.
+   * Search tags by word prefix.
    * @param {string} query
    * @param {{ limit?: number, artistOnly?: boolean }} [opts]
    * @returns {Array<{tag:string, category:number, count:number}>}
    */
   function search(query, opts) {
-    const qRaw = normalizeQuery(query);
     const qNorm = normalizeForMatch(query);
     if (!state.loaded) return [];
     if (!qNorm) return [];
@@ -115,10 +128,20 @@
     const limit = opts && opts.limit ? Math.max(1, Math.min(opts.limit, 100)) : 20;
     const artistOnly = !!(opts && opts.artistOnly);
 
-    // prefixMap 的 key 基于原始 tag（下划线形式），因此 query 中的空格需要先转成下划线
-    const qPrefixRaw = qRaw.replace(/\s+/g, '_');
-    const p = qPrefixRaw.length <= PREFIX_LEN ? qPrefixRaw : qPrefixRaw.slice(0, PREFIX_LEN);
-    const bucket = state.prefixMap[p] || [];
+    const qWords = qNorm
+      .split(' ')
+      .map(w => stripParens(w))
+      .filter(Boolean);
+    if (qWords.length === 0) return [];
+
+    // Choose the smallest bucket to reduce scanning.
+    let bucket = null;
+    for (let i = 0; i < qWords.length; i++) {
+      const p = getPrefix(qWords[i]);
+      const b = state.wordPrefixMap[p] || [];
+      if (!b.length) return [];
+      if (!bucket || b.length < bucket.length) bucket = b;
+    }
 
     const out = [];
     for (let i = 0; i < bucket.length; i++) {
@@ -127,10 +150,19 @@
       if (artistOnly && t.category !== 1) continue;
       if (!t.tag) continue;
 
-      const tagNorm = normalizeForMatch(t.tag);
-      if (!tagNorm) continue;
+      const tagKey = stripParens(t.tag).toLowerCase();
 
-      if (tagNorm.startsWith(qNorm)) {
+      let ok = true;
+      for (let j = 0; j < qWords.length; j++) {
+        const w = qWords[j];
+        if (!w) continue;
+        if (tagKey.startsWith(w)) continue;
+        if (tagKey.includes(`_${w}`)) continue;
+        ok = false;
+        break;
+      }
+
+      if (ok) {
         out.push(t);
         if (out.length >= limit) break;
       }

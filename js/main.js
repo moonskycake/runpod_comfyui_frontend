@@ -260,15 +260,7 @@ const PromptTextareaComponent = {
 
             const isDelimiterAt = (idx) => {
                 const ch = v[idx];
-                if (ch === ',' || ch === '\n') return true;
-                if (ch === '.') {
-                    // 不把数字小数点当分隔符（例如 1.2）
-                    const prev = idx > 0 ? v[idx - 1] : '';
-                    const next = idx < v.length - 1 ? v[idx + 1] : '';
-                    if (/\d/.test(prev) && /\d/.test(next)) return false;
-                    return true;
-                }
-                return false;
+                return ch === ',' || ch === '\n';
             };
 
             let start = 0;
