@@ -231,6 +231,8 @@ const app = Vue.createApp({
             previewMode: 'history', // 'history' | 'gallery' | 'favorites'
             previewHistoryId: '',
             previewIndex: 0,
+            previewTransitionName: 'rp-slide-next',
+            showPreviewParams: false,
             previewTouchStartX: 0,
             previewTouchStartY: 0
         };
@@ -345,7 +347,8 @@ const app = Vue.createApp({
                     ...img,
                     favoriteAddedAt: f.addedAt || null,
                     favoriteRequestId: f.requestId || '',
-                    favoriteRequestTemplateName: f.requestTemplateName || ''
+                    favoriteRequestTemplateName: f.requestTemplateName || '',
+                    favoritePlaceholderValues: f.placeholderValues || null
                 });
             });
 
@@ -396,6 +399,32 @@ const app = Vue.createApp({
             if (images.length === 0) return null;
             const idx = Math.max(0, Math.min(this.previewIndex, images.length - 1));
             return images[idx];
+        },
+
+        previewParamValues() {
+            const img = this.previewImage;
+            if (!img) return null;
+
+            const normalize = (values) => {
+                if (!values || typeof values !== 'object') return null;
+                return Object.keys(values).length > 0 ? values : null;
+            };
+
+            if (this.previewMode === 'favorites') {
+                const fav = (this.favorites || []).find(f => f && f.id === img.id);
+                return normalize(fav && fav.placeholderValues);
+            }
+
+            if (this.previewMode === 'gallery') {
+                const requestId = img.requestId;
+                if (!requestId) return null;
+                const rec = this.requestHistory.find(r => r.id === requestId);
+                return normalize(rec && rec.placeholderValues);
+            }
+
+            const historyId = this.previewHistoryId || (this.selectedHistoryRecord ? this.selectedHistoryRecord.id : '');
+            const rec = this.requestHistory.find(r => r.id === historyId);
+            return normalize(rec && rec.placeholderValues);
         },
 
         previewCanPrev() {
@@ -915,9 +944,12 @@ const app = Vue.createApp({
                 const imageMap = loaded && loaded.imageMap ? loaded.imageMap : {};
 
                 // 先恢复收藏（即使没有历史记录）
-                this.favorites = favorites;
+                this.favorites = (favorites || []).map(f => ({
+                    ...f,
+                    placeholderValues: f && f.placeholderValues && typeof f.placeholderValues === 'object' ? f.placeholderValues : {}
+                }));
                 this.favoriteImageCache = {};
-                favorites.forEach(f => {
+                this.favorites.forEach(f => {
                     const stored = imageMap && f && f.id ? imageMap[f.id] : null;
                     if (!stored) return;
 
@@ -973,6 +1005,9 @@ const app = Vue.createApp({
 
                 this.requestHistory = restored;
                 this.resultsTab = 'history';
+
+                // 为旧收藏回填参数（如果对应请求仍在历史中）
+                this.backfillFavoritesFromHistory();
                 this.ensureResultsSelection();
             } catch (e) {
                 // 持久化不可用时，忽略
@@ -1037,7 +1072,8 @@ const app = Vue.createApp({
                 requestCreatedAt: f.requestCreatedAt !== undefined ? f.requestCreatedAt : null,
                 requestTemplateId: f.requestTemplateId || '',
                 requestTemplateName: f.requestTemplateName || '',
-                requestJobId: f.requestJobId || ''
+                requestJobId: f.requestJobId || '',
+                placeholderValues: f.placeholderValues && typeof f.placeholderValues === 'object' ? f.placeholderValues : {}
             }));
         },
 
@@ -1521,6 +1557,38 @@ const app = Vue.createApp({
             this.showFavoritesPanel = !this.showFavoritesPanel;
         },
 
+        backfillFavoritesFromHistory() {
+            if (!Array.isArray(this.favorites) || this.favorites.length === 0) return;
+            if (!Array.isArray(this.requestHistory) || this.requestHistory.length === 0) return;
+
+            const recordMap = new Map((this.requestHistory || []).map(r => [r.id, r]));
+            let changed = false;
+
+            (this.favorites || []).forEach(f => {
+                if (!f || !f.id) return;
+
+                const hasValues = f.placeholderValues && typeof f.placeholderValues === 'object' && Object.keys(f.placeholderValues).length > 0;
+                if (hasValues) return;
+                if (!f.requestId) return;
+
+                const r = recordMap.get(f.requestId);
+                if (!r || !r.placeholderValues || typeof r.placeholderValues !== 'object') return;
+
+                f.placeholderValues = deepCloneJson(r.placeholderValues);
+
+                if (!f.requestTemplateName && r.templateName) f.requestTemplateName = r.templateName || '';
+                if (!f.requestTemplateId && r.templateId) f.requestTemplateId = r.templateId || '';
+                if (!f.requestCreatedAt && r.createdAt) f.requestCreatedAt = r.createdAt;
+                if (!f.requestJobId && r.jobId) f.requestJobId = r.jobId || '';
+
+                changed = true;
+            });
+
+            if (changed) {
+                this.queuePersistHistory();
+            }
+        },
+
         isFavorited(imageId) {
             if (!imageId) return false;
             return Array.isArray(this.favorites) && this.favorites.some(f => f && f.id === imageId);
@@ -1582,6 +1650,11 @@ const app = Vue.createApp({
 
             const record = this.findRecordForImage(image);
             const now = Date.now();
+            const valuesSource = record && record.placeholderValues && typeof record.placeholderValues === 'object'
+                ? record.placeholderValues
+                : (image && image.favoritePlaceholderValues && typeof image.favoritePlaceholderValues === 'object'
+                    ? image.favoritePlaceholderValues
+                    : {});
             const fav = {
                 id,
                 addedAt: now,
@@ -1591,7 +1664,8 @@ const app = Vue.createApp({
                 requestCreatedAt: record ? record.createdAt : (image.requestCreatedAt !== undefined ? image.requestCreatedAt : null),
                 requestTemplateId: record ? (record.templateId || '') : (image.requestTemplateId || ''),
                 requestTemplateName: record ? (record.templateName || '') : (image.requestTemplateName || ''),
-                requestJobId: record ? (record.jobId || '') : (image.requestJobId || '')
+                requestJobId: record ? (record.jobId || '') : (image.requestJobId || ''),
+                placeholderValues: deepCloneJson(valuesSource)
             };
 
             // 去重兜底（理论不会走到）
@@ -1728,10 +1802,15 @@ const app = Vue.createApp({
         },
 
         // ========== 图片预览 ==========
+        togglePreviewParams() {
+            this.showPreviewParams = !this.showPreviewParams;
+        },
+
         openPreviewFromHistory(historyId, index) {
             this.previewMode = 'history';
             this.previewHistoryId = historyId;
             this.previewIndex = index;
+            this.showPreviewParams = false;
             this.showImageModal = true;
 
             this.selectedHistoryId = historyId;
@@ -1743,6 +1822,7 @@ const app = Vue.createApp({
             this.previewMode = 'gallery';
             this.previewHistoryId = '';
             this.previewIndex = index;
+            this.showPreviewParams = false;
             this.showImageModal = true;
 
             this.selectedGalleryIndex = index;
@@ -1758,6 +1838,7 @@ const app = Vue.createApp({
             this.previewHistoryId = '';
             this.previewIndex = idx;
             this.selectedFavoriteIndex = idx;
+            this.showPreviewParams = false;
             this.showImageModal = true;
 
             // 打开预览时收起侧边栏
@@ -1768,16 +1849,19 @@ const app = Vue.createApp({
             this.showImageModal = false;
             this.previewIndex = 0;
             this.previewHistoryId = '';
+            this.showPreviewParams = false;
         },
 
         previewPrev() {
             if (!this.previewCanPrev) return;
+            this.previewTransitionName = 'rp-slide-prev';
             this.previewIndex -= 1;
             this.syncSelectionFromPreview();
         },
 
         previewNext() {
             if (!this.previewCanNext) return;
+            this.previewTransitionName = 'rp-slide-next';
             this.previewIndex += 1;
             this.syncSelectionFromPreview();
         },
@@ -1817,11 +1901,21 @@ const app = Vue.createApp({
 
             if (absX < SWIPE_THRESHOLD || absX < absY) return;
 
+            // 避免滑动后触发 click 误关闭预览
+            this._previewIgnoreClickUntil = Date.now() + 450;
+
             if (dx > 0) {
                 this.previewPrev();
             } else {
                 this.previewNext();
             }
+        },
+
+        onPreviewBackgroundClick() {
+            if (this._previewIgnoreClickUntil && Date.now() < this._previewIgnoreClickUntil) {
+                return;
+            }
+            this.closeImageModal();
         },
 
         onGlobalKeydown(e) {

@@ -417,6 +417,44 @@ input[type="range"].rp-range::-moz-range-thumb {
 /* 预览模态框 */
 .rp-preview-top {
     background: linear-gradient(to bottom, rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0));
+    z-index: 4;
+}
+
+.rp-preview-top,
+.rp-preview-bottom {
+    pointer-events: none;
+}
+
+.rp-preview-top .btn,
+.rp-preview-bottom .btn {
+    pointer-events: auto;
+}
+
+.rp-preview-bottom {
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    z-index: 4;
+}
+
+.rp-preview-stage {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.rp-preview-frame {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    will-change: transform;
 }
 
 .rp-preview-img {
@@ -429,6 +467,7 @@ input[type="range"].rp-range::-moz-range-thumb {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
+    z-index: 3;
     width: 3rem;
     height: 3rem;
     border-radius: 999px;
@@ -439,6 +478,53 @@ input[type="range"].rp-range::-moz-range-thumb {
     align-items: center;
     justify-content: center;
     backdrop-filter: blur(6px);
+}
+
+.rp-slide-next-enter-active,
+.rp-slide-next-leave-active,
+.rp-slide-prev-enter-active,
+.rp-slide-prev-leave-active {
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
+}
+
+.rp-slide-next-enter-from {
+    transform: translateX(100%);
+    opacity: 0.25;
+}
+
+.rp-slide-next-leave-to {
+    transform: translateX(-100%);
+    opacity: 0.25;
+}
+
+.rp-slide-prev-enter-from {
+    transform: translateX(-100%);
+    opacity: 0.25;
+}
+
+.rp-slide-prev-leave-to {
+    transform: translateX(100%);
+    opacity: 0.25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .rp-slide-next-enter-active,
+    .rp-slide-next-leave-active,
+    .rp-slide-prev-enter-active,
+    .rp-slide-prev-leave-active {
+        transition: none;
+    }
+}
+
+.rp-preview-params {
+    position: absolute;
+    left: 1rem;
+    right: 1rem;
+    bottom: 5.25rem;
+    max-height: 45vh;
+    overflow: auto;
+    z-index: 5;
+    box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.55);
 }
 
 .rp-preview-nav:disabled {
@@ -505,37 +591,88 @@ input[type="range"].rp-range::-moz-range-thumb {
     overflow: auto;
 }
 
-.rp-fav-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-
-.rp-fav-item {
+.rp-fav-grid {
     display: grid;
-    grid-template-columns: 84px minmax(0, 1fr) auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.75rem;
-    align-items: center;
 }
 
-.rp-fav-thumb {
-    width: 84px;
-    height: 64px;
+.rp-fav-card {
+    min-width: 0;
+}
+
+.rp-fav-card-thumb {
+    position: relative;
+    width: 100%;
+    height: 150px;
+    aspect-ratio: 4 / 3;
     background-color: #111;
     cursor: pointer;
 }
 
-.rp-fav-thumb:hover {
+.rp-fav-card-thumb:hover {
     outline: 2px solid rgba(255, 193, 7, 0.35);
     outline-offset: 0;
 }
 
-.rp-fav-actions .btn {
+.rp-fav-card-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 0.5rem;
+    display: flex;
+    justify-content: flex-end;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0));
+    pointer-events: none;
+}
+
+.rp-fav-card-top .btn {
+    pointer-events: auto;
+}
+
+.rp-fav-card-actions .btn {
     line-height: 1;
+    padding: 0.25rem 0.4rem;
+}
+
+.rp-fav-card-bottom {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 0.5rem;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0));
+}
+
+.rp-fav-card-title {
+    color: #e9ecef;
+    font-size: 0.8rem;
 }
 
 @media (max-width: 768px) {
     .rp-fav-panel {
         width: 100vw;
+    }
+
+    .rp-fav-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.5rem;
+    }
+
+    .rp-fav-card-top {
+        padding: 0.35rem;
+    }
+
+    .rp-fav-card-bottom {
+        padding: 0.35rem;
+    }
+
+    .rp-fav-card-title {
+        font-size: 0.72rem;
+    }
+
+    .rp-fav-card-thumb {
+        height: 120px;
     }
 }

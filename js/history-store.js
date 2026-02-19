@@ -113,6 +113,10 @@
     if (!fav || !fav.id) return null;
     const addedAt = Number(fav.addedAt || 0) || Date.now();
 
+    const placeholderValues = fav.placeholderValues && typeof fav.placeholderValues === 'object'
+      ? fav.placeholderValues
+      : {};
+
     return {
       id: String(fav.id),
       addedAt,
@@ -122,7 +126,8 @@
       requestCreatedAt: fav.requestCreatedAt !== undefined ? fav.requestCreatedAt : null,
       requestTemplateId: fav.requestTemplateId || '',
       requestTemplateName: fav.requestTemplateName || '',
-      requestJobId: fav.requestJobId || ''
+      requestJobId: fav.requestJobId || '',
+      placeholderValues
     };
   }
 

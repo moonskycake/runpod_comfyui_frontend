@@ -47,23 +47,23 @@
             </div>
             <div class="rp-fav-body">
                 <div v-if="favoriteImages.length === 0" class="text-muted text-center py-5">暂无收藏图片</div>
-                <div v-else class="rp-fav-list">
-                    <div v-for="(img, idx) in favoriteImages" :key="img.id" class="rp-fav-item">
-                        <div class="rp-fav-thumb border border-secondary rounded overflow-hidden" @click="openPreviewFromFavorites(idx)">
+                <div v-else class="rp-fav-grid">
+                    <div v-for="(img, idx) in favoriteImages" :key="img.id" class="rp-fav-card">
+                        <div class="rp-fav-card-thumb border border-secondary rounded overflow-hidden" @click="openPreviewFromFavorites(idx)" :title="img.filename || 'image.png'">
                             <img :src="img.imageUrl" alt="" style="width: 100%; height: 100%; object-fit: cover;">
-                        </div>
-                        <div class="rp-fav-info min-w-0">
-                            <div class="text-light small text-truncate">{{ img.filename || 'image.png' }}</div>
-                            <div class="text-muted small text-truncate">{{ img.favoriteRequestTemplateName || '—' }}</div>
-                            <div class="text-muted small">{{ formatDateTime(img.favoriteAddedAt || img.createdAt) }}</div>
-                        </div>
-                        <div class="rp-fav-actions d-flex flex-column gap-2">
-                            <button class="btn btn-outline-warning btn-sm" @click.stop="toggleFavorite(img)" title="取消收藏">
-                                <i class="bi bi-star-fill"></i>
-                            </button>
-                            <button class="btn btn-outline-danger btn-sm" @click.stop="deleteImage(img)" title="删除">
-                                <i class="bi bi-trash"></i>
-                            </button>
+                            <div class="rp-fav-card-top">
+                                <div class="rp-fav-card-actions d-flex gap-1">
+                                    <button class="btn btn-dark btn-sm border border-secondary" @click.stop="toggleFavorite(img)" title="取消收藏">
+                                        <i class="bi bi-star-fill text-warning"></i>
+                                    </button>
+                                    <button class="btn btn-dark btn-sm border border-secondary" @click.stop="deleteImage(img)" title="删除">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="rp-fav-card-bottom">
+                                <div class="rp-fav-card-title text-truncate">{{ img.filename || 'image.png' }}</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -914,31 +914,19 @@
             <div class="modal-dialog modal-fullscreen">
                 <div class="modal-content bg-dark">
                     <div class="modal-body d-flex align-items-center justify-content-center p-0 position-relative"
-                         @touchstart="onPreviewTouchStart" @touchend="onPreviewTouchEnd">
+                         @touchstart="onPreviewTouchStart" @touchend="onPreviewTouchEnd"
+                         @click.self="onPreviewBackgroundClick">
                         <div class="rp-preview-top position-absolute top-0 start-0 w-100 d-flex justify-content-between align-items-center p-3">
-                             <div class="text-light small d-flex align-items-center gap-2">
-                                 <span class="badge bg-dark border border-secondary">{{ previewIndicatorText }}</span>
-                                 <span v-if="previewImage" class="text-truncate d-inline-block" style="max-width: 60vw;">
-                                     {{ previewImage.filename }}
-                                 </span>
-                             </div>
-                             <div class="d-flex gap-2">
-                                 <button class="btn btn-outline-warning btn-sm" v-if="previewImage" @click.stop="toggleFavorite(previewImage)"
-                                         :title="isFavorited(previewImage.id) ? '取消收藏' : '收藏'">
-                                     <i class="bi" :class="isFavorited(previewImage.id) ? 'bi-star-fill' : 'bi-star'"></i>
-                                 </button>
-                                 <button class="btn btn-outline-light btn-sm" v-if="previewImage" @click.stop="downloadImage(previewImage)" title="下载/打开">
-                                     <i class="bi bi-download"></i>
-                                 </button>
-                                 <button class="btn btn-outline-danger btn-sm" v-if="previewImage"
-                                         @click.stop="previewMode === 'history' ? deleteImage(previewImage, { recordId: previewHistoryId }) : deleteImage(previewImage)" title="删除">
-                                     <i class="bi bi-trash"></i>
-                                 </button>
-                                 <button class="btn btn-light btn-sm" @click.stop="closeImageModal" title="关闭">
-                                     <i class="bi bi-x-lg"></i>
-                                 </button>
-                             </div>
-                         </div>
+                            <div class="text-light small d-flex align-items-center gap-2">
+                                <span class="badge bg-dark border border-secondary">{{ previewIndicatorText }}</span>
+                                <span v-if="previewImage" class="text-truncate d-inline-block" style="max-width: 60vw;">
+                                    {{ previewImage.filename }}
+                                </span>
+                            </div>
+                            <button class="btn btn-light btn-sm" @click.stop="closeImageModal" title="关闭">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
 
                         <button class="rp-preview-nav rp-preview-prev" type="button"
                                 @click.stop="previewPrev" :disabled="!previewCanPrev" aria-label="Previous image">
@@ -949,7 +937,58 @@
                             <i class="bi bi-chevron-right"></i>
                         </button>
 
-                        <img v-if="previewImage" :src="previewImage.imageUrl" class="img-fluid rp-preview-img">
+                        <div class="rp-preview-stage">
+                            <transition :name="previewTransitionName">
+                                <div v-if="previewImage" :key="previewImage.id" class="rp-preview-frame" @click.stop>
+                                    <img :src="previewImage.imageUrl" class="img-fluid rp-preview-img" alt="">
+                                </div>
+                            </transition>
+                        </div>
+
+                        <div class="rp-preview-bottom position-absolute bottom-0 start-0 w-100 d-flex justify-content-end align-items-center flex-wrap gap-2 p-3">
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-outline-info btn-sm" v-if="previewParamValues" @click.stop="togglePreviewParams"
+                                        :class="{ active: showPreviewParams }" title="参数">
+                                    <i class="bi bi-sliders"></i>
+                                </button>
+                                <button class="btn btn-outline-warning btn-sm" v-if="previewImage" @click.stop="toggleFavorite(previewImage)"
+                                        :title="isFavorited(previewImage.id) ? '取消收藏' : '收藏'">
+                                    <i class="bi" :class="isFavorited(previewImage.id) ? 'bi-star-fill' : 'bi-star'"></i>
+                                </button>
+                                <button class="btn btn-outline-light btn-sm" v-if="previewImage" @click.stop="downloadImage(previewImage)" title="下载/打开">
+                                    <i class="bi bi-download"></i>
+                                </button>
+                                <button class="btn btn-outline-danger btn-sm" v-if="previewImage"
+                                        @click.stop="previewMode === 'history' ? deleteImage(previewImage, { recordId: previewHistoryId }) : deleteImage(previewImage)" title="删除">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div v-if="showPreviewParams && previewParamValues" class="rp-preview-params" @click.stop>
+                            <div class="card bg-dark border-secondary">
+                                <div class="card-header border-secondary d-flex justify-content-between align-items-center py-2">
+                                    <div class="text-light small">
+                                        <i class="bi bi-sliders"></i>
+                                        参数
+                                    </div>
+                                    <button class="btn btn-outline-light btn-sm" @click.stop="showPreviewParams = false" title="收起">
+                                        <i class="bi bi-chevron-down"></i>
+                                    </button>
+                                </div>
+                                <div class="card-body py-2">
+                                    <div class="d-flex flex-wrap gap-2 mb-2">
+                                        <span v-if="previewParamValues.width && previewParamValues.height" class="badge bg-secondary">
+                                            {{ previewParamValues.width }}x{{ previewParamValues.height }}
+                                        </span>
+                                        <span v-if="previewParamValues.seed !== undefined" class="badge bg-secondary">Seed {{ previewParamValues.seed }}</span>
+                                        <span v-if="previewParamValues.steps !== undefined" class="badge bg-secondary">Steps {{ previewParamValues.steps }}</span>
+                                        <span v-if="previewParamValues.cfg !== undefined" class="badge bg-secondary">CFG {{ previewParamValues.cfg }}</span>
+                                    </div>
+                                    <pre class="mb-0 small">{{ JSON.stringify(previewParamValues, null, 2) }}</pre>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
