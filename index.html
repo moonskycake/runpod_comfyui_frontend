@@ -577,7 +577,53 @@
                         <!-- 请求历史 -->
                         <div v-show="resultsTab === 'history'">
                             <div class="row g-3">
-                                <div class="col-lg-4">
+                                <!-- 手机：下拉 + 折叠列表 -->
+                                <div class="col-12 d-lg-none">
+                                    <div class="d-flex justify-content-between align-items-end gap-2">
+                                        <div class="flex-grow-1 min-w-0">
+                                            <label class="form-label text-light small mb-1">当前请求</label>
+                                            <select class="form-select bg-dark text-light border-secondary"
+                                                    v-model="selectedHistoryId"
+                                                    @change="selectHistoryRecord(selectedHistoryId)">
+                                                <option v-for="item in requestHistory" :key="item.id" :value="item.id">
+                                                    {{ formatDateTimeShort(item.createdAt) }} · {{ item.status }} · {{ item.templateName || '自定义 Workflow' }}
+                                                </option>
+                                            </select>
+                                        </div>
+                                        <button class="btn btn-outline-light btn-sm" @click="resultsTab = 'gallery'" title="打开图库">
+                                            <i class="bi bi-grid-3x3-gap"></i>
+                                        </button>
+                                    </div>
+
+                                    <details class="rp-details-block mt-2">
+                                        <summary class="text-light small">查看全部请求（{{ requestHistory.length }}）</summary>
+                                        <div class="list-group rp-list mt-2">
+                                            <button v-for="item in requestHistory" :key="item.id"
+                                                    type="button"
+                                                    class="list-group-item list-group-item-action bg-dark text-light border-secondary"
+                                                    :class="{ active: selectedHistoryRecord && selectedHistoryRecord.id === item.id }"
+                                                    @click="selectHistoryRecord(item.id)">
+                                                <div class="d-flex justify-content-between align-items-center gap-2">
+                                                    <div class="fw-semibold text-truncate min-w-0">
+                                                        {{ item.templateName || '自定义 Workflow' }}
+                                                    </div>
+                                                    <span class="badge" :class="getStatusBadgeClass(item.status)">{{ item.status }}</span>
+                                                </div>
+
+                                                <div class="small rp-history-meta mt-1">
+                                                    <i class="bi bi-clock"></i> {{ formatDateTimeShort(item.createdAt) }}
+                                                    <span v-if="item.images && item.images.length"> · {{ item.images.length }} 张</span>
+                                                    <span v-if="item.deletedImages && item.deletedImages.length"> · 已删 {{ item.deletedImages.length }}</span>
+                                                </div>
+                                                <div class="small text-muted" v-if="item.jobId">Job: {{ item.jobId }}</div>
+                                                <div class="small text-danger" v-if="item.errorMessage">{{ item.errorMessage }}</div>
+                                            </button>
+                                        </div>
+                                    </details>
+                                </div>
+
+                                <!-- 桌面：常驻列表 -->
+                                <div class="col-lg-4 d-none d-lg-block">
                                     <div class="list-group rp-list">
                                         <button v-for="item in requestHistory" :key="item.id"
                                                 type="button"
@@ -592,7 +638,7 @@
                                             </div>
 
                                             <div class="small rp-history-meta mt-1">
-                                                <i class="bi bi-clock"></i> {{ formatDateTime(item.createdAt) }}
+                                                <i class="bi bi-clock"></i> {{ formatDateTimeShort(item.createdAt) }}
                                                 <span v-if="item.images && item.images.length"> · {{ item.images.length }} 张</span>
                                                 <span v-if="item.deletedImages && item.deletedImages.length"> · 已删 {{ item.deletedImages.length }}</span>
                                             </div>

@@ -934,6 +934,9 @@ const app = Vue.createApp({
         this.builtinTemplates = TemplateManager.builtinTemplates;
         this.loadUserTemplates();
 
+        // 恢复上次选择的模板（工作流）
+        this.restoreSelectedTemplateId();
+
         // 更新配置状态
         this.isConfigValid = Settings.isConfigured();
         this.updateConnectionStatus();
@@ -967,6 +970,7 @@ const app = Vue.createApp({
 
     watch: {
         selectedTemplateId() {
+            this.persistSelectedTemplateId();
             this.onTemplateSelect();
         },
 
@@ -1387,6 +1391,42 @@ const app = Vue.createApp({
         // ========== 模板管理 ==========
         loadUserTemplates() {
             this.userTemplates = TemplateManager.loadUserTemplates();
+        },
+
+        persistSelectedTemplateId() {
+            const KEY = 'runpod_selected_template_id_v1';
+            try {
+                localStorage.setItem(KEY, String(this.selectedTemplateId || ''));
+            } catch (e) {
+                // ignore
+            }
+        },
+
+        restoreSelectedTemplateId() {
+            // 不覆盖用户已经手动选择的
+            if (this.selectedTemplateId) return;
+
+            const KEY = 'runpod_selected_template_id_v1';
+            let id = '';
+            try {
+                id = localStorage.getItem(KEY) || '';
+            } catch (e) {
+                id = '';
+            }
+            if (!id) return;
+
+            const tpl = TemplateManager.get(id);
+            if (tpl) {
+                this.selectedTemplateId = id;
+                return;
+            }
+
+            // 已失效的 id，清理
+            try {
+                localStorage.removeItem(KEY);
+            } catch (e) {
+                // ignore
+            }
         },
 
         onTemplateSelect() {
@@ -2269,6 +2309,22 @@ const app = Vue.createApp({
                 return new Date(ts).toLocaleString();
             } catch (e) {
                 return String(ts);
+            }
+        },
+
+        formatDateTimeShort(ts) {
+            if (!ts) return '-';
+            try {
+                const d = new Date(ts);
+                const now = new Date();
+                const pad2 = (n) => String(n).padStart(2, '0');
+                const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+                const sameDay = d.toDateString() === now.toDateString();
+                if (sameDay) return hm;
+                const md = `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+                return `${md} ${hm}`;
+            } catch (e) {
+                return this.formatDateTime(ts);
             }
         },
 
