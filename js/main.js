@@ -194,6 +194,14 @@ const app = Vue.createApp({
             selectedHistoryImageIndex: 0,
             selectedGalleryIndex: 0,
 
+            // ========== 收藏 ==========
+            favorites: [],
+            // 收藏图片缓存（用于在请求记录被裁剪后仍可展示收藏）
+            // { [imageId]: { id, filename, type, data, imageUrl, createdAt } }
+            favoriteImageCache: {},
+            showFavoritesPanel: false,
+            selectedFavoriteIndex: 0,
+
             // ========== 设置相关 ==========
             showSettings: false,
             showApiKey: false,
@@ -220,7 +228,7 @@ const app = Vue.createApp({
 
             // ========== 图片预览 ==========
             showImageModal: false,
-            previewMode: 'history', // 'history' | 'gallery'
+            previewMode: 'history', // 'history' | 'gallery' | 'favorites'
             previewHistoryId: '',
             previewIndex: 0,
             previewTouchStartX: 0,
@@ -315,6 +323,40 @@ const app = Vue.createApp({
             return images;
         },
 
+        favoriteImages() {
+            const favs = Array.isArray(this.favorites) ? this.favorites : [];
+            if (favs.length === 0) return [];
+
+            const fromHistory = new Map();
+            this.requestHistory.forEach(r => {
+                (r.images || []).forEach(img => {
+                    if (img && img.id) fromHistory.set(img.id, img);
+                });
+            });
+
+            const cache = this.favoriteImageCache || {};
+            const items = [];
+
+            favs.forEach(f => {
+                if (!f || !f.id) return;
+                const img = fromHistory.get(f.id) || cache[f.id];
+                if (!img) return;
+                items.push({
+                    ...img,
+                    favoriteAddedAt: f.addedAt || null,
+                    favoriteRequestId: f.requestId || '',
+                    favoriteRequestTemplateName: f.requestTemplateName || ''
+                });
+            });
+
+            items.sort((a, b) => (b.favoriteAddedAt || 0) - (a.favoriteAddedAt || 0));
+            return items;
+        },
+
+        favoriteCount() {
+            return Array.isArray(this.favorites) ? this.favorites.length : 0;
+        },
+
         selectedGalleryImage() {
             const images = this.galleryImages;
             if (images.length === 0) return null;
@@ -337,6 +379,9 @@ const app = Vue.createApp({
 
         // ========== 图片预览 ==========
         previewImages() {
+            if (this.previewMode === 'favorites') {
+                return this.favoriteImages;
+            }
             if (this.previewMode === 'gallery') {
                 return this.galleryImages;
             }
@@ -446,12 +491,20 @@ const app = Vue.createApp({
         this.isConfigValid = Settings.isConfigured();
         this.updateConnectionStatus();
 
+        // 加载持久化历史
+        this.loadPersistedHistory();
+
         // 全局按键（图片预览）
         window.addEventListener('keydown', this.onGlobalKeydown);
     },
 
     beforeUnmount() {
         window.removeEventListener('keydown', this.onGlobalKeydown);
+
+        if (this._persistTimer) {
+            clearTimeout(this._persistTimer);
+            this._persistTimer = null;
+        }
     },
 
     watch: {
@@ -851,6 +904,218 @@ const app = Vue.createApp({
             this.inputImages.splice(index, 1);
         },
 
+        // ========== 历史持久化 ==========
+        async loadPersistedHistory() {
+            if (!window.HistoryStore) return;
+            try {
+                await window.HistoryStore.init();
+                const loaded = await window.HistoryStore.load();
+                const records = loaded && Array.isArray(loaded.records) ? loaded.records : [];
+                const favorites = loaded && Array.isArray(loaded.favorites) ? loaded.favorites : [];
+                const imageMap = loaded && loaded.imageMap ? loaded.imageMap : {};
+
+                // 先恢复收藏（即使没有历史记录）
+                this.favorites = favorites;
+                this.favoriteImageCache = {};
+                favorites.forEach(f => {
+                    const stored = imageMap && f && f.id ? imageMap[f.id] : null;
+                    if (!stored) return;
+
+                    const type = stored.type || (f.type || 'base64');
+                    const data = stored.data || '';
+                    const imageUrl = type === 'base64'
+                        ? `data:image/png;base64,${data}`
+                        : data;
+
+                    this.favoriteImageCache[f.id] = {
+                        id: stored.id,
+                        filename: stored.filename || (f.filename || 'image.png'),
+                        type,
+                        data,
+                        imageUrl,
+                        createdAt: stored.createdAt || (f.addedAt || Date.now())
+                    };
+                });
+
+                if (!Array.isArray(records) || records.length === 0) {
+                    this.requestHistory = [];
+                    this.ensureResultsSelection();
+                    return;
+                }
+
+                const restored = records.map(r => {
+                    const images = (r.images || []).map(ref => {
+                        const stored = imageMap && ref && ref.id ? imageMap[ref.id] : null;
+                        if (!stored) return null;
+
+                        const type = stored.type || (ref.type || 'base64');
+                        const data = stored.data || '';
+                        const imageUrl = type === 'base64'
+                            ? `data:image/png;base64,${data}`
+                            : data;
+
+                        return {
+                            id: stored.id,
+                            filename: stored.filename || (ref.filename || 'image.png'),
+                            type,
+                            data,
+                            imageUrl,
+                            createdAt: stored.createdAt || r.createdAt
+                        };
+                    }).filter(Boolean);
+
+                    return {
+                        ...r,
+                        deletedImages: Array.isArray(r.deletedImages) ? r.deletedImages : [],
+                        images
+                    };
+                });
+
+                this.requestHistory = restored;
+                this.resultsTab = 'history';
+                this.ensureResultsSelection();
+            } catch (e) {
+                // 持久化不可用时，忽略
+            }
+        },
+
+        queuePersistHistory() {
+            if (!window.HistoryStore) return;
+            if (this._persistTimer) clearTimeout(this._persistTimer);
+            this._persistTimer = setTimeout(() => {
+                this.persistHistoryNow();
+            }, 400);
+        },
+
+        async persistHistoryNow() {
+            if (!window.HistoryStore) return;
+            try {
+                const records = this.serializeHistoryForStore();
+                const favorites = this.serializeFavoritesForStore();
+                const pruned = await window.HistoryStore.save({ records, favorites });
+                this.applyPrunedRecordsToMemory(pruned.records);
+                this.applyPrunedFavoritesToMemory(pruned.favorites);
+                this.ensureResultsSelection();
+            } catch (e) {
+                // 忽略持久化失败
+            }
+        },
+
+        serializeHistoryForStore() {
+            return (this.requestHistory || []).map(r => ({
+                id: r.id,
+                createdAt: r.createdAt,
+                updatedAt: r.updatedAt,
+                status: r.status,
+                runMode: r.runMode,
+                endpointId: r.endpointId,
+                jobId: r.jobId,
+                templateId: r.templateId,
+                templateName: r.templateName,
+                workflowJson: r.workflowJson,
+                placeholderValues: r.placeholderValues,
+                payloadSize: r.payloadSize,
+                delayTime: r.delayTime,
+                executionTime: r.executionTime,
+                errorMessage: r.errorMessage,
+                deletedImages: Array.isArray(r.deletedImages) ? r.deletedImages : [],
+                images: (r.images || []).map(img => ({
+                    id: img.id,
+                    filename: img.filename || 'image.png',
+                    type: img.type || 'base64'
+                }))
+            }));
+        },
+
+        serializeFavoritesForStore() {
+            return (this.favorites || []).map(f => ({
+                id: f.id,
+                addedAt: f.addedAt,
+                filename: f.filename || 'image.png',
+                type: f.type || 'base64',
+                requestId: f.requestId || '',
+                requestCreatedAt: f.requestCreatedAt !== undefined ? f.requestCreatedAt : null,
+                requestTemplateId: f.requestTemplateId || '',
+                requestTemplateName: f.requestTemplateName || '',
+                requestJobId: f.requestJobId || ''
+            }));
+        },
+
+        applyPrunedRecordsToMemory(prunedRecords) {
+            if (!Array.isArray(prunedRecords)) return;
+
+            const currentMap = new Map((this.requestHistory || []).map(r => [r.id, r]));
+            const next = [];
+
+            prunedRecords.forEach(pr => {
+                const curr = currentMap.get(pr.id);
+                if (!curr) return;
+
+                const imgMap = new Map((curr.images || []).map(img => [img.id, img]));
+                const images = (pr.images || []).map(ref => imgMap.get(ref.id)).filter(Boolean);
+
+                const merged = { ...curr, ...pr };
+                merged.images = images;
+                next.push(merged);
+            });
+
+            this.requestHistory = next;
+        },
+
+        applyPrunedFavoritesToMemory(prunedFavorites) {
+            if (!Array.isArray(prunedFavorites)) return;
+            const next = prunedFavorites.filter(f => f && f.id);
+            const keepSet = new Set(next.map(f => f.id));
+            const nextCache = {};
+
+            Object.keys(this.favoriteImageCache || {}).forEach(id => {
+                if (keepSet.has(id)) {
+                    nextCache[id] = this.favoriteImageCache[id];
+                }
+            });
+
+            this.favorites = next;
+            this.favoriteImageCache = nextCache;
+
+            if (this.selectedFavoriteIndex < 0) this.selectedFavoriteIndex = 0;
+            if (this.selectedFavoriteIndex >= this.favoriteImages.length) {
+                this.selectedFavoriteIndex = Math.max(0, this.favoriteImages.length - 1);
+            }
+        },
+
+        ensureResultsSelection() {
+            if (!Array.isArray(this.requestHistory) || this.requestHistory.length === 0) {
+                this.selectedHistoryId = '';
+                this.selectedHistoryImageIndex = 0;
+                this.selectedGalleryIndex = 0;
+                return;
+            }
+
+            const hasSelected = this.selectedHistoryId && this.requestHistory.some(r => r.id === this.selectedHistoryId);
+            if (!hasSelected) {
+                this.selectedHistoryId = this.requestHistory[0].id;
+                this.selectedHistoryImageIndex = 0;
+            }
+
+            // 修正历史图片索引（避免删除后出现 3/1 之类的显示）
+            const rec = this.requestHistory.find(r => r.id === this.selectedHistoryId) || this.requestHistory[0];
+            const imgLen = rec && Array.isArray(rec.images) ? rec.images.length : 0;
+            if (imgLen <= 0) {
+                this.selectedHistoryImageIndex = 0;
+            } else {
+                if (this.selectedHistoryImageIndex < 0) this.selectedHistoryImageIndex = 0;
+                if (this.selectedHistoryImageIndex >= imgLen) this.selectedHistoryImageIndex = imgLen - 1;
+            }
+
+            const galleryCount = this.galleryImages.length;
+            if (galleryCount === 0) {
+                this.selectedGalleryIndex = 0;
+                return;
+            }
+            if (this.selectedGalleryIndex < 0) this.selectedGalleryIndex = 0;
+            if (this.selectedGalleryIndex >= galleryCount) this.selectedGalleryIndex = galleryCount - 1;
+        },
+
         // ========== 请求历史 ==========
         createHistoryEntry(meta) {
             const now = Date.now();
@@ -873,6 +1138,7 @@ const app = Vue.createApp({
                 delayTime: null,
                 executionTime: null,
                 errorMessage: '',
+                deletedImages: [],
                 images: []
             };
         },
@@ -886,6 +1152,8 @@ const app = Vue.createApp({
                 ...patch,
                 updatedAt: Date.now()
             };
+
+            this.queuePersistHistory();
         },
 
         extractImagesFromRunpodData(data) {
@@ -902,7 +1170,8 @@ const app = Vue.createApp({
                             filename: img.filename || 'image.png',
                             type: 'base64',
                             data: img.data,
-                            imageUrl: `data:image/png;base64,${img.data}`
+                            imageUrl: `data:image/png;base64,${img.data}`,
+                            createdAt: Date.now()
                         });
                     } else if (img.type === 's3_url') {
                         images.push({
@@ -910,7 +1179,8 @@ const app = Vue.createApp({
                             filename: img.filename || 'image.png',
                             type: 's3_url',
                             data: img.data,
-                            imageUrl: img.data
+                            imageUrl: img.data,
+                            createdAt: Date.now()
                         });
                     }
                 });
@@ -920,14 +1190,15 @@ const app = Vue.createApp({
                     filename: 'image.png',
                     type: 'base64',
                     data: output.message.split(',')[1],
-                    imageUrl: output.message
+                    imageUrl: output.message,
+                    createdAt: Date.now()
                 });
             }
 
             return images;
         },
 
-        finalizeHistoryEntry(entryId, data) {
+        async finalizeHistoryEntry(entryId, data) {
             const images = this.extractImagesFromRunpodData(data);
 
             if (data && data.executionTime !== undefined) {
@@ -945,6 +1216,15 @@ const app = Vue.createApp({
                 return;
             }
 
+            // 持久化图片数据（IndexedDB）
+            if (window.HistoryStore && window.HistoryStore.isIndexedDbAvailable()) {
+                try {
+                    await window.HistoryStore.putImages(images);
+                } catch (e) {
+                    // ignore
+                }
+            }
+
             this.updateHistoryEntry(entryId, {
                 status: 'COMPLETED',
                 images,
@@ -955,6 +1235,9 @@ const app = Vue.createApp({
             this.selectedHistoryId = entryId;
             this.selectedHistoryImageIndex = 0;
             this.selectedGalleryIndex = 0;
+
+            // 完成后立即持久化（含裁剪）
+            await this.persistHistoryNow();
         },
 
         // ========== 生成 ==========
@@ -1031,6 +1314,7 @@ const app = Vue.createApp({
             this.selectedHistoryImageIndex = 0;
             this.resultsTab = 'history';
             this.currentHistoryId = historyEntry.id;
+            this.queuePersistHistory();
 
             try {
                 if (settings.runMode === 'runsync') {
@@ -1040,7 +1324,7 @@ const app = Vue.createApp({
 
                     if (result.success) {
                         this.currentJobStatus = 'COMPLETED';
-                        this.finalizeHistoryEntry(historyEntry.id, result.data);
+                        await this.finalizeHistoryEntry(historyEntry.id, result.data);
                     } else {
                         this.errorMessage = result.message;
                         this.currentJobStatus = 'FAILED';
@@ -1078,7 +1362,7 @@ const app = Vue.createApp({
 
                     if (pollResult.success) {
                         this.currentJobStatus = 'COMPLETED';
-                        this.finalizeHistoryEntry(historyEntry.id, pollResult.data);
+                        await this.finalizeHistoryEntry(historyEntry.id, pollResult.data);
                     } else if (pollResult.cancelled) {
                         this.currentJobStatus = 'CANCELLED';
                         this.errorMessage = '已取消';
@@ -1224,6 +1508,186 @@ const app = Vue.createApp({
             this.selectedGalleryIndex = index;
         },
 
+        // ========== 收藏 ==========
+        openFavoritesPanel() {
+            this.showFavoritesPanel = true;
+        },
+
+        closeFavoritesPanel() {
+            this.showFavoritesPanel = false;
+        },
+
+        toggleFavoritesPanel() {
+            this.showFavoritesPanel = !this.showFavoritesPanel;
+        },
+
+        isFavorited(imageId) {
+            if (!imageId) return false;
+            return Array.isArray(this.favorites) && this.favorites.some(f => f && f.id === imageId);
+        },
+
+        removeFavoriteById(imageId) {
+            if (!imageId) return;
+            const idx = (this.favorites || []).findIndex(f => f && f.id === imageId);
+            if (idx !== -1) {
+                this.favorites.splice(idx, 1);
+            }
+            if (this.favoriteImageCache && this.favoriteImageCache[imageId]) {
+                delete this.favoriteImageCache[imageId];
+            }
+        },
+
+        findRecordForImage(image) {
+            if (!image || !image.id) return null;
+            if (image.requestId) {
+                return this.requestHistory.find(r => r.id === image.requestId) || null;
+            }
+            return this.requestHistory.find(r => (r.images || []).some(img => img && img.id === image.id)) || null;
+        },
+
+        toggleFavorite(image) {
+            if (!image || !image.id) return;
+
+            const id = image.id;
+            const existingIdx = (this.favorites || []).findIndex(f => f && f.id === id);
+
+            // 取消收藏
+            if (existingIdx !== -1) {
+                this.favorites.splice(existingIdx, 1);
+                if (this.favoriteImageCache && this.favoriteImageCache[id]) {
+                    delete this.favoriteImageCache[id];
+                }
+
+                // 如果该图片不在本地历史中，取消收藏后可以清理 IndexedDB
+                const stillInHistory = (this.requestHistory || []).some(r =>
+                    (r.images || []).some(img => img && img.id === id)
+                );
+                if (!stillInHistory && window.HistoryStore && window.HistoryStore.deleteImages) {
+                    window.HistoryStore.deleteImages([id]).catch(() => { });
+                }
+
+                this.syncPreviewAfterDataChange();
+                this.persistHistoryNow();
+                return;
+            }
+
+            // 新增收藏（上限 50，阻止并提示）
+            const maxFav = window.HistoryStore && window.HistoryStore.LIMITS
+                ? (window.HistoryStore.LIMITS.maxFavorites || 50)
+                : 50;
+            if ((this.favorites || []).length >= maxFav) {
+                alert(`收藏已满（最多 ${maxFav} 张）。请先取消收藏或删除一些图片。`);
+                return;
+            }
+
+            const record = this.findRecordForImage(image);
+            const now = Date.now();
+            const fav = {
+                id,
+                addedAt: now,
+                filename: image.filename || 'image.png',
+                type: image.type || 'base64',
+                requestId: record ? record.id : (image.requestId || ''),
+                requestCreatedAt: record ? record.createdAt : (image.requestCreatedAt !== undefined ? image.requestCreatedAt : null),
+                requestTemplateId: record ? (record.templateId || '') : (image.requestTemplateId || ''),
+                requestTemplateName: record ? (record.templateName || '') : (image.requestTemplateName || ''),
+                requestJobId: record ? (record.jobId || '') : (image.requestJobId || '')
+            };
+
+            // 去重兜底（理论不会走到）
+            this.favorites = (this.favorites || []).filter(f => f && f.id !== id);
+            this.favorites.unshift(fav);
+
+            // 缓存图片，确保请求记录被裁剪后仍能展示收藏
+            this.favoriteImageCache = this.favoriteImageCache || {};
+            this.favoriteImageCache[id] = {
+                id: image.id,
+                filename: image.filename || 'image.png',
+                type: image.type || 'base64',
+                data: image.data || '',
+                imageUrl: image.imageUrl || '',
+                createdAt: image.createdAt || now
+            };
+
+            // 确保收藏图片写入 IndexedDB（避免后续裁剪丢失）
+            if (window.HistoryStore && window.HistoryStore.isIndexedDbAvailable && window.HistoryStore.isIndexedDbAvailable()) {
+                window.HistoryStore.putImages([image]).catch(() => { });
+            }
+
+            this.persistHistoryNow();
+        },
+
+        async deleteImage(image, options) {
+            if (!image || !image.id) return;
+
+            const filename = image.filename || 'image.png';
+            const ok = confirm(`确定要删除这张图片吗？\n${filename}\n\n删除后将无法恢复。`);
+            if (!ok) return;
+
+            const id = image.id;
+
+            // 从收藏移除
+            this.removeFavoriteById(id);
+
+            // 从请求记录中移除
+            let record = null;
+            if (options && options.recordId) {
+                record = this.requestHistory.find(r => r.id === options.recordId) || null;
+            }
+            if (!record && image.requestId) {
+                record = this.requestHistory.find(r => r.id === image.requestId) || null;
+            }
+            if (!record) {
+                record = this.findRecordForImage(image);
+            }
+
+            if (record) {
+                const nextImages = (record.images || []).filter(img => img && img.id !== id);
+                const deleted = {
+                    id,
+                    filename,
+                    deletedAt: Date.now()
+                };
+                const nextDeleted = Array.isArray(record.deletedImages) ? [...record.deletedImages] : [];
+                nextDeleted.unshift(deleted);
+
+                if (nextImages.length === 0) {
+                    // 如果该请求只剩这一张图，直接删除整条记录
+                    this.requestHistory = (this.requestHistory || []).filter(r => r.id !== record.id);
+                } else {
+                    record.images = nextImages;
+                    record.deletedImages = nextDeleted;
+                    record.updatedAt = Date.now();
+                }
+            }
+
+            // 删除 IndexedDB 中的图片数据
+            if (window.HistoryStore && window.HistoryStore.deleteImages) {
+                try {
+                    await window.HistoryStore.deleteImages([id]);
+                } catch (e) {
+                    // ignore
+                }
+            }
+
+            this.ensureResultsSelection();
+            this.syncPreviewAfterDataChange();
+
+            await this.persistHistoryNow();
+        },
+
+        syncPreviewAfterDataChange() {
+            if (!this.showImageModal) return;
+            const total = this.previewImages.length;
+            if (!total) {
+                this.closeImageModal();
+                return;
+            }
+            if (this.previewIndex < 0) this.previewIndex = 0;
+            if (this.previewIndex >= total) this.previewIndex = total - 1;
+            this.syncSelectionFromPreview();
+        },
+
         // ========== 参数回填 ==========
         applyParamsFromRecord(record) {
             if (!record) return;
@@ -1285,6 +1749,21 @@ const app = Vue.createApp({
             this.resultsTab = 'gallery';
         },
 
+        openPreviewFromFavorites(index) {
+            const total = this.favoriteImages.length;
+            if (!total) return;
+
+            const idx = Math.max(0, Math.min(index, total - 1));
+            this.previewMode = 'favorites';
+            this.previewHistoryId = '';
+            this.previewIndex = idx;
+            this.selectedFavoriteIndex = idx;
+            this.showImageModal = true;
+
+            // 打开预览时收起侧边栏
+            this.showFavoritesPanel = false;
+        },
+
         closeImageModal() {
             this.showImageModal = false;
             this.previewIndex = 0;
@@ -1304,6 +1783,10 @@ const app = Vue.createApp({
         },
 
         syncSelectionFromPreview() {
+            if (this.previewMode === 'favorites') {
+                this.selectedFavoriteIndex = this.previewIndex;
+                return;
+            }
             if (this.previewMode === 'gallery') {
                 this.selectedGalleryIndex = this.previewIndex;
                 return;

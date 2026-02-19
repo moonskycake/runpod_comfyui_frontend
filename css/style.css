@@ -362,10 +362,20 @@ input[type="range"].rp-range::-moz-range-thumb {
 }
 
 .rp-kv {
-    border: 1px solid #495057;
+    border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 0.5rem;
     padding: 0.75rem;
-    background-color: #1a1d20;
+    background:
+        radial-gradient(120% 120% at 0% 0%, rgba(13, 110, 253, 0.16), rgba(0, 0, 0, 0) 60%),
+        rgba(0, 0, 0, 0.22);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 0.25rem 0.75rem rgba(0, 0, 0, 0.25);
+    min-width: 0;
+}
+
+.rp-kv .text-muted {
+    color: #b7c0c9 !important;
 }
 
 @media (max-width: 768px) {
@@ -453,5 +463,79 @@ input[type="range"].rp-range::-moz-range-thumb {
     }
     .rp-preview-next {
         right: 0.75rem;
+    }
+}
+
+/* 收藏侧边栏 */
+.rp-fav-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 1050;
+}
+
+.rp-fav-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: min(420px, 92vw);
+    background: rgba(20, 22, 26, 0.98);
+    border-left: 1px solid rgba(255, 255, 255, 0.14);
+    z-index: 1051;
+    transform: translateX(110%);
+    transition: transform 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    pointer-events: none;
+    box-shadow: -0.5rem 0 1.25rem rgba(0, 0, 0, 0.45);
+}
+
+.rp-fav-panel-show {
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.rp-fav-header {
+    padding: 0.75rem;
+}
+
+.rp-fav-body {
+    padding: 0.75rem;
+    overflow: auto;
+}
+
+.rp-fav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.rp-fav-item {
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.rp-fav-thumb {
+    width: 84px;
+    height: 64px;
+    background-color: #111;
+    cursor: pointer;
+}
+
+.rp-fav-thumb:hover {
+    outline: 2px solid rgba(255, 193, 7, 0.35);
+    outline-offset: 0;
+}
+
+.rp-fav-actions .btn {
+    line-height: 1;
+}
+
+@media (max-width: 768px) {
+    .rp-fav-panel {
+        width: 100vw;
     }
 }
