@@ -551,7 +551,7 @@
                                                 <span class="badge" :class="getStatusBadgeClass(item.status)">{{ item.status }}</span>
                                             </div>
 
-                                            <div class="small text-muted mt-1">
+                                            <div class="small rp-history-meta mt-1">
                                                 <i class="bi bi-clock"></i> {{ formatDateTime(item.createdAt) }}
                                                 <span v-if="item.images && item.images.length"> · {{ item.images.length }} 张</span>
                                                 <span v-if="item.deletedImages && item.deletedImages.length"> · 已删 {{ item.deletedImages.length }}</span>
