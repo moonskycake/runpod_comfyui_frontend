@@ -18,6 +18,11 @@
     min-width: 0 !important;
 }
 
+/* Dark UI: make muted text readable */
+.text-muted {
+    color: #b7c0c9 !important;
+}
+
 /* 暗色主题表单样式覆盖 */
 .form-control:focus {
     background-color: #212529;
@@ -285,11 +290,11 @@ input[type="range"].rp-range::-moz-range-thumb {
 }
 
 .rp-history-meta {
-    color: rgba(233, 236, 239, 0.72);
+    color: #b7c0c9;
 }
 
 .rp-list .list-group-item.active .rp-history-meta {
-    color: rgba(255, 255, 255, 0.86);
+    color: #e9ecef;
 }
 
 .rp-list .list-group-item:hover {
