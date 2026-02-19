@@ -484,6 +484,15 @@ const app = Vue.createApp({
             selectedSizePreset: '',
             seedRandomEachRun: false,
 
+            // 参数面板：各模块展开/收起状态
+            paramSectionsOpen: {
+                size: true,
+                prompt: true,
+                sampling: true,
+                inputImage: true,
+                other: true
+            },
+
             // ========== 提示词预设 ==========
             showPromptPresets: false,
             promptPresetTab: 'blocks', // 'blocks' | 'snippets'
@@ -905,6 +914,10 @@ const app = Vue.createApp({
         }
     },
 
+    created() {
+        this.initParamSectionsOpenState();
+    },
+
     mounted() {
         // 加载设置
         const settings = Settings.get();
@@ -1121,6 +1134,11 @@ const app = Vue.createApp({
         },
 
         togglePromptInputOptions() {
+            // 如果提示词模块被收起，先展开，避免用户找不到选项
+            if (this.paramSectionsOpen && this.paramSectionsOpen.prompt === false) {
+                this.paramSectionsOpen = { ...this.paramSectionsOpen, prompt: true };
+                this.persistParamSectionsOpenState();
+            }
             this.showPromptInputOptions = !this.showPromptInputOptions;
         },
 
@@ -1542,6 +1560,73 @@ const app = Vue.createApp({
                 this.placeholderValues = { ...defaults };
             }
             this.onSizeChange();
+        },
+
+        // ========== 参数面板折叠 ==========
+        initParamSectionsOpenState() {
+            const KEY = 'runpod_param_sections_v1';
+            try {
+                const raw = localStorage.getItem(KEY);
+                if (raw) {
+                    const parsed = this.safeJsonParse(raw, null);
+                    if (parsed && typeof parsed === 'object') {
+                        const next = { ...this.paramSectionsOpen };
+                        Object.keys(next).forEach(k => {
+                            if (typeof parsed[k] === 'boolean') next[k] = parsed[k];
+                        });
+                        this.paramSectionsOpen = next;
+                        return;
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+
+            // 没有保存过状态时：桌面保持全展开；移动端默认只展开提示词 + 图片尺寸
+            const isMobile = window.matchMedia
+                ? window.matchMedia('(max-width: 768px)').matches
+                : (window.innerWidth <= 768);
+
+            if (isMobile) {
+                this.paramSectionsOpen = {
+                    ...this.paramSectionsOpen,
+                    size: true,
+                    prompt: true,
+                    sampling: false,
+                    inputImage: false,
+                    other: false
+                };
+            } else {
+                this.paramSectionsOpen = {
+                    ...this.paramSectionsOpen,
+                    size: true,
+                    prompt: true,
+                    sampling: true,
+                    inputImage: true,
+                    other: true
+                };
+            }
+        },
+
+        persistParamSectionsOpenState() {
+            const KEY = 'runpod_param_sections_v1';
+            try {
+                localStorage.setItem(KEY, JSON.stringify(this.paramSectionsOpen || {}));
+            } catch (e) {
+                // ignore
+            }
+        },
+
+        toggleParamSection(key) {
+            if (!key) return;
+            const cur = this.paramSectionsOpen || {};
+            if (typeof cur[key] !== 'boolean') return;
+
+            this.paramSectionsOpen = {
+                ...cur,
+                [key]: !cur[key]
+            };
+            this.persistParamSectionsOpenState();
         },
 
         // ========== Workflow 编辑 ==========

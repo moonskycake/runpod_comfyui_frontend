@@ -157,112 +157,134 @@
                     </div>
                     <div class="card-body">
                         <!-- 图片尺寸（如果检测到 width/height）-->
-                        <div v-if="hasSizePlaceholders" class="mb-4 p-3 border rounded">
-                            <h6 class="text-light mb-3">
-                                <i class="bi bi-aspect-ratio"></i> 图片尺寸
-                            </h6>
-                            <div class="row g-3">
-                                <!-- 预设 -->
-                                <div class="col-12">
-                                    <label class="form-label text-light small">预设</label>
-                                    <select class="form-select form-select-sm bg-dark text-light border-secondary"
-                                            v-model="selectedSizePreset"
-                                            >
-                                        <option value="">-- 自定义 --</option>
-                                        <option v-for="preset in sizePresets" :key="preset.name" :value="preset">
-                                            {{ preset.name }} ({{ preset.width }}x{{ preset.height }})
-                                        </option>
-                                    </select>
+                        <div v-if="hasSizePlaceholders" class="rp-param-section mb-3">
+                            <div class="rp-param-header d-flex justify-content-between align-items-center"
+                                 @click="toggleParamSection('size')">
+                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                    <i class="bi bi-aspect-ratio text-light"></i>
+                                    <span class="text-light fw-semibold">图片尺寸</span>
+                                    <span class="badge bg-secondary" v-if="placeholderValues.width !== undefined && placeholderValues.height !== undefined">
+                                        {{ placeholderValues.width }}x{{ placeholderValues.height }}
+                                    </span>
                                 </div>
+                                <i class="bi rp-param-chevron" :class="paramSectionsOpen.size ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                            </div>
 
-                                <!-- 宽高 -->
-                                <div class="col-md-5">
-                                    <label class="form-label text-light small">宽度</label>
-                                    <input type="number" class="form-control bg-dark text-light border-secondary"
-                                           v-model.number="placeholderValues.width"
-                                           @change="onSizeChange"
-                                           min="64" max="2048" step="64">
-                                </div>
-                                <div class="col-md-2 d-flex align-items-end justify-content-center">
-                                    <button class="btn btn-outline-secondary btn-sm" @click="swapSize">
-                                        <i class="bi bi-arrow-left-right"></i>
-                                    </button>
-                                </div>
-                                <div class="col-md-5">
-                                    <label class="form-label text-light small">高度</label>
-                                    <input type="number" class="form-control bg-dark text-light border-secondary"
-                                           v-model.number="placeholderValues.height"
-                                           @change="onSizeChange"
-                                           min="64" max="2048" step="64">
+                            <div class="rp-param-body" v-show="paramSectionsOpen.size">
+                                <div class="row g-3">
+                                    <!-- 预设 -->
+                                    <div class="col-12">
+                                        <label class="form-label text-light small">预设</label>
+                                        <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                                v-model="selectedSizePreset">
+                                            <option value="">-- 自定义 --</option>
+                                            <option v-for="preset in sizePresets" :key="preset.name" :value="preset">
+                                                {{ preset.name }} ({{ preset.width }}x{{ preset.height }})
+                                            </option>
+                                        </select>
+                                    </div>
+
+                                    <!-- 宽高 -->
+                                    <div class="col-md-5">
+                                        <label class="form-label text-light small">宽度</label>
+                                        <input type="number" class="form-control bg-dark text-light border-secondary"
+                                               v-model.number="placeholderValues.width"
+                                               @change="onSizeChange"
+                                               min="64" max="2048" step="64">
+                                    </div>
+                                    <div class="col-md-2 d-flex align-items-end justify-content-center">
+                                        <button class="btn btn-outline-secondary btn-sm" @click="swapSize">
+                                            <i class="bi bi-arrow-left-right"></i>
+                                        </button>
+                                    </div>
+                                    <div class="col-md-5">
+                                        <label class="form-label text-light small">高度</label>
+                                        <input type="number" class="form-control bg-dark text-light border-secondary"
+                                               v-model.number="placeholderValues.height"
+                                               @change="onSizeChange"
+                                               min="64" max="2048" step="64">
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
                         <!-- 提示词 -->
-                        <div v-if="hasPromptPlaceholders" class="mb-4">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h6 class="text-light mb-0">
-                                    <i class="bi bi-chat-left-text"></i> 提示词
-                                </h6>
-                                <div class="d-flex gap-2">
-                                    <button class="btn btn-outline-secondary btn-sm" @click="togglePromptInputOptions" title="输入选项">
+                        <div v-if="hasPromptPlaceholders" class="rp-param-section mb-3">
+                            <div class="rp-param-header d-flex justify-content-between align-items-center"
+                                 @click="toggleParamSection('prompt')">
+                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                    <i class="bi bi-chat-left-text text-light"></i>
+                                    <span class="text-light fw-semibold">提示词</span>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <button class="btn btn-outline-secondary btn-sm" @click.stop="togglePromptInputOptions" title="输入选项">
                                         <i class="bi bi-sliders"></i>
                                     </button>
-                                    <button class="btn btn-outline-warning btn-sm" @click="openPromptPresets">
+                                    <button class="btn btn-outline-warning btn-sm" @click.stop="openPromptPresets">
                                         <i class="bi bi-bookmark-star"></i> 预设
                                     </button>
+                                    <i class="bi rp-param-chevron" :class="paramSectionsOpen.prompt ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
                                 </div>
                             </div>
 
-                            <div v-if="showPromptInputOptions" class="mb-3 p-3 border border-secondary rounded">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="promptKeepUnderscoreToggle"
-                                           v-model="promptInsertOptions.keepUnderscore"
-                                           @change="persistPromptInsertOptions">
-                                    <label class="form-check-label text-light" for="promptKeepUnderscoreToggle">
-                                        保留下划线（如 long_hair）
-                                    </label>
+                            <div class="rp-param-body" v-show="paramSectionsOpen.prompt">
+                                <div v-if="showPromptInputOptions" class="mb-3 p-3 border border-secondary rounded">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="promptKeepUnderscoreToggle"
+                                               v-model="promptInsertOptions.keepUnderscore"
+                                               @change="persistPromptInsertOptions">
+                                        <label class="form-check-label text-light" for="promptKeepUnderscoreToggle">
+                                            保留下划线（如 long_hair）
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-switch mt-2">
+                                        <input class="form-check-input" type="checkbox" id="promptEscapeParenToggle"
+                                               v-model="promptInsertOptions.escapeParentheses"
+                                               @change="persistPromptInsertOptions">
+                                        <label class="form-check-label text-light" for="promptEscapeParenToggle">
+                                            括号自动转义（如 photoshop_(medium)）
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-switch mt-2">
+                                        <input class="form-check-input" type="checkbox" id="promptKeepAtPrefixToggle"
+                                               v-model="promptInsertOptions.keepAtPrefix"
+                                               @change="persistPromptInsertOptions">
+                                        <label class="form-check-label text-light" for="promptKeepAtPrefixToggle">
+                                            保留 @ 前缀（画师联想插入为 @xxx）
+                                        </label>
+                                    </div>
+                                    <div class="rp-ac-hint mt-2">
+                                        提示：输入 <span class="rp-ac-tag">@</span> 开头将仅匹配画师标签
+                                    </div>
                                 </div>
-                                <div class="form-check form-switch mt-2">
-                                    <input class="form-check-input" type="checkbox" id="promptEscapeParenToggle"
-                                           v-model="promptInsertOptions.escapeParentheses"
-                                           @change="persistPromptInsertOptions">
-                                    <label class="form-check-label text-light" for="promptEscapeParenToggle">
-                                        括号自动转义（如 photoshop_(medium)）
-                                    </label>
-                                </div>
-                                <div class="form-check form-switch mt-2">
-                                    <input class="form-check-input" type="checkbox" id="promptKeepAtPrefixToggle"
-                                           v-model="promptInsertOptions.keepAtPrefix"
-                                           @change="persistPromptInsertOptions">
-                                    <label class="form-check-label text-light" for="promptKeepAtPrefixToggle">
-                                        保留 @ 前缀（画师联想插入为 @xxx）
-                                    </label>
-                                </div>
-                                <div class="rp-ac-hint mt-2">
-                                    提示：输入 <span class="rp-ac-tag">@</span> 开头将仅匹配画师标签
-                                </div>
-                            </div>
 
-                            <div v-for="p in promptPlaceholders" :key="p.name" class="mb-3">
-                                <label class="form-label text-light">{{ p.label }}</label>
-                                <prompt-textarea
-                                    v-model="placeholderValues[p.name]"
-                                    :rows="p.rows || 3"
-                                    :placeholder="p.default"
-                                    :disabled="isGenerating"
-                                    :insert-options="promptInsertOptions"
-                                ></prompt-textarea>
+                                <div v-for="p in promptPlaceholders" :key="p.name" class="mb-3">
+                                    <label class="form-label text-light">{{ p.label }}</label>
+                                    <prompt-textarea
+                                        v-model="placeholderValues[p.name]"
+                                        :rows="p.rows || 3"
+                                        :placeholder="p.default"
+                                        :disabled="isGenerating"
+                                        :insert-options="promptInsertOptions"
+                                    ></prompt-textarea>
+                                </div>
                             </div>
                         </div>
 
                         <!-- 采样参数 -->
-                        <div v-if="hasSamplingPlaceholders" class="mb-4">
-                            <h6 class="text-light mb-3">
-                                <i class="bi bi-speedometer2"></i> 采样参数
-                            </h6>
-                            <div class="row g-3">
-                                <template v-for="p in samplingPlaceholders" :key="p.name">
+                        <div v-if="hasSamplingPlaceholders" class="rp-param-section mb-3">
+                            <div class="rp-param-header d-flex justify-content-between align-items-center"
+                                 @click="toggleParamSection('sampling')">
+                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                    <i class="bi bi-speedometer2 text-light"></i>
+                                    <span class="text-light fw-semibold">采样参数</span>
+                                </div>
+                                <i class="bi rp-param-chevron" :class="paramSectionsOpen.sampling ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                            </div>
+
+                            <div class="rp-param-body" v-show="paramSectionsOpen.sampling">
+                                <div class="row g-3">
+                                    <template v-for="p in samplingPlaceholders" :key="p.name">
                                     <!-- Seed（支持每次随机） -->
                                     <div v-if="p.name === 'seed'" class="col-md-6">
                                         <label class="form-label text-light d-flex justify-content-between align-items-center">
@@ -324,43 +346,61 @@
                                                v-model.number="placeholderValues[p.name]"
                                                :min="p.min" :max="p.max" :step="p.step">
                                     </div>
-                                </template>
+                                    </template>
+                                </div>
                             </div>
                         </div>
 
                         <!-- 输入图片（占位符形式）-->
-                        <div v-if="hasInputImagePlaceholder" class="mb-4 p-3 border rounded">
-                            <h6 class="text-light mb-3">
-                                <i class="bi bi-image"></i> 输入图片
-                                <small class="text-muted ms-2">文件名: {{ placeholderValues.input_image }}</small>
-                            </h6>
-                            <div class="mb-2">
-                                <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2"
-                                       v-model="placeholderValues.input_image"
-                                       placeholder="输入图片文件名（如 input.png）">
+                        <div v-if="hasInputImagePlaceholder" class="rp-param-section mb-3">
+                            <div class="rp-param-header d-flex justify-content-between align-items-center"
+                                 @click="toggleParamSection('inputImage')">
+                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                    <i class="bi bi-image text-light"></i>
+                                    <span class="text-light fw-semibold">输入图片</span>
+                                    <span class="small text-muted text-truncate" v-if="placeholderValues.input_image">文件名: {{ placeholderValues.input_image }}</span>
+                                </div>
+                                <i class="bi rp-param-chevron" :class="paramSectionsOpen.inputImage ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
                             </div>
-                            <image-upload uploader-height="200"
-                                          v-model:uploderimagesrc="inputImageData"
-                                          :disabled="isGenerating"></image-upload>
-                            <div v-if="inputImageSizeWarning" class="alert alert-warning mt-2 mb-0 py-1">
-                                <i class="bi bi-exclamation-triangle"></i> {{ inputImageSizeWarning }}
+
+                            <div class="rp-param-body" v-show="paramSectionsOpen.inputImage">
+                                <div class="mb-2">
+                                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2"
+                                           v-model="placeholderValues.input_image"
+                                           placeholder="输入图片文件名（如 input.png）">
+                                </div>
+                                <image-upload uploader-height="200"
+                                              v-model:uploderimagesrc="inputImageData"
+                                              :disabled="isGenerating"></image-upload>
+                                <div v-if="inputImageSizeWarning" class="alert alert-warning mt-2 mb-0 py-1">
+                                    <i class="bi bi-exclamation-triangle"></i> {{ inputImageSizeWarning }}
+                                </div>
                             </div>
                         </div>
 
                         <!-- 其他占位符（未分类的） -->
-                        <div v-if="otherPlaceholders.length > 0" class="mb-4">
-                            <h6 class="text-light mb-3">
-                                <i class="bi bi-three-dots"></i> 其他参数
-                            </h6>
-                            <div class="row g-3">
-                                <template v-for="p in otherPlaceholders" :key="p.name">
-                                    <div class="col-md-6">
-                                        <label class="form-label text-light">{{ p.label }}</label>
-                                        <input type="text" class="form-control bg-dark text-light border-secondary"
-                                               v-model="placeholderValues[p.name]"
-                                               :placeholder="p.default">
-                                    </div>
-                                </template>
+                        <div v-if="otherPlaceholders.length > 0" class="rp-param-section mb-3">
+                            <div class="rp-param-header d-flex justify-content-between align-items-center"
+                                 @click="toggleParamSection('other')">
+                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                    <i class="bi bi-three-dots text-light"></i>
+                                    <span class="text-light fw-semibold">其他参数</span>
+                                    <span class="badge bg-secondary">{{ otherPlaceholders.length }}</span>
+                                </div>
+                                <i class="bi rp-param-chevron" :class="paramSectionsOpen.other ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                            </div>
+
+                            <div class="rp-param-body" v-show="paramSectionsOpen.other">
+                                <div class="row g-3">
+                                    <template v-for="p in otherPlaceholders" :key="p.name">
+                                        <div class="col-md-6">
+                                            <label class="form-label text-light">{{ p.label }}</label>
+                                            <input type="text" class="form-control bg-dark text-light border-secondary"
+                                                   v-model="placeholderValues[p.name]"
+                                                   :placeholder="p.default">
+                                        </div>
+                                    </template>
+                                </div>
                             </div>
                         </div>
 
