@@ -139,6 +139,7 @@ function generateLocalId(prefix) {
  * @returns {any}
  */
 function deepCloneJson(value) {
+    if (value === undefined) return undefined;
     return JSON.parse(JSON.stringify(value));
 }
 
@@ -916,6 +917,9 @@ const app = Vue.createApp({
 
     created() {
         this.initParamSectionsOpenState();
+        this.loadLastPlaceholderValuesDraft();
+        this.loadWorkflowCollapsedState();
+        this.loadSeedRandomEachRunState();
     },
 
     mounted() {
@@ -966,12 +970,33 @@ const app = Vue.createApp({
             clearTimeout(this._promptPresetMsgTimer);
             this._promptPresetMsgTimer = null;
         }
+
+        if (this._lastPlaceholderPersistTimer) {
+            clearTimeout(this._lastPlaceholderPersistTimer);
+            this._lastPlaceholderPersistTimer = null;
+        }
     },
 
     watch: {
-        selectedTemplateId() {
+        selectedTemplateId(newVal, oldVal) {
             this.persistSelectedTemplateId();
+
+            // 切换到某个模板时，不沿用上一次临时参数（仅使用模板保存的 defaults）
+            if (newVal && newVal !== oldVal) {
+                this.placeholderValues = {};
+                this.selectedSizePreset = '';
+                this.showPromptInputOptions = false;
+            }
+
             this.onTemplateSelect();
+        },
+
+        seedRandomEachRun(val) {
+            this.persistSeedRandomEachRunState();
+        },
+
+        isWorkflowCollapsed(val) {
+            this.persistWorkflowCollapsedState();
         },
 
         selectedSizePreset() {
@@ -1005,6 +1030,7 @@ const app = Vue.createApp({
             deep: true,
             handler() {
                 this.validatePlaceholders();
+                this.queuePersistLastPlaceholderValues();
             }
         },
 
@@ -1049,7 +1075,14 @@ const app = Vue.createApp({
 
                 // 设置默认值
                 const defaults = PlaceholderEngine.getDefaults(this.placeholders);
-                this.placeholderValues = { ...defaults, ...this.placeholderValues };
+                const merged = { ...defaults };
+                const cur = this.placeholderValues || {};
+                Object.keys(cur).forEach(key => {
+                    if (Object.prototype.hasOwnProperty.call(merged, key)) {
+                        merged[key] = cur[key];
+                    }
+                });
+                this.placeholderValues = merged;
 
                 // 如果有模板且模板有 defaults，优先使用模板的
                 if (this.selectedTemplate && this.selectedTemplate.defaults) {
@@ -1059,6 +1092,8 @@ const app = Vue.createApp({
                         }
                     });
                 }
+
+                this.applyLastPlaceholderValuesIfNeeded();
 
                 this.validatePlaceholders();
                 this.onSizeChange();
@@ -1070,7 +1105,14 @@ const app = Vue.createApp({
                 this.placeholders = PlaceholderEngine.scanText(this.workflowJson);
 
                 const defaults = PlaceholderEngine.getDefaults(this.placeholders);
-                this.placeholderValues = { ...defaults, ...this.placeholderValues };
+                const merged = { ...defaults };
+                const cur = this.placeholderValues || {};
+                Object.keys(cur).forEach(key => {
+                    if (Object.prototype.hasOwnProperty.call(merged, key)) {
+                        merged[key] = cur[key];
+                    }
+                });
+                this.placeholderValues = merged;
 
                 if (this.selectedTemplate && this.selectedTemplate.defaults) {
                     Object.keys(this.selectedTemplate.defaults).forEach(key => {
@@ -1079,6 +1121,8 @@ const app = Vue.createApp({
                         }
                     });
                 }
+
+                this.applyLastPlaceholderValuesIfNeeded();
 
                 this.validatePlaceholders();
                 this.onSizeChange();
@@ -1108,6 +1152,136 @@ const app = Vue.createApp({
         randomizeSeedOnce() {
             if (!this.hasSeedPlaceholder) return;
             this.placeholderValues.seed = this.generateRandomSeed();
+        },
+
+        // ========== 输入状态持久化（刷新恢复） ==========
+        loadLastPlaceholderValuesDraft() {
+            const KEY = 'runpod_last_placeholder_values_v1';
+            this._pendingLastPlaceholderValues = null;
+            this._didApplyLastPlaceholderValues = false;
+
+            let parsed = null;
+            try {
+                const raw = localStorage.getItem(KEY);
+                if (!raw) return;
+                parsed = this.safeJsonParse(raw, null);
+            } catch (e) {
+                parsed = null;
+            }
+
+            if (!parsed || typeof parsed !== 'object') return;
+            const values = parsed.values && typeof parsed.values === 'object' ? parsed.values : null;
+            if (!values) return;
+
+            this._pendingLastPlaceholderValues = values;
+        },
+
+        applyLastPlaceholderValuesIfNeeded() {
+            if (this._didApplyLastPlaceholderValues) return false;
+            const pending = this._pendingLastPlaceholderValues;
+            if (!pending || typeof pending !== 'object') return false;
+            if (!Array.isArray(this.placeholders) || this.placeholders.length === 0) return false;
+
+            const allowed = new Set(this.placeholders.map(p => p.name));
+            const next = { ...(this.placeholderValues || {}) };
+
+            Object.keys(pending).forEach(k => {
+                if (!allowed.has(k)) return;
+                next[k] = deepCloneJson(pending[k]);
+            });
+
+            this.placeholderValues = next;
+            this._pendingLastPlaceholderValues = null;
+            this._didApplyLastPlaceholderValues = true;
+            return true;
+        },
+
+        queuePersistLastPlaceholderValues() {
+            if (this._lastPlaceholderPersistTimer) {
+                clearTimeout(this._lastPlaceholderPersistTimer);
+                this._lastPlaceholderPersistTimer = null;
+            }
+
+            // 当 workflow 尚未解析出占位符时，不写入，避免覆盖为 "空"
+            if (!Array.isArray(this.placeholders) || this.placeholders.length === 0) return;
+
+            this._lastPlaceholderPersistTimer = setTimeout(() => {
+                this._lastPlaceholderPersistTimer = null;
+                this.persistLastPlaceholderValuesNow();
+            }, 600);
+        },
+
+        persistLastPlaceholderValuesNow() {
+            const KEY = 'runpod_last_placeholder_values_v1';
+            if (!Array.isArray(this.placeholders) || this.placeholders.length === 0) return;
+
+            const allowed = new Set(this.placeholders.map(p => p.name));
+            const values = {};
+            const cur = this.placeholderValues || {};
+            Object.keys(cur).forEach(k => {
+                if (!allowed.has(k)) return;
+                values[k] = cur[k];
+            });
+
+            try {
+                localStorage.setItem(KEY, JSON.stringify({
+                    updatedAt: Date.now(),
+                    templateId: this.selectedTemplateId || '',
+                    values
+                }));
+            } catch (e) {
+                // ignore
+            }
+        },
+
+        loadWorkflowCollapsedState() {
+            const KEY = 'runpod_workflow_collapsed_v1';
+            try {
+                const raw = localStorage.getItem(KEY);
+                if (!raw) return;
+                const parsed = this.safeJsonParse(raw, null);
+                if (typeof parsed === 'boolean') {
+                    this.isWorkflowCollapsed = parsed;
+                } else if (parsed && typeof parsed === 'object' && typeof parsed.value === 'boolean') {
+                    this.isWorkflowCollapsed = parsed.value;
+                }
+            } catch (e) {
+                // ignore
+            }
+        },
+
+        persistWorkflowCollapsedState() {
+            const KEY = 'runpod_workflow_collapsed_v1';
+            try {
+                localStorage.setItem(KEY, JSON.stringify({ value: !!this.isWorkflowCollapsed }));
+            } catch (e) {
+                // ignore
+            }
+        },
+
+        loadSeedRandomEachRunState() {
+            const KEY = 'runpod_seed_random_each_run_v1';
+            try {
+                const raw = localStorage.getItem(KEY);
+                if (!raw) return;
+                const parsed = this.safeJsonParse(raw, null);
+                if (typeof parsed === 'boolean') {
+                    this.seedRandomEachRun = parsed;
+                } else if (parsed && typeof parsed === 'object' && typeof parsed.value === 'boolean') {
+                    this.seedRandomEachRun = parsed.value;
+                }
+            } catch (e) {
+                // ignore
+            }
+        },
+
+        persistSeedRandomEachRunState() {
+            const KEY = 'runpod_seed_random_each_run_v1';
+            try {
+                localStorage.setItem(KEY, JSON.stringify({ value: !!this.seedRandomEachRun }));
+            } catch (e) {
+                // ignore
+            }
         },
 
         // ========== 提示词预设 ==========
