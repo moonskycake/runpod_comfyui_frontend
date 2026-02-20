@@ -532,6 +532,7 @@ const app = Vue.createApp({
             selectedHistoryId: '',
             selectedHistoryImageIndex: 0,
             selectedGalleryIndex: 0,
+            historyListDesktopMaxHeight: 0,
 
             // ========== 收藏 ==========
             favorites: [],
@@ -735,6 +736,16 @@ const app = Vue.createApp({
             if (this.requestHistory.length === 0) return null;
             const found = this.requestHistory.find(r => r.id === this.selectedHistoryId);
             return found || this.requestHistory[0];
+        },
+
+        historyListDesktopStyle() {
+            const h = Number(this.historyListDesktopMaxHeight || 0);
+            if (!Number.isFinite(h) || h <= 0) {
+                return {};
+            }
+            return {
+                maxHeight: `${Math.max(120, Math.floor(h))}px`
+            };
         },
 
         selectedHistoryParamsForJson() {
@@ -1009,10 +1020,20 @@ const app = Vue.createApp({
 
         // 全局按键（图片预览）
         window.addEventListener('keydown', this.onGlobalKeydown);
+        window.addEventListener('resize', this.onWindowResize);
+
+        // 首次渲染后同步桌面历史列表高度
+        this.queueSyncHistoryListDesktopHeight();
     },
 
     beforeUnmount() {
         window.removeEventListener('keydown', this.onGlobalKeydown);
+        window.removeEventListener('resize', this.onWindowResize);
+
+        if (this._historyListDesktopRaf) {
+            cancelAnimationFrame(this._historyListDesktopRaf);
+            this._historyListDesktopRaf = null;
+        }
 
         if (this._persistTimer) {
             clearTimeout(this._persistTimer);
@@ -1125,10 +1146,76 @@ const app = Vue.createApp({
             if (!val) {
                 this.settingsForm.maxConcurrent = 1;
             }
+        },
+
+        resultsTab() {
+            this.queueSyncHistoryListDesktopHeight();
+        },
+
+        selectedHistoryId() {
+            this.queueSyncHistoryListDesktopHeight();
+        },
+
+        selectedHistoryImageIndex() {
+            this.queueSyncHistoryListDesktopHeight();
+        },
+
+        requestHistory: {
+            deep: true,
+            handler() {
+                this.queueSyncHistoryListDesktopHeight();
+            }
         }
     },
 
     methods: {
+        // ========== 桌面历史列表高度同步 ==========
+        isDesktopViewport() {
+            if (typeof window === 'undefined') return false;
+            if (window.matchMedia) {
+                return window.matchMedia('(min-width: 992px)').matches;
+            }
+            return window.innerWidth >= 992;
+        },
+
+        onWindowResize() {
+            this.queueSyncHistoryListDesktopHeight();
+        },
+
+        queueSyncHistoryListDesktopHeight() {
+            if (this._historyListDesktopRaf) {
+                cancelAnimationFrame(this._historyListDesktopRaf);
+                this._historyListDesktopRaf = null;
+            }
+
+            this._historyListDesktopRaf = requestAnimationFrame(() => {
+                this._historyListDesktopRaf = null;
+                this.syncHistoryListDesktopHeight();
+            });
+        },
+
+        syncHistoryListDesktopHeight() {
+            if (!this.isDesktopViewport() || this.resultsTab !== 'history') {
+                this.historyListDesktopMaxHeight = 0;
+                return;
+            }
+
+            const rightBody = this.$refs.historyDetailDesktopBody || this.$refs.historyDetailDesktop;
+            if (!rightBody || !rightBody.getBoundingClientRect) {
+                this.historyListDesktopMaxHeight = 0;
+                return;
+            }
+
+            const rect = rightBody.getBoundingClientRect();
+            const h = Math.floor(rect.height || 0);
+            if (h > 0) {
+                this.historyListDesktopMaxHeight = h;
+                return;
+            }
+
+            this.historyListDesktopMaxHeight = 0;
+        },
+
         // ========== Workflow 解析 ==========
         parseWorkflow() {
             this.workflowError = '';

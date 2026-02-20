@@ -346,6 +346,24 @@ input[type="range"].rp-range::-moz-range-thumb {
     color: #fff;
 }
 
+@media (min-width: 992px) {
+    .rp-history-desktop-row {
+        align-items: stretch;
+    }
+
+    .rp-history-desktop-col {
+        display: flex;
+        min-height: 0;
+    }
+
+    .rp-history-list-desktop {
+        flex: 1 1 auto;
+        min-height: 0;
+        max-height: 100%;
+        overflow: auto;
+    }
+}
+
 /* 缩略图 */
 .rp-thumb {
     cursor: pointer;
