@@ -10,7 +10,19 @@ const Settings = {
     apiKey: '',
     rememberApiKey: false,
     runMode: 'run', // 'run' 或 'runsync'
-    pollIntervalMs: 2000
+    pollIntervalMs: 2000,
+
+    // ========== 生成行为 ==========
+    // 生成时是否锁定参数（注意：开启排队时会强制关闭锁定）
+    lockParamsOnGenerate: true,
+    // 是否允许并发生成
+    allowConcurrent: false,
+    // 是否允许排队生成（并发满时入队）
+    allowQueue: false,
+    // 并发生成上限（allowConcurrent=false 时等价为 1）
+    maxConcurrent: 1,
+    // 排队上限（allowQueue=false 时等价为 0）
+    maxQueue: 5
   },
 
   // localStorage 键名
@@ -19,7 +31,13 @@ const Settings = {
     API_KEY: 'runpod_api_key',
     REMEMBER_API_KEY: 'runpod_remember_api_key',
     RUN_MODE: 'runpod_run_mode',
-    POLL_INTERVAL: 'runpod_poll_interval'
+    POLL_INTERVAL: 'runpod_poll_interval',
+
+    LOCK_PARAMS_ON_GENERATE: 'runpod_lock_params_on_generate',
+    ALLOW_CONCURRENT: 'runpod_allow_concurrent',
+    ALLOW_QUEUE: 'runpod_allow_queue',
+    MAX_CONCURRENT: 'runpod_max_concurrent',
+    MAX_QUEUE: 'runpod_max_queue'
   },
 
   /**
@@ -30,6 +48,27 @@ const Settings = {
     const rememberApiKey = localStorage.getItem(this.KEYS.REMEMBER_API_KEY) === 'true';
     const runMode = localStorage.getItem(this.KEYS.RUN_MODE) || 'run';
     const pollIntervalMs = parseInt(localStorage.getItem(this.KEYS.POLL_INTERVAL)) || 2000;
+
+    const lockParamsOnGenerateRaw = localStorage.getItem(this.KEYS.LOCK_PARAMS_ON_GENERATE);
+    const lockParamsOnGenerate = lockParamsOnGenerateRaw === null
+      ? this.config.lockParamsOnGenerate
+      : lockParamsOnGenerateRaw === 'true';
+
+    const allowConcurrentRaw = localStorage.getItem(this.KEYS.ALLOW_CONCURRENT);
+    const allowConcurrent = allowConcurrentRaw === null
+      ? this.config.allowConcurrent
+      : allowConcurrentRaw === 'true';
+
+    const allowQueueRaw = localStorage.getItem(this.KEYS.ALLOW_QUEUE);
+    const allowQueue = allowQueueRaw === null
+      ? this.config.allowQueue
+      : allowQueueRaw === 'true';
+
+    const maxConcurrentRaw = parseInt(localStorage.getItem(this.KEYS.MAX_CONCURRENT));
+    const maxConcurrent = Number.isFinite(maxConcurrentRaw) ? maxConcurrentRaw : this.config.maxConcurrent;
+
+    const maxQueueRaw = parseInt(localStorage.getItem(this.KEYS.MAX_QUEUE));
+    const maxQueue = Number.isFinite(maxQueueRaw) ? maxQueueRaw : this.config.maxQueue;
     
     let apiKey = '';
     if (rememberApiKey) {
@@ -41,7 +80,13 @@ const Settings = {
       apiKey,
       rememberApiKey,
       runMode,
-      pollIntervalMs
+      pollIntervalMs,
+
+      lockParamsOnGenerate,
+      allowConcurrent,
+      allowQueue,
+      maxConcurrent,
+      maxQueue
     };
 
     return this.config;
@@ -59,6 +104,12 @@ const Settings = {
     localStorage.setItem(this.KEYS.REMEMBER_API_KEY, this.config.rememberApiKey);
     localStorage.setItem(this.KEYS.RUN_MODE, this.config.runMode);
     localStorage.setItem(this.KEYS.POLL_INTERVAL, this.config.pollIntervalMs.toString());
+
+    localStorage.setItem(this.KEYS.LOCK_PARAMS_ON_GENERATE, String(!!this.config.lockParamsOnGenerate));
+    localStorage.setItem(this.KEYS.ALLOW_CONCURRENT, String(!!this.config.allowConcurrent));
+    localStorage.setItem(this.KEYS.ALLOW_QUEUE, String(!!this.config.allowQueue));
+    localStorage.setItem(this.KEYS.MAX_CONCURRENT, String(Number(this.config.maxConcurrent || 1)));
+    localStorage.setItem(this.KEYS.MAX_QUEUE, String(Number(this.config.maxQueue || 0)));
 
     // apiKey 仅在用户勾选"记住"时保存
     if (this.config.rememberApiKey) {
@@ -122,7 +173,13 @@ const Settings = {
       apiKey: '',
       rememberApiKey: false,
       runMode: 'run',
-      pollIntervalMs: 2000
+      pollIntervalMs: 2000,
+
+      lockParamsOnGenerate: true,
+      allowConcurrent: false,
+      allowQueue: false,
+      maxConcurrent: 1,
+      maxQueue: 5
     };
     
     Object.values(this.KEYS).forEach(key => {

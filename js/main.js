@@ -519,17 +519,12 @@ const app = Vue.createApp({
             inputImageData: '',
             inputImageSizeWarning: '',
 
-            // ========== 生成状态 ==========
-            isGenerating: false,
-            currentJobId: '',
-            currentJobStatus: '',
-            currentHistoryId: '',
-            jobStats: {
-                delayTime: null,
-                executionTime: null
-            },
+            // ========== 生成调度（并发/排队） ==========
+            // activeJobs: [{ taskId, historyId, runMode, cancelRequested, jobId }]
+            activeJobs: [],
+            // jobQueue:  [{ taskId, historyId, runMode, cancelRequested, jobId, payload }]
+            jobQueue: [],
             errorMessage: '',
-            shouldStopPolling: false,
 
             // ========== 结果 ==========
             resultsTab: 'history', // 'history' | 'gallery'
@@ -549,12 +544,32 @@ const app = Vue.createApp({
             // ========== 设置相关 ==========
             showSettings: false,
             showApiKey: false,
+            // 当前已生效的设置（点击“保存设置”后更新）
+            settings: {
+                endpointId: '',
+                apiKey: '',
+                rememberApiKey: false,
+                runMode: 'run',
+                pollIntervalMs: 2000,
+
+                lockParamsOnGenerate: true,
+                allowConcurrent: false,
+                allowQueue: false,
+                maxConcurrent: 1,
+                maxQueue: 5
+            },
             settingsForm: {
                 endpointId: '',
                 apiKey: '',
                 rememberApiKey: false,
                 runMode: 'run',
-                pollIntervalMs: 2000
+                pollIntervalMs: 2000,
+
+                lockParamsOnGenerate: true,
+                allowConcurrent: false,
+                allowQueue: false,
+                maxConcurrent: 1,
+                maxQueue: 5
             },
             testingConnection: false,
             connectionTestResult: null,
@@ -598,6 +613,45 @@ const app = Vue.createApp({
             return true;
         },
 
+        // ========== 并发 / 排队 ==========
+        activeJobCount() {
+            return Array.isArray(this.activeJobs) ? this.activeJobs.length : 0;
+        },
+
+        queuedJobCount() {
+            return Array.isArray(this.jobQueue) ? this.jobQueue.length : 0;
+        },
+
+        effectiveGenerationSettings() {
+            return this.getEffectiveGenerationSettings();
+        },
+
+        isParamsLocked() {
+            const s = this.effectiveGenerationSettings;
+            if (!s.lockParamsOnGenerate) return false;
+            return this.activeJobCount > 0;
+        },
+
+        canAcceptNewJob() {
+            const s = this.effectiveGenerationSettings;
+            const active = this.activeJobCount;
+            const queued = this.queuedJobCount;
+            if (active < s.maxConcurrent) return true;
+            if (s.allowQueue && queued < s.maxQueue) return true;
+            return false;
+        },
+
+        canCancelSelected() {
+            const rec = this.selectedHistoryRecord;
+            if (!rec || !rec.id) return false;
+            return (this.activeJobs || []).some(j => j && j.historyId === rec.id)
+                || (this.jobQueue || []).some(j => j && j.historyId === rec.id);
+        },
+
+        canCancelAll() {
+            return this.activeJobCount > 0 || this.queuedJobCount > 0;
+        },
+
         canSaveTemplate() {
             return this.workflowJson.trim() && !this.workflowError;
         },
@@ -615,7 +669,7 @@ const app = Vue.createApp({
         },
 
         runModeLabel() {
-            return this.settingsForm.runMode === 'run' ? '异步' : '同步';
+            return (this.settings && this.settings.runMode) === 'run' ? '异步' : '同步';
         },
 
         connectionStatusClass() {
@@ -926,6 +980,7 @@ const app = Vue.createApp({
     mounted() {
         // 加载设置
         const settings = Settings.get();
+        this.settings = { ...settings };
         this.settingsForm = { ...settings };
 
         // 初始化 RunPod 客户端
@@ -1060,6 +1115,20 @@ const app = Vue.createApp({
                 }
             } else {
                 this.inputImageSizeWarning = '';
+            }
+        },
+
+        // 设置表单：基础逻辑约束
+        'settingsForm.allowQueue'(val) {
+            // 允许排队时，锁参数必定关闭（否则无法继续改参数做下一次排队）
+            if (val) {
+                this.settingsForm.lockParamsOnGenerate = false;
+            }
+        },
+
+        'settingsForm.allowConcurrent'(val) {
+            if (!val) {
+                this.settingsForm.maxConcurrent = 1;
             }
         }
     },
@@ -2308,10 +2377,6 @@ const app = Vue.createApp({
         async finalizeHistoryEntry(entryId, data) {
             const images = this.extractImagesFromRunpodData(data);
 
-            if (data && data.executionTime !== undefined) {
-                this.jobStats.executionTime = data.executionTime;
-            }
-
             if (images.length === 0) {
                 const msg = '未在返回结果中找到图片';
                 this.errorMessage = msg;
@@ -2338,38 +2403,102 @@ const app = Vue.createApp({
                 executionTime: data && data.executionTime !== undefined ? data.executionTime : null
             });
 
-            // 默认切换到最新图片
-            this.selectedHistoryId = entryId;
-            this.selectedHistoryImageIndex = 0;
-            this.selectedGalleryIndex = 0;
+            // 如果用户当前正在查看该请求，则自动切到第一张
+            if (this.selectedHistoryId === entryId || !this.selectedHistoryId) {
+                this.selectedHistoryId = entryId;
+                this.selectedHistoryImageIndex = 0;
+                this.selectedGalleryIndex = 0;
+            }
 
             // 完成后立即持久化（含裁剪）
             await this.persistHistoryNow();
         },
 
-        // ========== 生成 ==========
-        async generate() {
-            if (!this.canGenerate) return;
+        // ========== 生成（并发 / 排队） ==========
+        clampInt(value, min, max) {
+            const n = Math.trunc(Number(value));
+            if (!Number.isFinite(n)) return min;
+            return Math.min(max, Math.max(min, n));
+        },
 
-            this.isGenerating = true;
-            this.errorMessage = '';
-            this.currentJobId = '';
-            this.currentJobStatus = '';
-            this.currentHistoryId = '';
-            this.jobStats = { delayTime: null, executionTime: null };
-            this.shouldStopPolling = false;
+        toSafeInt(value, fallback) {
+            const n = Math.trunc(Number(value));
+            return Number.isFinite(n) ? n : fallback;
+        },
 
-            // 每次生成前随机 seed
-            if (this.seedRandomEachRun && this.hasSeedPlaceholder) {
-                this.randomizeSeedOnce();
+        getEffectivePollIntervalMs() {
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            const raw = base && base.pollIntervalMs !== undefined ? base.pollIntervalMs : 2000;
+            const n = Math.trunc(Number(raw));
+            if (!Number.isFinite(n)) return 2000;
+            return this.clampInt(n, 1000, 10000);
+        },
+
+        getEffectiveRunMode() {
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            return base && base.runMode === 'runsync' ? 'runsync' : 'run';
+        },
+
+        getClientConfigSnapshot() {
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            return {
+                endpointId: (base && base.endpointId) || '',
+                apiKey: (base && base.apiKey) || '',
+                baseUrl: (RunpodClient && RunpodClient.config && RunpodClient.config.baseUrl) || 'https://api.runpod.ai/v2'
+            };
+        },
+
+        getEffectiveGenerationSettings() {
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            const storeMaxRaw = window.HistoryStore && window.HistoryStore.LIMITS ? window.HistoryStore.LIMITS.maxRequests : 30;
+            const storeMax = Number.isFinite(Number(storeMaxRaw)) ? Number(storeMaxRaw) : 30;
+
+            const allowQueue = !!(base && base.allowQueue);
+            const allowConcurrent = !!(base && base.allowConcurrent);
+
+            let maxConcurrent = allowConcurrent ? this.toSafeInt(base.maxConcurrent, 1) : 1;
+            maxConcurrent = this.clampInt(maxConcurrent, 1, Math.max(1, storeMax));
+
+            let maxQueue = allowQueue ? this.toSafeInt(base.maxQueue, 0) : 0;
+            // 约束：并发 + 排队不超过历史记录上限，避免任务记录被裁剪导致状态丢失
+            maxQueue = this.clampInt(maxQueue, 0, Math.max(0, storeMax - maxConcurrent));
+
+            // 允许排队时，锁参数必定关闭
+            const lockParamsOnGenerate = !!(base && base.lockParamsOnGenerate) && !allowQueue;
+
+            return {
+                lockParamsOnGenerate,
+                allowConcurrent,
+                allowQueue,
+                maxConcurrent,
+                maxQueue,
+                storeMax
+            };
+        },
+
+        getNewTaskAcceptance() {
+            const s = this.getEffectiveGenerationSettings();
+            const active = Array.isArray(this.activeJobs) ? this.activeJobs.length : 0;
+            const queued = Array.isArray(this.jobQueue) ? this.jobQueue.length : 0;
+
+            if (active < s.maxConcurrent) return { mode: 'start', message: '' };
+            if (s.allowQueue && queued < s.maxQueue) return { mode: 'queue', message: '' };
+
+            if (s.allowQueue) {
+                return { mode: 'reject', message: `排队已满（上限 ${s.maxQueue}）` };
             }
+            return { mode: 'reject', message: `并发已满（上限 ${s.maxConcurrent}）` };
+        },
 
-            // 使用替换后的 workflow
+        buildPayloadForCurrentInput() {
             const finalWorkflow = this.finalWorkflow;
+            if (!finalWorkflow) {
+                return { success: false, message: 'Workflow 无效或未解析完成' };
+            }
 
             const payload = {
                 input: {
-                    workflow: finalWorkflow
+                    workflow: deepCloneJson(finalWorkflow)
                 }
             };
 
@@ -2378,7 +2507,7 @@ const app = Vue.createApp({
 
             // 1. 处理占位符形式的输入图片
             if (this.hasInputImagePlaceholder && this.inputImageData) {
-                const imageName = this.placeholderValues.input_image || 'input.png';
+                const imageName = (this.placeholderValues && this.placeholderValues.input_image) || 'input.png';
                 validImages.push({
                     name: imageName,
                     image: this.inputImageData
@@ -2386,8 +2515,8 @@ const app = Vue.createApp({
             }
 
             // 2. 处理列表形式的输入图片（向后兼容）
-            this.inputImages
-                .filter(img => img.image && img.name)
+            (this.inputImages || [])
+                .filter(img => img && img.image && img.name)
                 .forEach(img => {
                     validImages.push({
                         name: img.name,
@@ -2396,143 +2525,352 @@ const app = Vue.createApp({
                 });
 
             if (validImages.length > 0) {
-                payload.input.images = validImages;
+                payload.input.images = deepCloneJson(validImages);
             }
 
             // 估算请求大小
             const payloadSize = JSON.stringify(payload).length;
             if (payloadSize > 10 * 1024 * 1024) {
-                this.errorMessage = `请求体过大 (${formatFileSize(payloadSize)})，超过 10MB 限制。请减少输入图片数量或大小。`;
-                this.isGenerating = false;
+                return {
+                    success: false,
+                    payloadSize,
+                    imageCount: validImages.length,
+                    message: `请求体过大 (${formatFileSize(payloadSize)})，超过 10MB 限制。请减少输入图片数量或大小。`
+                };
+            }
+
+            return {
+                success: true,
+                payload,
+                payloadSize,
+                imageCount: validImages.length
+            };
+        },
+
+        removeActiveTask(taskId) {
+            this.activeJobs = (this.activeJobs || []).filter(j => j && j.taskId !== taskId);
+        },
+
+        startTask(task) {
+            if (!task || !task.taskId || !task.historyId) return;
+
+            if (task.cancelRequested) {
+                this.updateHistoryEntry(task.historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
                 return;
             }
 
-            const settings = Settings.get();
+            this.activeJobs.push(task);
+            this.updateHistoryEntry(task.historyId, { status: 'SUBMITTING', errorMessage: '' });
+
+            this.runTask(task)
+                .catch(() => {
+                    // ignore (runTask 会自行落库)
+                })
+                .finally(() => {
+                    this.removeActiveTask(task.taskId);
+                    this.pumpQueue();
+                });
+        },
+
+        pumpQueue() {
+            const s = this.getEffectiveGenerationSettings();
+            const active = Array.isArray(this.activeJobs) ? this.activeJobs.length : 0;
+            if (active >= s.maxConcurrent) return;
+
+            while ((this.activeJobs || []).length < s.maxConcurrent && (this.jobQueue || []).length > 0) {
+                const task = this.jobQueue.shift();
+                if (!task || task.cancelRequested) continue;
+                this.startTask(task);
+            }
+        },
+
+        async runTask(task) {
+            const historyId = task && task.historyId ? task.historyId : '';
+            const clientCfg = task && task.clientConfig ? task.clientConfig : this.getClientConfigSnapshot();
+            const payload = task && task.payload ? task.payload : null;
+
+            if (!historyId || !payload) {
+                return;
+            }
+
+            if (task.cancelRequested) {
+                this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+                return;
+            }
+
+            try {
+                if (task.runMode === 'runsync') {
+                    this.updateHistoryEntry(historyId, { status: 'IN_PROGRESS' });
+                    const result = await RunpodClient.runSync(payload, 300000, clientCfg);
+
+                    if (task.cancelRequested) {
+                        this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+                        return;
+                    }
+
+                    if (result.success) {
+                        await this.finalizeHistoryEntry(historyId, result.data);
+                    } else {
+                        this.errorMessage = result.message;
+                        this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: result.message });
+                    }
+                    return;
+                }
+
+                const runResult = await RunpodClient.run(payload, clientCfg);
+                if (!runResult.success) {
+                    this.errorMessage = runResult.message;
+                    this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: runResult.message });
+                    return;
+                }
+
+                const jobId = runResult.data && runResult.data.id ? String(runResult.data.id) : '';
+                const initStatus = runResult.data && runResult.data.status ? String(runResult.data.status) : 'IN_QUEUE';
+                task.jobId = jobId;
+
+                if (task.cancelRequested) {
+                    if (jobId) {
+                        try {
+                            await RunpodClient.cancel(jobId, clientCfg);
+                        } catch (e) {
+                            // ignore
+                        }
+                    }
+                    this.updateHistoryEntry(historyId, { jobId, status: 'CANCELLED', errorMessage: '用户取消' });
+                    return;
+                }
+
+                this.updateHistoryEntry(historyId, { jobId, status: initStatus });
+
+                if (!jobId) {
+                    this.errorMessage = '提交任务失败：未返回 job id';
+                    this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: '提交任务失败：未返回 job id' });
+                    return;
+                }
+
+                const pollResult = await RunpodClient.poll(jobId, {
+                    intervalMs: task.pollIntervalMs,
+                    onStatus: (data) => {
+                        if (task.cancelRequested) return;
+                        this.updateHistoryEntry(historyId, {
+                            status: data.status,
+                            delayTime: data.delayTime !== undefined ? data.delayTime : null
+                        });
+                    },
+                    shouldStop: () => task.cancelRequested
+                }, clientCfg);
+
+                if (pollResult.success) {
+                    await this.finalizeHistoryEntry(historyId, pollResult.data);
+                } else if (pollResult.cancelled) {
+                    this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+                } else {
+                    const st = pollResult.status || 'FAILED';
+                    this.errorMessage = pollResult.message;
+                    this.updateHistoryEntry(historyId, { status: st, errorMessage: pollResult.message });
+                }
+            } catch (err) {
+                const msg = '生成失败: ' + (err && err.message ? err.message : String(err));
+                this.errorMessage = msg;
+                this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: msg });
+            }
+        },
+
+        async generate() {
+            if (!this.canGenerate) return;
+
+            const accept = this.getNewTaskAcceptance();
+            if (accept.mode === 'reject') {
+                this.errorMessage = accept.message;
+                return;
+            }
+
+            this.errorMessage = '';
+
+            // 每次生成前随机 seed
+            if (this.seedRandomEachRun && this.hasSeedPlaceholder) {
+                this.randomizeSeedOnce();
+            }
+
+            const build = this.buildPayloadForCurrentInput();
+            if (!build.success) {
+                this.errorMessage = build.message;
+                return;
+            }
+
+            const runMode = this.getEffectiveRunMode();
+            const pollIntervalMs = this.getEffectivePollIntervalMs();
+            const clientConfig = this.getClientConfigSnapshot();
 
             // 创建请求历史记录
             const historyEntry = this.createHistoryEntry({
-                runMode: settings.runMode,
-                endpointId: settings.endpointId,
-                payloadSize,
-                imageCount: validImages.length
+                runMode,
+                endpointId: clientConfig.endpointId,
+                payloadSize: build.payloadSize,
+                imageCount: build.imageCount
             });
             this.requestHistory.unshift(historyEntry);
             this.selectedHistoryId = historyEntry.id;
             this.selectedHistoryImageIndex = 0;
             this.resultsTab = 'history';
-            this.currentHistoryId = historyEntry.id;
             this.queuePersistHistory();
 
-            try {
-                if (settings.runMode === 'runsync') {
-                    this.currentJobStatus = 'IN_PROGRESS';
-                    this.updateHistoryEntry(historyEntry.id, { status: 'IN_PROGRESS' });
-                    const result = await RunpodClient.runSync(payload, 300000);
+            const task = {
+                taskId: generateLocalId('task'),
+                historyId: historyEntry.id,
+                runMode,
+                pollIntervalMs,
+                clientConfig,
+                payload: build.payload,
+                cancelRequested: false,
+                jobId: ''
+            };
 
-                    if (result.success) {
-                        this.currentJobStatus = 'COMPLETED';
-                        await this.finalizeHistoryEntry(historyEntry.id, result.data);
-                    } else {
-                        this.errorMessage = result.message;
-                        this.currentJobStatus = 'FAILED';
-                        this.updateHistoryEntry(historyEntry.id, { status: 'FAILED', errorMessage: result.message });
-                    }
-                } else {
-                    const runResult = await RunpodClient.run(payload);
-
-                    if (!runResult.success) {
-                        this.errorMessage = runResult.message;
-                        this.currentJobStatus = 'FAILED';
-                        this.updateHistoryEntry(historyEntry.id, { status: 'FAILED', errorMessage: runResult.message });
-                        return;
-                    }
-
-                    this.currentJobId = runResult.data.id;
-                    this.currentJobStatus = runResult.data.status;
-                    this.updateHistoryEntry(historyEntry.id, { jobId: this.currentJobId, status: this.currentJobStatus });
-
-                    const pollResult = await RunpodClient.poll(this.currentJobId, {
-                        intervalMs: settings.pollIntervalMs,
-                        onStatus: (data) => {
-                            this.currentJobStatus = data.status;
-                            if (data.delayTime !== undefined) {
-                                this.jobStats.delayTime = data.delayTime;
-                            }
-
-                            this.updateHistoryEntry(historyEntry.id, {
-                                status: data.status,
-                                delayTime: data.delayTime !== undefined ? data.delayTime : null
-                            });
-                        },
-                        shouldStop: () => this.shouldStopPolling
-                    });
-
-                    if (pollResult.success) {
-                        this.currentJobStatus = 'COMPLETED';
-                        await this.finalizeHistoryEntry(historyEntry.id, pollResult.data);
-                    } else if (pollResult.cancelled) {
-                        this.currentJobStatus = 'CANCELLED';
-                        this.errorMessage = '已取消';
-                        this.updateHistoryEntry(historyEntry.id, { status: 'CANCELLED', errorMessage: '已取消' });
-                    } else {
-                        this.currentJobStatus = pollResult.status || 'FAILED';
-                        this.errorMessage = pollResult.message;
-                        this.updateHistoryEntry(historyEntry.id, { status: this.currentJobStatus, errorMessage: pollResult.message });
-                    }
-                }
-            } catch (err) {
-                this.errorMessage = '生成失败: ' + err.message;
-                this.currentJobStatus = 'FAILED';
-                this.updateHistoryEntry(historyEntry.id, { status: 'FAILED', errorMessage: this.errorMessage });
-            } finally {
-                this.isGenerating = false;
-                this.currentHistoryId = '';
+            if (accept.mode === 'start') {
+                this.startTask(task);
+            } else {
+                this.jobQueue.push(task);
+                this.updateHistoryEntry(historyEntry.id, { status: 'IN_QUEUE' });
             }
+
+            // 若此时并发有空位，立即尝试启动队列
+            this.pumpQueue();
         },
 
-        async cancelGeneration() {
-            this.shouldStopPolling = true;
+        cancelTaskByHistoryId(historyId) {
+            if (!historyId) return false;
 
-            if (this.currentHistoryId) {
-                this.updateHistoryEntry(this.currentHistoryId, { status: 'CANCELLED', errorMessage: '用户取消' });
+            // 1) 先取消本地队列
+            const qIdx = (this.jobQueue || []).findIndex(t => t && t.historyId === historyId);
+            if (qIdx !== -1) {
+                const task = this.jobQueue[qIdx];
+                if (task) task.cancelRequested = true;
+                this.jobQueue.splice(qIdx, 1);
+                this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+                return true;
             }
 
-            if (this.currentJobId) {
-                try {
-                    await RunpodClient.cancel(this.currentJobId);
-                } catch (err) {
-                    // 忽略取消错误
+            // 2) 取消正在运行的任务
+            const task = (this.activeJobs || []).find(t => t && t.historyId === historyId);
+            if (!task) return false;
+
+            task.cancelRequested = true;
+            this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+
+            if (task.runMode === 'run' && task.jobId) {
+                RunpodClient.cancel(task.jobId, task.clientConfig).catch(() => {
+                    // ignore
+                });
+            }
+            return true;
+        },
+
+        // 取消选中任务（A）
+        cancelGeneration() {
+            const rec = this.selectedHistoryRecord;
+            if (!rec || !rec.id) return;
+            this.cancelTaskByHistoryId(rec.id);
+        },
+
+        // 取消全部（运行中 + 排队）
+        cancelAllGenerations() {
+            // 取消队列
+            (this.jobQueue || []).forEach(t => {
+                if (!t || !t.historyId) return;
+                t.cancelRequested = true;
+                this.updateHistoryEntry(t.historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+            });
+            this.jobQueue = [];
+
+            // 取消运行中
+            (this.activeJobs || []).forEach(t => {
+                if (!t || !t.historyId) return;
+                t.cancelRequested = true;
+                this.updateHistoryEntry(t.historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+                if (t.runMode === 'run' && t.jobId) {
+                    RunpodClient.cancel(t.jobId, t.clientConfig).catch(() => {
+                        // ignore
+                    });
                 }
-            }
-
-            this.isGenerating = false;
-            this.currentJobStatus = 'CANCELLED';
-            this.currentHistoryId = '';
+            });
         },
 
         // ========== 设置 ==========
+        openSettings() {
+            // 每次打开都从“已生效设置”复制一份，避免未保存的修改影响运行时逻辑
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            this.settingsForm = { ...base };
+            this.connectionTestResult = null;
+            this.showApiKey = false;
+            this.showSettings = true;
+
+            // 触发基础约束
+            if (this.settingsForm.allowQueue) {
+                this.settingsForm.lockParamsOnGenerate = false;
+            }
+            if (!this.settingsForm.allowConcurrent) {
+                this.settingsForm.maxConcurrent = 1;
+            }
+        },
+
         closeSettings() {
             this.showSettings = false;
             this.connectionTestResult = null;
+
+            // 丢弃未保存的表单修改
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            this.settingsForm = { ...base };
         },
 
         saveSettings() {
+            const storeMaxRaw = window.HistoryStore && window.HistoryStore.LIMITS ? window.HistoryStore.LIMITS.maxRequests : 30;
+            const storeMax = Number.isFinite(Number(storeMaxRaw)) ? Number(storeMaxRaw) : 30;
+
+            const allowQueue = !!this.settingsForm.allowQueue;
+            const allowConcurrent = !!this.settingsForm.allowConcurrent;
+
+            // 允许排队时，锁参数必定关闭
+            const lockParamsOnGenerate = allowQueue ? false : !!this.settingsForm.lockParamsOnGenerate;
+
+            let maxConcurrent = allowConcurrent ? this.toSafeInt(this.settingsForm.maxConcurrent, 1) : 1;
+            maxConcurrent = this.clampInt(maxConcurrent, 1, Math.max(1, storeMax));
+
+            let maxQueue = allowQueue ? this.toSafeInt(this.settingsForm.maxQueue, 0) : 0;
+            maxQueue = this.clampInt(maxQueue, 0, Math.max(0, storeMax - maxConcurrent));
+
+            const pollIntervalMs = this.clampInt(this.toSafeInt(this.settingsForm.pollIntervalMs, 2000), 1000, 10000);
+            const runMode = this.settingsForm.runMode === 'runsync' ? 'runsync' : 'run';
+
+            const endpointId = Settings.extractEndpointId(this.settingsForm.endpointId);
+
             Settings.save({
-                endpointId: this.settingsForm.endpointId,
+                endpointId,
                 apiKey: this.settingsForm.apiKey,
                 rememberApiKey: this.settingsForm.rememberApiKey,
-                runMode: this.settingsForm.runMode,
-                pollIntervalMs: this.settingsForm.pollIntervalMs
+                runMode,
+                pollIntervalMs,
+
+                lockParamsOnGenerate,
+                allowConcurrent,
+                allowQueue,
+                maxConcurrent,
+                maxQueue
             });
 
             RunpodClient.setConfig({
-                endpointId: this.settingsForm.endpointId,
+                endpointId,
                 apiKey: this.settingsForm.apiKey
             });
+
+            // 更新“已生效设置”
+            this.settings = Settings.get();
 
             this.isConfigValid = Settings.isConfigured();
             this.updateConnectionStatus();
             this.closeSettings();
+
+            // 如果提高了并发上限，可能可以立即启动队列
+            this.pumpQueue();
         },
 
         extractEndpointId() {
@@ -3156,8 +3494,23 @@ const app = Vue.createApp({
         },
 
         onGlobalKeydown(e) {
-            if (!this.showImageModal) return;
             if (!e) return;
+
+            // Ctrl+Enter 快捷生成
+            const isEnter = e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter';
+            if (isEnter && (e.ctrlKey || e.metaKey)) {
+                // 有模态框时不触发（避免干扰输入/确认）
+                if (this.showImageModal || this.showSettings || this.showSaveTemplate || this.showImportTemplate || this.showPromptPresets) {
+                    return;
+                }
+                if (this.canGenerate && this.canAcceptNewJob) {
+                    e.preventDefault();
+                    this.generate();
+                }
+                return;
+            }
+
+            if (!this.showImageModal) return;
 
             if (e.key === 'Escape') {
                 this.closeImageModal();

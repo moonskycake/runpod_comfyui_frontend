@@ -25,10 +25,11 @@ const RunpodClient = {
    * 获取请求头
    * @returns {Object} headers
    */
-  getHeaders() {
+  getHeaders(cfg) {
+    const c = cfg || this.config;
     return {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.config.apiKey}`
+      'Authorization': `Bearer ${c.apiKey}`
     };
   },
 
@@ -37,8 +38,9 @@ const RunpodClient = {
    * @param {string} path - 路径
    * @returns {string} 完整 URL
    */
-  buildUrl(path) {
-    return `${this.config.baseUrl}/${this.config.endpointId}${path}`;
+  buildUrl(path, cfg) {
+    const c = cfg || this.config;
+    return `${c.baseUrl}/${c.endpointId}${path}`;
   },
 
   /**
@@ -89,11 +91,11 @@ const RunpodClient = {
    * 健康检查
    * @returns {Promise<Object>} health 结果
    */
-  async health() {
+  async health(cfg) {
     try {
       const response = await axios.get(
-        this.buildUrl('/health'),
-        { headers: this.getHeaders() }
+        this.buildUrl('/health', cfg),
+        { headers: this.getHeaders(cfg) }
       );
       
       return {
@@ -110,12 +112,12 @@ const RunpodClient = {
    * @param {Object} payload - 请求体
    * @returns {Promise<Object>} { id, status }
    */
-  async run(payload) {
+  async run(payload, cfg) {
     try {
       const response = await axios.post(
-        this.buildUrl('/run'),
+        this.buildUrl('/run', cfg),
         payload,
-        { headers: this.getHeaders() }
+        { headers: this.getHeaders(cfg) }
       );
       
       return {
@@ -133,12 +135,12 @@ const RunpodClient = {
    * @param {number} waitMs - 等待毫秒数（默认90000）
    * @returns {Promise<Object>} 完整结果
    */
-  async runSync(payload, waitMs = 90000) {
+  async runSync(payload, waitMs = 90000, cfg) {
     try {
       const response = await axios.post(
-        `${this.buildUrl('/runsync')}?wait=${waitMs}`,
+        `${this.buildUrl('/runsync', cfg)}?wait=${waitMs}`,
         payload,
-        { headers: this.getHeaders() }
+        { headers: this.getHeaders(cfg) }
       );
       
       return {
@@ -155,11 +157,11 @@ const RunpodClient = {
    * @param {string} jobId - 任务 ID
    * @returns {Promise<Object>} 状态信息
    */
-  async status(jobId) {
+  async status(jobId, cfg) {
     try {
       const response = await axios.get(
-        this.buildUrl(`/status/${jobId}`),
-        { headers: this.getHeaders() }
+        this.buildUrl(`/status/${jobId}`, cfg),
+        { headers: this.getHeaders(cfg) }
       );
       
       return {
@@ -176,12 +178,12 @@ const RunpodClient = {
    * @param {string} jobId - 任务 ID
    * @returns {Promise<Object>} 取消结果
    */
-  async cancel(jobId) {
+  async cancel(jobId, cfg) {
     try {
       const response = await axios.post(
-        this.buildUrl(`/cancel/${jobId}`),
+        this.buildUrl(`/cancel/${jobId}`, cfg),
         {},
-        { headers: this.getHeaders() }
+        { headers: this.getHeaders(cfg) }
       );
       
       return {
@@ -202,7 +204,7 @@ const RunpodClient = {
    * @param {Function} options.shouldStop - 是否停止轮询的函数
    * @returns {Promise<Object>} 最终结果
    */
-  async poll(jobId, options = {}) {
+  async poll(jobId, options = {}, cfg) {
     const { 
       intervalMs = 2000, 
       onStatus = null,
@@ -222,7 +224,7 @@ const RunpodClient = {
         };
       }
 
-      const result = await this.status(jobId);
+      const result = await this.status(jobId, cfg);
       
       if (!result.success) {
         return result;

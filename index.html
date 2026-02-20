@@ -25,7 +25,7 @@
                         收藏
                         <span class="badge bg-dark text-warning border border-warning ms-1">{{ favoriteCount }}</span>
                     </button>
-                    <button class="btn btn-outline-light btn-sm" @click="showSettings = true">
+                    <button class="btn btn-outline-light btn-sm" @click="openSettings">
                         <i class="bi bi-gear"></i> 设置
                     </button>
                 </div>
@@ -93,7 +93,7 @@
                                 <label class="form-label text-light">选择模板</label>
                                 <select class="form-select bg-dark text-light border-secondary"
                                         v-model="selectedTemplateId"
-                                        :disabled="isGenerating">
+                                        :disabled="isParamsLocked">
                                     <option value="">-- 自定义 Workflow --</option>
                                     <optgroup label="内置模板">
                                         <option v-for="t in builtinTemplates" :key="t.id" :value="t.id">
@@ -260,13 +260,13 @@
 
                                 <div v-for="p in promptPlaceholders" :key="p.name" class="mb-3">
                                     <label class="form-label text-light">{{ p.label }}</label>
-                                    <prompt-textarea
-                                        v-model="placeholderValues[p.name]"
-                                        :rows="p.rows || 3"
-                                        :placeholder="p.default"
-                                        :disabled="isGenerating"
-                                        :insert-options="promptInsertOptions"
-                                    ></prompt-textarea>
+                                     <prompt-textarea
+                                         v-model="placeholderValues[p.name]"
+                                         :rows="p.rows || 3"
+                                         :placeholder="p.default"
+                                         :disabled="isParamsLocked"
+                                         :insert-options="promptInsertOptions"
+                                     ></prompt-textarea>
                                 </div>
                             </div>
                         </div>
@@ -296,19 +296,19 @@
                                                    v-model.number="placeholderValues.seed"
                                                    :min="p.min" :max="p.max" :step="p.step"
                                                    :disabled="seedRandomEachRun">
-                                            <button class="btn btn-outline-secondary btn-sm" type="button"
-                                                    @click="randomizeSeedOnce"
-                                                    :disabled="isGenerating">
-                                                <i class="bi bi-shuffle"></i>
-                                            </button>
+                                             <button class="btn btn-outline-secondary btn-sm" type="button"
+                                                     @click="randomizeSeedOnce"
+                                                     :disabled="isParamsLocked">
+                                                 <i class="bi bi-shuffle"></i>
+                                             </button>
                                         </div>
                                         <div class="form-check mt-2">
-                                            <input class="form-check-input" type="checkbox" id="seedRandomEachRunToggle"
-                                                   v-model="seedRandomEachRun"
-                                                   :disabled="isGenerating">
-                                            <label class="form-check-label text-light small" for="seedRandomEachRunToggle">
-                                                每次生成前自动随机
-                                            </label>
+                                             <input class="form-check-input" type="checkbox" id="seedRandomEachRunToggle"
+                                                    v-model="seedRandomEachRun"
+                                                    :disabled="isParamsLocked">
+                                             <label class="form-check-label text-light small" for="seedRandomEachRunToggle">
+                                                 每次生成前自动随机
+                                             </label>
                                         </div>
                                     </div>
 
@@ -369,9 +369,9 @@
                                            v-model="placeholderValues.input_image"
                                            placeholder="输入图片文件名（如 input.png）">
                                 </div>
-                                <image-upload uploader-height="200"
-                                              v-model:uploderimagesrc="inputImageData"
-                                              :disabled="isGenerating"></image-upload>
+                                 <image-upload uploader-height="200"
+                                               v-model:uploderimagesrc="inputImageData"
+                                               :disabled="isParamsLocked"></image-upload>
                                 <div v-if="inputImageSizeWarning" class="alert alert-warning mt-2 mb-0 py-1">
                                     <i class="bi bi-exclamation-triangle"></i> {{ inputImageSizeWarning }}
                                 </div>
@@ -438,12 +438,12 @@
                         <div class="mb-3">
                             <label class="form-label text-light small">快速插入占位符</label>
                             <div class="d-flex gap-2 flex-wrap">
-                                <button v-for="chip in placeholderChips" :key="chip"
-                                        class="btn btn-outline-secondary btn-sm"
-                                        @click="insertPlaceholder(chip)"
-                                        :disabled="isGenerating">
-                                    {{ chip }}
-                                </button>
+                                 <button v-for="chip in placeholderChips" :key="chip"
+                                         class="btn btn-outline-secondary btn-sm"
+                                         @click="insertPlaceholder(chip)"
+                                         :disabled="isParamsLocked">
+                                     {{ chip }}
+                                 </button>
                             </div>
                         </div>
 
@@ -452,14 +452,14 @@
                             <input type="file" ref="workflowFile" @change="handleWorkflowUpload"
                                    accept=".json" class="d-none">
                             <div class="d-flex gap-2">
-                                <button class="btn btn-outline-secondary btn-sm" @click="$refs.workflowFile.click()"
-                                        :disabled="isGenerating">
-                                    <i class="bi bi-upload"></i> 上传 JSON
-                                </button>
-                                <button class="btn btn-outline-secondary btn-sm" @click="clearWorkflow"
-                                        :disabled="isGenerating || !workflowJson">
-                                    <i class="bi bi-trash"></i> 清空
-                                </button>
+                                 <button class="btn btn-outline-secondary btn-sm" @click="$refs.workflowFile.click()"
+                                        :disabled="isParamsLocked">
+                                     <i class="bi bi-upload"></i> 上传 JSON
+                                 </button>
+                                 <button class="btn btn-outline-secondary btn-sm" @click="clearWorkflow"
+                                        :disabled="isParamsLocked || !workflowJson">
+                                     <i class="bi bi-trash"></i> 清空
+                                 </button>
                             </div>
                         </div>
 
@@ -472,8 +472,8 @@
                                       @focus="saveCursorPosition"
                                       @keyup="saveCursorPosition"
                                       @click="saveCursorPosition"
-                                      placeholder="在此粘贴 ComfyUI Workflow JSON（使用 Workflow > Export API 导出）&#10;支持占位符如 {{width}}, {{height}}, {{prompt}} 等"
-                                      :disabled="isGenerating"
+                                       placeholder="在此粘贴 ComfyUI Workflow JSON（使用 Workflow > Export API 导出）&#10;支持占位符如 {{width}}, {{height}}, {{prompt}} 等"
+                                      :disabled="isParamsLocked"
                                       ref="workflowTextarea"></textarea>
                         </div>
 
@@ -499,43 +499,52 @@
                     <div>
                         <button class="btn btn-primary btn-lg me-2"
                                 @click="generate"
-                                :disabled="!canGenerate || isGenerating">
-                            <span v-if="!isGenerating">
-                                <i class="bi bi-play-fill"></i> 生成
-                            </span>
-                            <span v-else>
-                                <span class="spinner-border spinner-border-sm"></span> 生成中...
-                            </span>
+                                :disabled="!canGenerate || !canAcceptNewJob"
+                                title="快捷键 Ctrl+Enter">
+                            <i class="bi bi-play-fill"></i> 生成
                         </button>
-                        <button class="btn btn-secondary btn-lg"
+                        <button class="btn btn-secondary btn-lg me-2"
                                 @click="cancelGeneration"
-                                :disabled="!isGenerating">
-                            <i class="bi bi-x-circle"></i> 取消
+                                :disabled="!canCancelSelected">
+                            <i class="bi bi-x-circle"></i> 取消选中
+                        </button>
+                        <button class="btn btn-outline-danger btn-lg"
+                                @click="cancelAllGenerations"
+                                :disabled="!canCancelAll">
+                            <i class="bi bi-x-octagon"></i> 取消全部
                         </button>
                     </div>
                     <div class="text-light">
                         <span class="badge bg-secondary me-2">{{ runModeLabel }}</span>
-                        <span v-if="currentJobStatus" class="badge" :class="jobStatusClass">
-                            {{ currentJobStatus }}
+                        <span v-if="activeJobCount > 0" class="badge bg-info me-2">
+                            <span class="spinner-border spinner-border-sm me-1" style="vertical-align: -0.1em;"></span>
+                            运行中 {{ activeJobCount }}
+                        </span>
+                        <span v-if="queuedJobCount > 0" class="badge bg-secondary">
+                            排队 {{ queuedJobCount }}
                         </span>
                     </div>
                 </div>
 
                 <!-- 状态显示 -->
-                <div v-if="currentJobId || jobStats.executionTime" class="mt-3">
+                <div v-if="activeJobCount || queuedJobCount || (selectedHistoryRecord && (selectedHistoryRecord.jobId || selectedHistoryRecord.delayTime !== null || selectedHistoryRecord.executionTime !== null))" class="mt-3">
                     <div class="card bg-dark border-secondary">
                         <div class="card-body">
-                            <div v-if="currentJobId" class="d-flex justify-content-between align-items-center mb-2">
-                                <span class="text-light small">任务 ID:</span>
-                                <code class="text-info small">{{ currentJobId }}</code>
+                            <div v-if="activeJobCount || queuedJobCount" class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="text-light small">运行中 / 排队中:</span>
+                                <span class="text-light small">{{ activeJobCount }} / {{ queuedJobCount }}</span>
                             </div>
-                            <div v-if="jobStats.delayTime !== null" class="d-flex justify-content-between align-items-center">
-                                <span class="text-light small">排队时间:</span>
-                                <span class="text-light small">{{ jobStats.delayTime }}ms</span>
+                            <div v-if="selectedHistoryRecord && selectedHistoryRecord.jobId" class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="text-light small">选中任务 ID:</span>
+                                <code class="text-info small">{{ selectedHistoryRecord.jobId }}</code>
                             </div>
-                            <div v-if="jobStats.executionTime !== null" class="d-flex justify-content-between align-items-center">
-                                <span class="text-light small">执行时间:</span>
-                                <span class="text-light small">{{ jobStats.executionTime }}ms</span>
+                            <div v-if="selectedHistoryRecord && selectedHistoryRecord.delayTime !== null" class="d-flex justify-content-between align-items-center">
+                                <span class="text-light small">选中排队时间:</span>
+                                <span class="text-light small">{{ selectedHistoryRecord.delayTime }}ms</span>
+                            </div>
+                            <div v-if="selectedHistoryRecord && selectedHistoryRecord.executionTime !== null" class="d-flex justify-content-between align-items-center">
+                                <span class="text-light small">选中执行时间:</span>
+                                <span class="text-light small">{{ selectedHistoryRecord.executionTime }}ms</span>
                             </div>
                         </div>
                     </div>
@@ -944,6 +953,63 @@
                             <input type="number" class="form-control bg-dark text-light border-secondary"
                                    v-model.number="settingsForm.pollIntervalMs"
                                    min="1000" max="10000" step="500">
+                        </div>
+
+                        <hr class="border-secondary my-4">
+
+                        <!-- 生成行为 -->
+                        <h6 class="text-light mb-3">
+                            <i class="bi bi-lightning-charge"></i> 生成行为
+                        </h6>
+
+                        <div class="mb-3 form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="lockParamsOnGenerate"
+                                   v-model="settingsForm.lockParamsOnGenerate"
+                                   :disabled="settingsForm.allowQueue">
+                            <label class="form-check-label text-light" for="lockParamsOnGenerate">
+                                生成时锁定参数
+                            </label>
+                            <div class="form-text text-muted">
+                                开启后，只要有任务运行中就会禁用参数输入；开启排队时会强制关闭。
+                            </div>
+                        </div>
+
+                        <div class="mb-3 form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="allowConcurrent"
+                                   v-model="settingsForm.allowConcurrent">
+                            <label class="form-check-label text-light" for="allowConcurrent">
+                                允许并发生成
+                            </label>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label text-light">并发上限</label>
+                            <input type="number" class="form-control bg-dark text-light border-secondary"
+                                   v-model.number="settingsForm.maxConcurrent"
+                                   :disabled="!settingsForm.allowConcurrent"
+                                   min="1" max="30" step="1">
+                            <div class="form-text text-muted">
+                                不允许并发时固定为 1。
+                            </div>
+                        </div>
+
+                        <div class="mb-3 form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="allowQueue"
+                                   v-model="settingsForm.allowQueue">
+                            <label class="form-check-label text-light" for="allowQueue">
+                                允许排队生成
+                            </label>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label text-light">排队上限</label>
+                            <input type="number" class="form-control bg-dark text-light border-secondary"
+                                   v-model.number="settingsForm.maxQueue"
+                                   :disabled="!settingsForm.allowQueue"
+                                   min="0" max="30" step="1">
+                            <div class="form-text text-muted">
+                                排队条数会受“历史记录最多 30 条”上限影响，超出会自动截断。
+                            </div>
                         </div>
 
                         <!-- 测试连接 -->
