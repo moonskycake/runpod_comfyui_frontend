@@ -298,12 +298,20 @@ const PlaceholderEngine = {
   getSizePresets() {
     return [
       { name: 'Square (1:1)', width: 512, height: 512 },
+      { name: 'Square (1:1) HD', width: 768, height: 768 },
+      { name: 'Square (1:1) XL', width: 896, height: 896 },
       { name: 'Portrait (2:3)', width: 512, height: 768 },
       { name: 'Portrait (3:4)', width: 512, height: 682 },
       { name: 'Portrait (9:16)', width: 512, height: 910 },
+      { name: 'Portrait (2:3) HD', width: 768, height: 1152 },
+      { name: 'Portrait (3:5)', width: 768, height: 1280 },
+      { name: 'Portrait (7:9)', width: 896, height: 1152 },
       { name: 'Landscape (3:2)', width: 768, height: 512 },
       { name: 'Landscape (4:3)', width: 682, height: 512 },
       { name: 'Landscape (16:9)', width: 910, height: 512 },
+      { name: 'Landscape (3:2) HD', width: 1152, height: 768 },
+      { name: 'Landscape (9:7)', width: 1152, height: 896 },
+      { name: 'Landscape (5:3)', width: 1280, height: 768 },
       { name: 'SDXL (1:1)', width: 1024, height: 1024 },
       { name: 'SDXL Portrait', width: 832, height: 1216 },
       { name: 'SDXL Landscape', width: 1216, height: 832 }

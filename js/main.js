@@ -1034,19 +1034,14 @@ const app = Vue.createApp({
         selectedTemplateId(newVal, oldVal) {
             this.persistSelectedTemplateId();
 
-            // 切换到某个模板时，不沿用上一次临时参数（仅使用模板保存的 defaults）
+            // 切换模板时，尽量保持当前参数不变（仅在新模板不存在该占位符时自然丢弃）
             if (newVal && newVal !== oldVal) {
-                // 但 Prompt / Negative Prompt（以及输入图片文件名）通常希望跨模板保留
                 const cur = this.placeholderValues || {};
-                const keep = {};
-                if (cur.prompt !== undefined) keep.prompt = cur.prompt;
-                if (cur.negative_prompt !== undefined) keep.negative_prompt = cur.negative_prompt;
-                if (cur.input_image !== undefined) keep.input_image = cur.input_image;
+                const keep = deepCloneJson(cur);
 
-                // 记录下来，等模板 defaults 应用后再覆盖一次（确保不会被模板提示词覆盖）
+                // 记录下来，等模板 defaults 应用后再覆盖一次，确保“模板不影响参数”
                 this._templateSwitchKeepValues = keep;
 
-                this.placeholderValues = keep;
                 this.selectedSizePreset = '';
                 this.showPromptInputOptions = false;
             }
@@ -1178,13 +1173,14 @@ const app = Vue.createApp({
                     });
                 }
 
-                // 模板切换时保留用户正在编辑的 Prompt / Negative Prompt
+                // 模板切换时保留当前参数（仅保留新模板中存在的占位符）
                 if (this._templateSwitchKeepValues) {
                     const keep = this._templateSwitchKeepValues;
                     const next = { ...(this.placeholderValues || {}) };
-                    if (keep.prompt !== undefined && Object.prototype.hasOwnProperty.call(next, 'prompt')) next.prompt = keep.prompt;
-                    if (keep.negative_prompt !== undefined && Object.prototype.hasOwnProperty.call(next, 'negative_prompt')) next.negative_prompt = keep.negative_prompt;
-                    if (keep.input_image !== undefined && Object.prototype.hasOwnProperty.call(next, 'input_image')) next.input_image = keep.input_image;
+                    Object.keys(keep).forEach(key => {
+                        if (!Object.prototype.hasOwnProperty.call(next, key)) return;
+                        next[key] = keep[key];
+                    });
                     this.placeholderValues = next;
                     this._templateSwitchKeepValues = null;
                 }
@@ -1222,9 +1218,10 @@ const app = Vue.createApp({
                 if (this._templateSwitchKeepValues) {
                     const keep = this._templateSwitchKeepValues;
                     const next = { ...(this.placeholderValues || {}) };
-                    if (keep.prompt !== undefined && Object.prototype.hasOwnProperty.call(next, 'prompt')) next.prompt = keep.prompt;
-                    if (keep.negative_prompt !== undefined && Object.prototype.hasOwnProperty.call(next, 'negative_prompt')) next.negative_prompt = keep.negative_prompt;
-                    if (keep.input_image !== undefined && Object.prototype.hasOwnProperty.call(next, 'input_image')) next.input_image = keep.input_image;
+                    Object.keys(keep).forEach(key => {
+                        if (!Object.prototype.hasOwnProperty.call(next, key)) return;
+                        next[key] = keep[key];
+                    });
                     this.placeholderValues = next;
                     this._templateSwitchKeepValues = null;
                 }
