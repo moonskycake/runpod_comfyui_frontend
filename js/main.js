@@ -1511,6 +1511,9 @@ const app = Vue.createApp({
                 const label = f === 'negative_prompt' ? '负向' : '正向';
                 this.newPromptSnippetName = `${label}_${new Date().toLocaleString()}`;
             }
+
+            const label = f === 'negative_prompt' ? '已从负向填充' : '已从正向填充';
+            this.setPromptPresetMessage(label, 'success');
         },
 
         saveSnippetPreset() {
