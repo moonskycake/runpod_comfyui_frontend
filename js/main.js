@@ -1171,7 +1171,7 @@ const app = Vue.createApp({
                 // 如果有模板且模板有 defaults，优先使用模板的
                 if (this.selectedTemplate && this.selectedTemplate.defaults) {
                     Object.keys(this.selectedTemplate.defaults).forEach(key => {
-                        if (key === 'prompt' || key === 'negative_prompt' || key === 'input_image') return;
+                        if (key === 'prompt' || key === 'negative_prompt' || key === 'input_image' || key === 'seed') return;
                         if (this.placeholderValues.hasOwnProperty(key)) {
                             this.placeholderValues[key] = this.selectedTemplate.defaults[key];
                         }
@@ -1212,7 +1212,7 @@ const app = Vue.createApp({
 
                 if (this.selectedTemplate && this.selectedTemplate.defaults) {
                     Object.keys(this.selectedTemplate.defaults).forEach(key => {
-                        if (key === 'prompt' || key === 'negative_prompt' || key === 'input_image') return;
+                        if (key === 'prompt' || key === 'negative_prompt' || key === 'input_image' || key === 'seed') return;
                         if (this.placeholderValues.hasOwnProperty(key)) {
                             this.placeholderValues[key] = this.selectedTemplate.defaults[key];
                         }
@@ -1294,6 +1294,8 @@ const app = Vue.createApp({
 
             Object.keys(pending).forEach(k => {
                 if (!allowed.has(k)) return;
+                // seed 默认使用占位符默认值（通常为 -1），避免被上次随机值“粘住”
+                if (k === 'seed') return;
                 next[k] = deepCloneJson(pending[k]);
             });
 
@@ -1327,6 +1329,7 @@ const app = Vue.createApp({
             const cur = this.placeholderValues || {};
             Object.keys(cur).forEach(k => {
                 if (!allowed.has(k)) return;
+                if (k === 'seed') return;
                 values[k] = cur[k];
             });
 
@@ -1698,6 +1701,8 @@ const app = Vue.createApp({
             delete next.prompt;
             delete next.negative_prompt;
             delete next.input_image;
+            // seed 通常用于“本次请求”的随机性，不建议固化进模板
+            delete next.seed;
             return next;
         },
 
@@ -1913,7 +1918,7 @@ const app = Vue.createApp({
 
             if (this.selectedTemplate && this.selectedTemplate.defaults) {
                 Object.keys(this.selectedTemplate.defaults).forEach(key => {
-                    if (key === 'prompt' || key === 'negative_prompt' || key === 'input_image') return;
+                    if (key === 'prompt' || key === 'negative_prompt' || key === 'input_image' || key === 'seed') return;
                     if (Object.prototype.hasOwnProperty.call(next, key)) {
                         next[key] = this.selectedTemplate.defaults[key];
                     }
