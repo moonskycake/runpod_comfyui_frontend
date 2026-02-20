@@ -983,7 +983,13 @@ const app = Vue.createApp({
 
             // 切换到某个模板时，不沿用上一次临时参数（仅使用模板保存的 defaults）
             if (newVal && newVal !== oldVal) {
-                this.placeholderValues = {};
+                // 但 Prompt / Negative Prompt（以及输入图片文件名）通常希望跨模板保留
+                const cur = this.placeholderValues || {};
+                const keep = {};
+                if (cur.prompt !== undefined) keep.prompt = cur.prompt;
+                if (cur.negative_prompt !== undefined) keep.negative_prompt = cur.negative_prompt;
+                if (cur.input_image !== undefined) keep.input_image = cur.input_image;
+                this.placeholderValues = keep;
                 this.selectedSizePreset = '';
                 this.showPromptInputOptions = false;
             }
