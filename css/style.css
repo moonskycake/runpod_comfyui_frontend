@@ -812,9 +812,27 @@ input[type="range"].rp-range::-moz-range-thumb {
     padding: 0.75rem 0.85rem;
 }
 
+.rp-preset-actions {
+    flex-shrink: 0;
+}
+
 .rp-preset-actions .btn {
     padding: 0.35rem 0.5rem;
     line-height: 1;
+    white-space: nowrap;
+}
+
+.rp-preset-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+}
+
+.rp-preset-toolbar .btn,
+.rp-preset-toolbar .btn-group {
+    flex: 0 0 auto;
 }
 
 @media (max-width: 576px) {
@@ -824,5 +842,9 @@ input[type="range"].rp-range::-moz-range-thumb {
 
     .rp-preset-actions .btn {
         padding: 0.35rem 0.45rem;
+    }
+
+    .rp-preset-toolbar {
+        gap: 0.4rem;
     }
 }

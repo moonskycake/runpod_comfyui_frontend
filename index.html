@@ -1123,19 +1123,29 @@
                                             <div class="small text-muted rp-clamp-2">正: {{ p.prompt || '-' }}</div>
                                             <div class="small text-muted rp-clamp-2">负: {{ p.negative_prompt || '-' }}</div>
                                         </div>
-                                        <div class="btn-group btn-group-sm rp-preset-actions flex-nowrap" role="group" aria-label="Preset actions">
-                                            <button class="btn btn-outline-primary" type="button" @click="applyBlockPreset(p)" title="应用（覆盖当前提示词）">
+                                        <div class="d-flex align-items-center gap-2 rp-preset-actions flex-shrink-0">
+                                            <button class="btn btn-outline-primary btn-sm" type="button" @click="applyBlockPreset(p)" title="应用（覆盖当前提示词）">
                                                 <i class="bi bi-check2"></i>
                                                 <span class="d-none d-sm-inline ms-1">应用</span>
                                             </button>
-                                            <button class="btn btn-outline-secondary" type="button" @click="updateBlockPreset(p)" title="用当前提示词更新此预设">
-                                                <i class="bi bi-arrow-repeat"></i>
-                                                <span class="d-none d-sm-inline ms-1">更新</span>
-                                            </button>
-                                            <button class="btn btn-outline-danger" type="button" @click="deleteBlockPreset(p)" title="删除此预设">
-                                                <i class="bi bi-trash"></i>
-                                                <span class="d-none d-sm-inline ms-1">删除</span>
-                                            </button>
+
+                                            <div class="btn-group btn-group-sm">
+                                                <button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="更多操作">
+                                                    <i class="bi bi-three-dots-vertical"></i>
+                                                </button>
+                                                <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end">
+                                                    <li>
+                                                        <button class="dropdown-item" type="button" @click="updateBlockPreset(p)">
+                                                            <i class="bi bi-arrow-repeat me-2"></i>更新
+                                                        </button>
+                                                    </li>
+                                                    <li>
+                                                        <button class="dropdown-item text-danger" type="button" @click="deleteBlockPreset(p)">
+                                                            <i class="bi bi-trash me-2"></i>删除
+                                                        </button>
+                                                    </li>
+                                                </ul>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -1155,16 +1165,31 @@
                                     <textarea class="form-control bg-dark text-light border-secondary" rows="3"
                                               v-model="newPromptSnippetText" placeholder="片段内容（例如画师/风格串）"></textarea>
                                 </div>
-                                <div class="col-12 d-flex gap-2 flex-wrap">
-                                    <button class="btn btn-primary" @click="saveSnippetPreset">
-                                        <i class="bi bi-plus-lg"></i> 保存片段
+                                <div class="col-12 rp-preset-toolbar">
+                                    <button class="btn btn-primary" type="button" @click="saveSnippetPreset">
+                                        <i class="bi bi-plus-lg"></i>
+                                        <span class="ms-1">保存片段</span>
                                     </button>
-                                    <button class="btn btn-outline-light" @click="fillSnippetFromCurrent('prompt')" :disabled="!placeholderValues.prompt">
-                                        <i class="bi bi-arrow-down"></i> 从正向填充
-                                    </button>
-                                    <button class="btn btn-outline-light" @click="fillSnippetFromCurrent('negative_prompt')" :disabled="!placeholderValues.negative_prompt">
-                                        <i class="bi bi-arrow-down"></i> 从负向填充
-                                    </button>
+
+                                    <div class="btn-group">
+                                        <button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                                                :disabled="!placeholderValues.prompt && !placeholderValues.negative_prompt">
+                                            <i class="bi bi-arrow-down"></i>
+                                            <span class="ms-1">填充</span>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-dark">
+                                            <li>
+                                                <button class="dropdown-item" type="button" @click="fillSnippetFromCurrent('prompt')" :disabled="!placeholderValues.prompt">
+                                                    从正向填充
+                                                </button>
+                                            </li>
+                                            <li>
+                                                <button class="dropdown-item" type="button" @click="fillSnippetFromCurrent('negative_prompt')" :disabled="!placeholderValues.negative_prompt">
+                                                    从负向填充
+                                                </button>
+                                            </li>
+                                        </ul>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1178,7 +1203,7 @@
                                             <div class="text-light fw-semibold text-truncate">{{ s.name }}</div>
                                             <div class="small text-muted rp-clamp-2">{{ s.text }}</div>
                                         </div>
-                                        <div class="btn-group btn-group-sm rp-preset-actions flex-nowrap" role="group" aria-label="Snippet actions">
+                                        <div class="btn-group btn-group-sm rp-preset-actions flex-nowrap flex-shrink-0" role="group" aria-label="Snippet actions">
                                             <button class="btn btn-outline-light" type="button" @click="copySnippet(s.text)" title="复制到剪贴板">
                                                 <i class="bi bi-clipboard"></i>
                                                 <span class="d-none d-sm-inline ms-1">复制</span>
