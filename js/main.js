@@ -1102,6 +1102,7 @@ const app = Vue.createApp({
                 // 如果有模板且模板有 defaults，优先使用模板的
                 if (this.selectedTemplate && this.selectedTemplate.defaults) {
                     Object.keys(this.selectedTemplate.defaults).forEach(key => {
+                        if (key === 'prompt' || key === 'negative_prompt' || key === 'input_image') return;
                         if (this.placeholderValues.hasOwnProperty(key)) {
                             this.placeholderValues[key] = this.selectedTemplate.defaults[key];
                         }
@@ -1142,6 +1143,7 @@ const app = Vue.createApp({
 
                 if (this.selectedTemplate && this.selectedTemplate.defaults) {
                     Object.keys(this.selectedTemplate.defaults).forEach(key => {
+                        if (key === 'prompt' || key === 'negative_prompt' || key === 'input_image') return;
                         if (this.placeholderValues.hasOwnProperty(key)) {
                             this.placeholderValues[key] = this.selectedTemplate.defaults[key];
                         }
@@ -1617,6 +1619,16 @@ const app = Vue.createApp({
             this.userTemplates = TemplateManager.loadUserTemplates();
         },
 
+        getTemplateDefaultsForSave() {
+            // 模板默认值不保存提示词：提示词由“上次输入状态”/“提示词预设”管理
+            const cur = this.placeholderValues || {};
+            const next = deepCloneJson(cur);
+            delete next.prompt;
+            delete next.negative_prompt;
+            delete next.input_image;
+            return next;
+        },
+
         persistSelectedTemplateId() {
             const KEY = 'runpod_selected_template_id_v1';
             try {
@@ -1688,11 +1700,12 @@ const app = Vue.createApp({
             }
 
             try {
+                const defaults = this.getTemplateDefaultsForSave();
                 const id = TemplateManager.add({
                     name: this.newTemplateName,
                     description: this.newTemplateDescription,
                     workflow: this.workflowObj,
-                    defaults: { ...this.placeholderValues }
+                    defaults
                 });
 
                 this.loadUserTemplates();
@@ -1710,9 +1723,10 @@ const app = Vue.createApp({
             if (!this.selectedTemplate || this.selectedTemplate.isBuiltin) return;
 
             if (confirm('确定要更新模板吗？')) {
+                const defaults = this.getTemplateDefaultsForSave();
                 TemplateManager.update(this.selectedTemplate.id, {
                     workflow: this.workflowObj,
-                    defaults: { ...this.placeholderValues }
+                    defaults
                 });
                 alert('模板已更新！');
             }
@@ -1817,12 +1831,28 @@ const app = Vue.createApp({
         },
 
         resetToDefaults() {
+            const cur = this.placeholderValues || {};
+            const keepPrompt = cur.prompt;
+            const keepNeg = cur.negative_prompt;
+            const keepInputName = cur.input_image;
+
+            const defaults = PlaceholderEngine.getDefaults(this.placeholders);
+            const next = { ...defaults };
+
             if (this.selectedTemplate && this.selectedTemplate.defaults) {
-                this.placeholderValues = { ...this.selectedTemplate.defaults };
-            } else {
-                const defaults = PlaceholderEngine.getDefaults(this.placeholders);
-                this.placeholderValues = { ...defaults };
+                Object.keys(this.selectedTemplate.defaults).forEach(key => {
+                    if (key === 'prompt' || key === 'negative_prompt' || key === 'input_image') return;
+                    if (Object.prototype.hasOwnProperty.call(next, key)) {
+                        next[key] = this.selectedTemplate.defaults[key];
+                    }
+                });
             }
+
+            if (keepPrompt !== undefined && Object.prototype.hasOwnProperty.call(next, 'prompt')) next.prompt = keepPrompt;
+            if (keepNeg !== undefined && Object.prototype.hasOwnProperty.call(next, 'negative_prompt')) next.negative_prompt = keepNeg;
+            if (keepInputName !== undefined && Object.prototype.hasOwnProperty.call(next, 'input_image')) next.input_image = keepInputName;
+
+            this.placeholderValues = next;
             this.onSizeChange();
         },
 
