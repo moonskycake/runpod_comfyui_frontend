@@ -3,9 +3,8 @@
  * 处理 Endpoint ID 和 API Key 的存储与读取
  */
 
-const Settings = {
-  // 内存中的配置（apiKey 默认不持久化）
-  config: {
+function createDefaultSettingsConfig() {
+  return {
     endpointId: '',
     apiKey: '',
     rememberApiKey: false,
@@ -23,7 +22,12 @@ const Settings = {
     maxConcurrent: 1,
     // 排队上限（allowQueue=false 时等价为 0）
     maxQueue: 5
-  },
+  };
+}
+
+const Settings = {
+  // 内存中的配置（apiKey 默认不持久化）
+  config: createDefaultSettingsConfig(),
 
   // localStorage 键名
   KEYS: {
@@ -128,6 +132,14 @@ const Settings = {
   },
 
   /**
+   * 获取默认配置（深拷贝）
+   * @returns {Object} 默认配置
+   */
+  createDefaultConfig() {
+    return createDefaultSettingsConfig();
+  },
+
+  /**
    * 从 URL 提取 Endpoint ID
    * @param {string} url - 完整 URL 或端点 ID
    * @returns {string} Endpoint ID
@@ -168,19 +180,7 @@ const Settings = {
    * 清除所有配置
    */
   clear() {
-    this.config = {
-      endpointId: '',
-      apiKey: '',
-      rememberApiKey: false,
-      runMode: 'run',
-      pollIntervalMs: 2000,
-
-      lockParamsOnGenerate: true,
-      allowConcurrent: false,
-      allowQueue: false,
-      maxConcurrent: 1,
-      maxQueue: 5
-    };
+    this.config = createDefaultSettingsConfig();
     
     Object.values(this.KEYS).forEach(key => {
       localStorage.removeItem(key);

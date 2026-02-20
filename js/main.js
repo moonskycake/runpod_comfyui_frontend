@@ -144,6 +144,38 @@ function deepCloneJson(value) {
 }
 
 /**
+ * 获取设置初始值
+ * 说明：避免 main.js 与 settings.js 出现重复默认值。
+ * @returns {Object}
+ */
+function getInitialSettingsState() {
+    if (window.Settings && typeof window.Settings.get === 'function') {
+        const cfg = window.Settings.get();
+        if (cfg && typeof cfg === 'object') {
+            return { ...cfg };
+        }
+    }
+
+    if (window.Settings && typeof window.Settings.createDefaultConfig === 'function') {
+        return window.Settings.createDefaultConfig();
+    }
+
+    return {
+        endpointId: '',
+        apiKey: '',
+        rememberApiKey: false,
+        runMode: 'run',
+        pollIntervalMs: 2000,
+
+        lockParamsOnGenerate: true,
+        allowConcurrent: false,
+        allowQueue: false,
+        maxConcurrent: 1,
+        maxQueue: 5
+    };
+}
+
+/**
  * PromptTextareaComponent
  * - Tag autocomplete for danbooru tags (positive & negative prompt)
  * - Special: token starts with '@' => artist-only search (danbooru category=1)
@@ -459,6 +491,8 @@ const PromptTextareaComponent = {
 
 const app = Vue.createApp({
     data() {
+        const initialSettings = getInitialSettingsState();
+
         return {
             // ========== 配置状态 ==========
             isConfigValid: false,
@@ -546,32 +580,8 @@ const app = Vue.createApp({
             showSettings: false,
             showApiKey: false,
             // 当前已生效的设置（点击“保存设置”后更新）
-            settings: {
-                endpointId: '',
-                apiKey: '',
-                rememberApiKey: false,
-                runMode: 'run',
-                pollIntervalMs: 2000,
-
-                lockParamsOnGenerate: true,
-                allowConcurrent: false,
-                allowQueue: false,
-                maxConcurrent: 1,
-                maxQueue: 5
-            },
-            settingsForm: {
-                endpointId: '',
-                apiKey: '',
-                rememberApiKey: false,
-                runMode: 'run',
-                pollIntervalMs: 2000,
-
-                lockParamsOnGenerate: true,
-                allowConcurrent: false,
-                allowQueue: false,
-                maxConcurrent: 1,
-                maxQueue: 5
-            },
+            settings: { ...initialSettings },
+            settingsForm: { ...initialSettings },
             testingConnection: false,
             connectionTestResult: null,
 
@@ -717,14 +727,6 @@ const app = Vue.createApp({
                 const text = String(s.text || '').toLowerCase();
                 return name.includes(q) || text.includes(q);
             });
-        },
-
-        jobStatusClass() {
-            const status = this.currentJobStatus;
-            if (status === 'COMPLETED') return 'bg-success';
-            if (status === 'FAILED' || status === 'TIMED_OUT') return 'bg-danger';
-            if (status === 'CANCELLED') return 'bg-warning';
-            return 'bg-info';
         },
 
         // ========== 结果视图 ==========

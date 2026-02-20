@@ -68,7 +68,7 @@ const TemplateManager = {
     const userTemplates = this.loadUserTemplates();
 
     // 生成唯一 ID
-    const id = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const id = 'user_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
 
     const newTemplate = {
       id,
