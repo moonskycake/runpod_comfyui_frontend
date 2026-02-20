@@ -225,13 +225,14 @@ const PromptTextareaComponent = {
                 @compositionend="onCompositionEnd"
             ></textarea>
 
-            <div v-if="menuOpen" class="rp-ac-menu position-absolute start-0 top-100 mt-1 w-100">
+            <div v-if="menuOpen" class="rp-ac-menu position-absolute start-0 top-100 mt-1 w-100" ref="menuPanel">
                 <div v-if="menuLoading" class="px-3 py-2 rp-ac-hint">加载词库中...</div>
                 <div v-else-if="menuError" class="px-3 py-2 text-danger small">{{ menuError }}</div>
                 <div v-else-if="menuItems.length === 0" class="px-3 py-2 rp-ac-hint">无匹配</div>
                 <button
                     v-for="(item, idx) in menuItems"
                     :key="item.tag"
+                    :data-ac-idx="idx"
                     type="button"
                     class="list-group-item list-group-item-action rp-ac-item d-flex justify-content-between align-items-center"
                     :class="{ active: idx === activeIndex }"
@@ -334,6 +335,21 @@ const PromptTextareaComponent = {
             this.activeIndex = 0;
         },
 
+        scrollActiveItemIntoView() {
+            if (!this.menuOpen) return;
+            if (!Array.isArray(this.menuItems) || this.menuItems.length === 0) return;
+
+            this.$nextTick(() => {
+                const panel = this.$refs.menuPanel;
+                if (!panel || !panel.querySelector) return;
+
+                const item = panel.querySelector(`[data-ac-idx="${this.activeIndex}"]`);
+                if (!item || !item.scrollIntoView) return;
+
+                item.scrollIntoView({ block: 'nearest' });
+            });
+        },
+
         async updateMenu() {
             if (this.isComposing) return;
             const el = this.$refs.ta;
@@ -371,6 +387,7 @@ const PromptTextareaComponent = {
                 }));
                 this.activeIndex = 0;
                 this.menuLoading = false;
+                this.scrollActiveItemIntoView();
             } catch (e) {
                 if (seq !== this.searchSeq) return;
                 this.menuLoading = false;
@@ -472,10 +489,12 @@ const PromptTextareaComponent = {
                 e.preventDefault();
                 if (this.menuItems.length === 0) return;
                 this.activeIndex = (this.activeIndex + 1) % this.menuItems.length;
+                this.scrollActiveItemIntoView();
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 if (this.menuItems.length === 0) return;
                 this.activeIndex = (this.activeIndex - 1 + this.menuItems.length) % this.menuItems.length;
+                this.scrollActiveItemIntoView();
             } else if (e.key === 'Escape') {
                 e.preventDefault();
                 this.closeMenu();
