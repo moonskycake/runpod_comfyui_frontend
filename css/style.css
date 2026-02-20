@@ -799,3 +799,30 @@ input[type="range"].rp-range::-moz-range-thumb {
     font-size: 0.75rem;
     color: #b7c0c9;
 }
+
+/* Prompt presets modal */
+.rp-preset-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.rp-preset-item {
+    border-radius: 0.65rem;
+    padding: 0.75rem 0.85rem;
+}
+
+.rp-preset-actions .btn {
+    padding: 0.35rem 0.5rem;
+    line-height: 1;
+}
+
+@media (max-width: 576px) {
+    .rp-preset-item {
+        padding: 0.7rem 0.75rem;
+    }
+
+    .rp-preset-actions .btn {
+        padding: 0.35rem 0.45rem;
+    }
+}

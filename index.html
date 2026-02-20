@@ -1100,34 +1100,41 @@
                         <!-- 整块替换 -->
                         <div v-show="promptPresetTab === 'blocks'">
                             <div class="text-muted small mb-2">应用会覆盖当前正向/负向提示词。</div>
-                            <div class="d-flex gap-2 flex-wrap mb-3">
-                                <input type="text" class="form-control bg-dark text-light border-secondary" style="max-width: 320px"
-                                       v-model="newPromptBlockName" placeholder="预设名称">
-                                <button class="btn btn-primary" @click="saveCurrentAsBlockPreset">
-                                    <i class="bi bi-plus-lg"></i> 保存当前
+                            <div class="input-group mb-3">
+                                <span class="input-group-text bg-dark text-light border-secondary">
+                                    <i class="bi bi-pencil"></i>
+                                </span>
+                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                       v-model="newPromptBlockName" placeholder="预设名称（用于保存当前提示词）">
+                                <button class="btn btn-primary" type="button" @click="saveCurrentAsBlockPreset" title="保存当前正向/负向为整块预设">
+                                    <i class="bi bi-plus-lg"></i>
+                                    <span class="d-none d-sm-inline ms-1">保存当前</span>
                                 </button>
                             </div>
 
                             <div v-if="filteredPromptBlockPresets.length === 0" class="text-muted text-center py-4">
                                 {{ promptPresetSearch ? '无匹配' : '暂无整块预设' }}
                             </div>
-                            <div v-else class="list-group">
-                                <div v-for="p in filteredPromptBlockPresets" :key="p.id" class="list-group-item bg-dark border-secondary">
+                            <div v-else class="list-group rp-preset-list">
+                                <div v-for="p in filteredPromptBlockPresets" :key="p.id" class="list-group-item bg-dark border-secondary rp-preset-item">
                                     <div class="d-flex justify-content-between align-items-start gap-3">
                                         <div class="min-w-0">
                                             <div class="text-light fw-semibold text-truncate">{{ p.name }}</div>
                                             <div class="small text-muted rp-clamp-2">正: {{ p.prompt || '-' }}</div>
                                             <div class="small text-muted rp-clamp-2">负: {{ p.negative_prompt || '-' }}</div>
                                         </div>
-                                        <div class="d-flex gap-2 flex-wrap">
-                                            <button class="btn btn-outline-primary btn-sm" @click="applyBlockPreset(p)">
-                                                <i class="bi bi-check2"></i> 应用
+                                        <div class="btn-group btn-group-sm rp-preset-actions flex-nowrap" role="group" aria-label="Preset actions">
+                                            <button class="btn btn-outline-primary" type="button" @click="applyBlockPreset(p)" title="应用（覆盖当前提示词）">
+                                                <i class="bi bi-check2"></i>
+                                                <span class="d-none d-sm-inline ms-1">应用</span>
                                             </button>
-                                            <button class="btn btn-outline-secondary btn-sm" @click="updateBlockPreset(p)">
-                                                <i class="bi bi-arrow-repeat"></i> 更新
+                                            <button class="btn btn-outline-secondary" type="button" @click="updateBlockPreset(p)" title="用当前提示词更新此预设">
+                                                <i class="bi bi-arrow-repeat"></i>
+                                                <span class="d-none d-sm-inline ms-1">更新</span>
                                             </button>
-                                            <button class="btn btn-outline-danger btn-sm" @click="deleteBlockPreset(p)">
-                                                <i class="bi bi-trash"></i> 删除
+                                            <button class="btn btn-outline-danger" type="button" @click="deleteBlockPreset(p)" title="删除此预设">
+                                                <i class="bi bi-trash"></i>
+                                                <span class="d-none d-sm-inline ms-1">删除</span>
                                             </button>
                                         </div>
                                     </div>
@@ -1164,19 +1171,21 @@
                             <div v-if="filteredPromptSnippetPresets.length === 0" class="text-muted text-center py-4">
                                 {{ promptPresetSearch ? '无匹配' : '暂无片段' }}
                             </div>
-                            <div v-else class="list-group">
-                                <div v-for="s in filteredPromptSnippetPresets" :key="s.id" class="list-group-item bg-dark border-secondary">
+                            <div v-else class="list-group rp-preset-list">
+                                <div v-for="s in filteredPromptSnippetPresets" :key="s.id" class="list-group-item bg-dark border-secondary rp-preset-item">
                                     <div class="d-flex justify-content-between align-items-start gap-3">
                                         <div class="min-w-0">
                                             <div class="text-light fw-semibold text-truncate">{{ s.name }}</div>
                                             <div class="small text-muted rp-clamp-2">{{ s.text }}</div>
                                         </div>
-                                        <div class="d-flex gap-2 flex-wrap">
-                                            <button class="btn btn-outline-light btn-sm" @click="copySnippet(s.text)">
-                                                <i class="bi bi-clipboard"></i> 复制
+                                        <div class="btn-group btn-group-sm rp-preset-actions flex-nowrap" role="group" aria-label="Snippet actions">
+                                            <button class="btn btn-outline-light" type="button" @click="copySnippet(s.text)" title="复制到剪贴板">
+                                                <i class="bi bi-clipboard"></i>
+                                                <span class="d-none d-sm-inline ms-1">复制</span>
                                             </button>
-                                            <button class="btn btn-outline-danger btn-sm" @click="deleteSnippetPreset(s)">
-                                                <i class="bi bi-trash"></i> 删除
+                                            <button class="btn btn-outline-danger" type="button" @click="deleteSnippetPreset(s)" title="删除此片段">
+                                                <i class="bi bi-trash"></i>
+                                                <span class="d-none d-sm-inline ms-1">删除</span>
                                             </button>
                                         </div>
                                     </div>
