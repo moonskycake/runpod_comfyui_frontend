@@ -920,6 +920,7 @@ const app = Vue.createApp({
         this.loadLastPlaceholderValuesDraft();
         this.loadWorkflowCollapsedState();
         this.loadSeedRandomEachRunState();
+        this.loadPromptInsertOptions();
     },
 
     mounted() {
@@ -950,9 +951,6 @@ const app = Vue.createApp({
 
         // 加载提示词预设
         this.loadPromptPresets();
-
-        // 加载提示词输入选项
-        this.loadPromptInsertOptions();
 
         // 全局按键（图片预览）
         window.addEventListener('keydown', this.onGlobalKeydown);
@@ -989,12 +987,23 @@ const app = Vue.createApp({
                 if (cur.prompt !== undefined) keep.prompt = cur.prompt;
                 if (cur.negative_prompt !== undefined) keep.negative_prompt = cur.negative_prompt;
                 if (cur.input_image !== undefined) keep.input_image = cur.input_image;
+
+                // 记录下来，等模板 defaults 应用后再覆盖一次（确保不会被模板提示词覆盖）
+                this._templateSwitchKeepValues = keep;
+
                 this.placeholderValues = keep;
                 this.selectedSizePreset = '';
                 this.showPromptInputOptions = false;
             }
 
             this.onTemplateSelect();
+        },
+
+        promptInsertOptions: {
+            deep: true,
+            handler() {
+                this.persistPromptInsertOptions();
+            }
         },
 
         seedRandomEachRun(val) {
@@ -1099,6 +1108,17 @@ const app = Vue.createApp({
                     });
                 }
 
+                // 模板切换时保留用户正在编辑的 Prompt / Negative Prompt
+                if (this._templateSwitchKeepValues) {
+                    const keep = this._templateSwitchKeepValues;
+                    const next = { ...(this.placeholderValues || {}) };
+                    if (keep.prompt !== undefined && Object.prototype.hasOwnProperty.call(next, 'prompt')) next.prompt = keep.prompt;
+                    if (keep.negative_prompt !== undefined && Object.prototype.hasOwnProperty.call(next, 'negative_prompt')) next.negative_prompt = keep.negative_prompt;
+                    if (keep.input_image !== undefined && Object.prototype.hasOwnProperty.call(next, 'input_image')) next.input_image = keep.input_image;
+                    this.placeholderValues = next;
+                    this._templateSwitchKeepValues = null;
+                }
+
                 this.applyLastPlaceholderValuesIfNeeded();
 
                 this.validatePlaceholders();
@@ -1126,6 +1146,16 @@ const app = Vue.createApp({
                             this.placeholderValues[key] = this.selectedTemplate.defaults[key];
                         }
                     });
+                }
+
+                if (this._templateSwitchKeepValues) {
+                    const keep = this._templateSwitchKeepValues;
+                    const next = { ...(this.placeholderValues || {}) };
+                    if (keep.prompt !== undefined && Object.prototype.hasOwnProperty.call(next, 'prompt')) next.prompt = keep.prompt;
+                    if (keep.negative_prompt !== undefined && Object.prototype.hasOwnProperty.call(next, 'negative_prompt')) next.negative_prompt = keep.negative_prompt;
+                    if (keep.input_image !== undefined && Object.prototype.hasOwnProperty.call(next, 'input_image')) next.input_image = keep.input_image;
+                    this.placeholderValues = next;
+                    this._templateSwitchKeepValues = null;
                 }
 
                 this.applyLastPlaceholderValuesIfNeeded();
