@@ -1545,6 +1545,20 @@ const app = Vue.createApp({
             }
         },
 
+        async copyText(text, label) {
+            const t = String(text || '');
+            const name = label ? String(label) : '内容';
+            if (!t.trim()) {
+                alert(`${name} 为空，无法复制。`);
+                return;
+            }
+
+            const ok = await this.copyToClipboard(t);
+            if (!ok) {
+                alert('复制失败：浏览器权限限制');
+            }
+        },
+
         async copySnippet(text) {
             const ok = await this.copyToClipboard(text);
             if (ok) {
@@ -2803,6 +2817,90 @@ const app = Vue.createApp({
             } else {
                 applyValues();
             }
+        },
+
+        applyParamsFromPreview() {
+            const img = this.previewImage;
+            if (!img) return;
+
+            // 1) 历史模式：直接用历史记录
+            if (this.previewMode === 'history') {
+                const rec = this.requestHistory.find(r => r.id === this.previewHistoryId);
+                if (rec) {
+                    this.applyParamsFromRecord(rec);
+                    return;
+                }
+            }
+
+            // 2) 图库模式：按 requestId 找记录
+            if (this.previewMode === 'gallery') {
+                const requestId = img.requestId;
+                const rec = requestId ? this.requestHistory.find(r => r.id === requestId) : null;
+                if (rec) {
+                    this.applyParamsFromRecord(rec);
+                    return;
+                }
+            }
+
+            // 3) 收藏模式：优先用收藏里保存的参数 + 模板信息
+            if (this.previewMode === 'favorites') {
+                const fav = (this.favorites || []).find(f => f && f.id === img.id) || null;
+                if (fav && fav.placeholderValues) {
+                    const pseudo = {
+                        templateId: fav.requestTemplateId || '',
+                        workflowJson: '',
+                        placeholderValues: fav.placeholderValues
+                    };
+
+                    // 如果模板不存在，尝试从历史记录补齐 workflowJson
+                    if ((!pseudo.templateId || !TemplateManager.get(pseudo.templateId)) && fav.requestId) {
+                        const rec = this.requestHistory.find(r => r.id === fav.requestId);
+                        if (rec) {
+                            pseudo.templateId = rec.templateId || pseudo.templateId;
+                            pseudo.workflowJson = rec.workflowJson || '';
+                        }
+                    }
+
+                    this.applyParamsFromRecord(pseudo);
+                    return;
+                }
+            }
+
+            // 兜底：只要能拿到参数，就应用到当前占位符（不切换 workflow）
+            if (this.previewParamValues) {
+                const ok = confirm('未找到对应的请求记录/模板，仅将参数应用到当前设置，是否继续？');
+                if (!ok) return;
+
+                const allowed = new Set((this.placeholders || []).map(p => p.name));
+                const cur = { ...(this.placeholderValues || {}) };
+                Object.keys(this.previewParamValues).forEach(k => {
+                    if (!allowed.has(k)) return;
+                    cur[k] = deepCloneJson(this.previewParamValues[k]);
+                });
+                this.placeholderValues = cur;
+                this.onSizeChange();
+
+                const el = document.getElementById('params-panel');
+                if (el && el.scrollIntoView) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                return;
+            }
+
+            alert('该图片暂无可用参数。');
+        },
+
+        copyPreviewText(kind) {
+            const v = this.previewParamValues;
+            if (!v) {
+                alert('该图片暂无参数信息。');
+                return;
+            }
+            if (kind === 'negative') {
+                this.copyText(v.negative_prompt || '', 'Negative Prompt');
+                return;
+            }
+            this.copyText(v.prompt || '', 'Prompt');
         },
 
         // ========== 图片预览 ==========
