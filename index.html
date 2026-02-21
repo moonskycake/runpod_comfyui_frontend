@@ -1398,8 +1398,8 @@
         </div>
 
         <!-- 自定义确认弹窗 -->
-        <div v-if="uiDialog.show" class="rp-ui-dialog-backdrop" @click="onUiDialogBackdropClick">
-            <div class="rp-ui-dialog card bg-dark border-secondary" @click.stop role="dialog" aria-modal="true">
+        <div v-if="uiDialog.show" class="rp-ui-dialog-backdrop" @click.self="onUiDialogBackdropClick">
+            <div class="rp-ui-dialog card bg-dark border-secondary" role="dialog" aria-modal="true">
                 <div class="card-header border-secondary d-flex align-items-center gap-2">
                     <i class="bi" :class="getUiNoticeIcon(uiDialog.type)"></i>
                     <span class="text-light fw-semibold">{{ uiDialog.title }}</span>
