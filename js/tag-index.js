@@ -1,6 +1,7 @@
 /**
  * TagIndex
  * - Loads danbooru tag CSV from ./tags/danbooru.csv (lazy)
+ * - Uses ./tags/manifest.json version to bust stale browser cache
  * - Provides fast word-prefix search for autocomplete
  *
  * CSV format (danbooru.csv):
@@ -11,6 +12,7 @@
 
 (function () {
   const DANBOORU_URL = './tags/danbooru.csv';
+  const DANBOORU_MANIFEST_URL = './tags/manifest.json';
   const PREFIX_LEN = 2;
 
   /** @type {{ loaded: boolean, loadingPromise: Promise<void>|null, tags: Array<{tag:string, category:number, count:number}>, wordPrefixMap: Record<string, number[]> }} */
@@ -64,14 +66,38 @@
     return { tag, category, count };
   }
 
+  function parseManifestVersion(manifest) {
+    if (!manifest || typeof manifest !== 'object') return '';
+    const version = String(manifest.version || '').trim();
+    if (!version) return '';
+    return version;
+  }
+
+  async function resolveDanbooruUrl() {
+    try {
+      const manifestRes = await fetch(DANBOORU_MANIFEST_URL, { cache: 'no-store' });
+      if (!manifestRes.ok) return DANBOORU_URL;
+
+      const manifest = await manifestRes.json();
+      const version = parseManifestVersion(manifest);
+      if (!version) return DANBOORU_URL;
+
+      const sep = DANBOORU_URL.includes('?') ? '&' : '?';
+      return `${DANBOORU_URL}${sep}v=${encodeURIComponent(version)}`;
+    } catch (err) {
+      return DANBOORU_URL;
+    }
+  }
+
   async function loadDanbooru() {
     if (state.loaded) return;
     if (state.loadingPromise) return state.loadingPromise;
 
     state.loadingPromise = (async () => {
-      const res = await fetch(DANBOORU_URL, { cache: 'force-cache' });
+      const csvUrl = await resolveDanbooruUrl();
+      const res = await fetch(csvUrl, { cache: 'force-cache' });
       if (!res.ok) {
-        throw new Error(`Failed to load ${DANBOORU_URL} (HTTP ${res.status})`);
+        throw new Error(`Failed to load ${csvUrl} (HTTP ${res.status})`);
       }
       const text = await res.text();
       const lines = text.split(/\r?\n/);
