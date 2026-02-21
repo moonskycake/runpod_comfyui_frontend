@@ -496,25 +496,25 @@
             <!-- 执行控制 -->
             <section class="mb-4">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
-                    <div>
-                        <button class="btn btn-primary btn-lg me-2"
+                    <div class="rp-generate-actions">
+                        <button class="btn btn-primary btn-lg rp-generate-btn"
                                 @click="generate"
                                 :disabled="!canGenerate || !canAcceptNewJob"
                                 title="快捷键 Ctrl+Enter">
                             <i class="bi bi-play-fill"></i> 生成
                         </button>
-                        <button class="btn btn-secondary btn-lg me-2"
+                        <button class="btn btn-secondary btn-lg rp-generate-btn"
                                 @click="cancelGeneration"
                                 :disabled="!canCancelSelected">
                             <i class="bi bi-x-circle"></i> 取消选中
                         </button>
-                        <button class="btn btn-outline-danger btn-lg"
+                        <button class="btn btn-outline-danger btn-lg rp-generate-btn"
                                 @click="cancelAllGenerations"
                                 :disabled="!canCancelAll">
                             <i class="bi bi-x-octagon"></i> 取消全部
                         </button>
                     </div>
-                    <div class="text-light">
+                    <div class="text-light rp-generate-status">
                         <span class="badge bg-secondary me-2">{{ runModeLabel }}</span>
                         <span v-if="activeJobCount > 0" class="badge bg-info me-2">
                             <span class="spinner-border spinner-border-sm me-1" style="vertical-align: -0.1em;"></span>
@@ -788,7 +788,7 @@
                                                 <div class="mt-3">
                                                     <div class="d-flex justify-content-between align-items-center mb-1">
                                                         <div class="small text-muted">Prompt</div>
-                                                        <button class="btn btn-outline-light btn-sm" type="button"
+                                                        <button class="btn btn-outline-success btn-sm" type="button"
                                                                 @click="copyText(selectedHistoryRecord.placeholderValues.prompt, 'Prompt')" title="复制 Prompt">
                                                             <i class="bi bi-clipboard"></i>
                                                         </button>
@@ -799,7 +799,7 @@
                                                 <div class="mt-3" v-if="selectedHistoryRecord.placeholderValues.negative_prompt">
                                                     <div class="d-flex justify-content-between align-items-center mb-1">
                                                         <div class="small text-muted">Negative Prompt</div>
-                                                        <button class="btn btn-outline-light btn-sm" type="button"
+                                                        <button class="btn btn-outline-danger btn-sm" type="button"
                                                                 @click="copyText(selectedHistoryRecord.placeholderValues.negative_prompt, 'Negative Prompt')" title="复制 Negative Prompt">
                                                             <i class="bi bi-clipboard"></i>
                                                         </button>
@@ -1330,11 +1330,11 @@
                                 <button class="btn btn-outline-primary btn-sm" v-if="previewParamValues" @click.stop="applyParamsFromPreview" title="应用参数">
                                     <i class="bi bi-arrow-up"></i>
                                 </button>
-                                <button class="btn btn-outline-light btn-sm" v-if="previewParamValues && previewParamValues.prompt" @click.stop="copyPreviewText('prompt')" title="复制 Prompt">
+                                <button class="btn btn-outline-success btn-sm" v-if="previewParamValues && previewParamValues.prompt" @click.stop="copyPreviewText('prompt')" title="复制 Prompt">
                                     <i class="bi bi-clipboard"></i>
                                     <span class="d-none d-sm-inline ms-1">Prompt</span>
                                 </button>
-                                <button class="btn btn-outline-light btn-sm" v-if="previewParamValues && previewParamValues.negative_prompt" @click.stop="copyPreviewText('negative')" title="复制 Negative Prompt">
+                                <button class="btn btn-outline-danger btn-sm" v-if="previewParamValues && previewParamValues.negative_prompt" @click.stop="copyPreviewText('negative')" title="复制 Negative Prompt">
                                     <i class="bi bi-clipboard"></i>
                                     <span class="d-none d-sm-inline ms-1">Negative</span>
                                 </button>
@@ -1376,7 +1376,7 @@
                                         <span v-if="previewParamValues.steps !== undefined" class="badge bg-secondary">Steps {{ previewParamValues.steps }}</span>
                                         <span v-if="previewParamValues.cfg !== undefined" class="badge bg-secondary">CFG {{ previewParamValues.cfg }}</span>
                                     </div>
-                                    <pre class="mb-0 small">{{ JSON.stringify(previewParamValues, null, 2) }}</pre>
+                                    <pre class="mb-0 small rp-preview-json">{{ JSON.stringify(previewParamValues, null, 2) }}</pre>
                                 </div>
                             </div>
                         </div>
@@ -1385,6 +1385,38 @@
             </div>
         </div>
         <div v-if="showImageModal" class="modal-backdrop fade show" @click="closeImageModal"></div>
+
+        <!-- 自定义 Toast -->
+        <div v-if="uiToast.show" class="rp-ui-toast-wrap" role="status" aria-live="polite" aria-atomic="true">
+            <div class="rp-ui-toast" :class="'rp-ui-toast-' + uiToast.type">
+                <i class="bi" :class="getUiNoticeIcon(uiToast.type)"></i>
+                <span class="rp-ui-toast-text">{{ uiToast.message }}</span>
+                <button class="btn btn-sm btn-link text-light p-0" type="button" @click="hideUiToast" title="关闭">
+                    <i class="bi bi-x"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- 自定义确认弹窗 -->
+        <div v-if="uiDialog.show" class="rp-ui-dialog-backdrop" @click="onUiDialogBackdropClick">
+            <div class="rp-ui-dialog card bg-dark border-secondary" @click.stop role="dialog" aria-modal="true">
+                <div class="card-header border-secondary d-flex align-items-center gap-2">
+                    <i class="bi" :class="getUiNoticeIcon(uiDialog.type)"></i>
+                    <span class="text-light fw-semibold">{{ uiDialog.title }}</span>
+                </div>
+                <div class="card-body">
+                    <div class="text-light rp-ui-dialog-message">{{ uiDialog.message }}</div>
+                </div>
+                <div class="card-footer border-secondary d-flex justify-content-end gap-2">
+                    <button v-if="uiDialog.showCancel" class="btn btn-outline-light" type="button" @click="resolveUiDialog(false)">
+                        {{ uiDialog.cancelText }}
+                    </button>
+                    <button class="btn" :class="uiDialog.type === 'danger' ? 'btn-danger' : 'btn-primary'" type="button" @click="resolveUiDialog(true)">
+                        {{ uiDialog.confirmText }}
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- 脚本引用 -->

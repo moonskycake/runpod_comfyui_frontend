@@ -57,7 +57,7 @@ const ImageUploadComponent = {
         },
         processFile(file) {
             if (!file || !file.type.startsWith('image/')) {
-                alert('请选择图片文件');
+                emitUiNotice('请选择图片文件', 'warning');
                 return;
             }
 
@@ -68,7 +68,7 @@ const ImageUploadComponent = {
                 image.onload = () => {
                     // 检查尺寸限制
                     if (image.width > 3000 || image.height > 3000) {
-                        alert('图片尺寸过大！最大支持 3000x3000');
+                        emitUiNotice('图片尺寸过大！最大支持 3000x3000', 'warning');
                         return;
                     }
 
@@ -141,6 +141,27 @@ function generateLocalId(prefix) {
 function deepCloneJson(value) {
     if (value === undefined) return undefined;
     return JSON.parse(JSON.stringify(value));
+}
+
+/**
+ * 触发全局通知事件（由 Vue 应用统一展示为自定义弹窗/Toast）
+ * @param {string} message
+ * @param {'success'|'info'|'warning'|'danger'} type
+ */
+function emitUiNotice(message, type = 'info') {
+    const text = String(message || '').trim();
+    if (!text) return;
+
+    if (typeof window === 'undefined' || !window.dispatchEvent || typeof CustomEvent === 'undefined') {
+        return;
+    }
+
+    window.dispatchEvent(new CustomEvent('runpod:ui-notice', {
+        detail: {
+            message: text,
+            type
+        }
+    }));
 }
 
 /**
@@ -498,7 +519,7 @@ const PromptTextareaComponent = {
             } else if (e.key === 'Escape') {
                 e.preventDefault();
                 this.closeMenu();
-            } else if (e.key === 'Enter' || e.key === 'Tab') {
+            } else if (e.key === 'Tab') {
                 if (this.menuItems.length === 0) return;
                 e.preventDefault();
                 const item = this.menuItems[this.activeIndex];
@@ -626,7 +647,23 @@ const app = Vue.createApp({
             previewIsDragging: false,
             previewIsSwiping: false,
             previewTouchStartX: 0,
-            previewTouchStartY: 0
+            previewTouchStartY: 0,
+
+            // ========== 自定义通知/确认弹窗 ==========
+            uiToast: {
+                show: false,
+                message: '',
+                type: 'info'
+            },
+            uiDialog: {
+                show: false,
+                title: '提示',
+                message: '',
+                type: 'info',
+                showCancel: false,
+                confirmText: '确定',
+                cancelText: '取消'
+            }
         };
     },
 
@@ -1043,6 +1080,12 @@ const app = Vue.createApp({
         window.addEventListener('keydown', this.onGlobalKeydown);
         window.addEventListener('resize', this.onWindowResize);
 
+        this._uiNoticeHandler = (event) => {
+            const detail = event && event.detail ? event.detail : {};
+            this.showUiToast(detail.message || '', detail.type || 'info');
+        };
+        window.addEventListener('runpod:ui-notice', this._uiNoticeHandler);
+
         // 首次渲染后同步桌面历史列表高度
         this.queueSyncHistoryListDesktopHeight();
     },
@@ -1050,6 +1093,10 @@ const app = Vue.createApp({
     beforeUnmount() {
         window.removeEventListener('keydown', this.onGlobalKeydown);
         window.removeEventListener('resize', this.onWindowResize);
+        if (this._uiNoticeHandler) {
+            window.removeEventListener('runpod:ui-notice', this._uiNoticeHandler);
+            this._uiNoticeHandler = null;
+        }
 
         if (this._historyListDesktopRaf) {
             cancelAnimationFrame(this._historyListDesktopRaf);
@@ -1069,6 +1116,16 @@ const app = Vue.createApp({
         if (this._lastPlaceholderPersistTimer) {
             clearTimeout(this._lastPlaceholderPersistTimer);
             this._lastPlaceholderPersistTimer = null;
+        }
+
+        if (this._uiToastTimer) {
+            clearTimeout(this._uiToastTimer);
+            this._uiToastTimer = null;
+        }
+
+        if (this._uiDialogResolver) {
+            this._uiDialogResolver(false);
+            this._uiDialogResolver = null;
         }
     },
 
@@ -1235,6 +1292,99 @@ const app = Vue.createApp({
             }
 
             this.historyListDesktopMaxHeight = 0;
+        },
+
+        // ========== 自定义通知 / 确认弹窗 ==========
+        getUiNoticeIcon(type) {
+            if (type === 'success') return 'bi-check-circle-fill';
+            if (type === 'warning') return 'bi-exclamation-triangle-fill';
+            if (type === 'danger') return 'bi-x-circle-fill';
+            return 'bi-info-circle-fill';
+        },
+
+        showUiToast(message, type = 'info', duration = 1800) {
+            const text = String(message || '').trim();
+            if (!text) return;
+
+            this.uiToast.show = true;
+            this.uiToast.message = text;
+            this.uiToast.type = type;
+
+            if (this._uiToastTimer) {
+                clearTimeout(this._uiToastTimer);
+                this._uiToastTimer = null;
+            }
+
+            this._uiToastTimer = setTimeout(() => {
+                this.uiToast.show = false;
+                this._uiToastTimer = null;
+            }, Math.max(800, Number(duration) || 1800));
+        },
+
+        hideUiToast() {
+            if (this._uiToastTimer) {
+                clearTimeout(this._uiToastTimer);
+                this._uiToastTimer = null;
+            }
+            this.uiToast.show = false;
+        },
+
+        openUiDialog(options) {
+            const opt = options || {};
+
+            if (this._uiDialogResolver) {
+                this._uiDialogResolver(false);
+                this._uiDialogResolver = null;
+            }
+
+            this.uiDialog.title = String(opt.title || (opt.showCancel ? '请确认' : '提示'));
+            this.uiDialog.message = String(opt.message || '');
+            this.uiDialog.type = opt.type || (opt.showCancel ? 'warning' : 'info');
+            this.uiDialog.showCancel = !!opt.showCancel;
+            this.uiDialog.confirmText = String(opt.confirmText || '确定');
+            this.uiDialog.cancelText = String(opt.cancelText || '取消');
+            this.uiDialog.show = true;
+
+            return new Promise((resolve) => {
+                this._uiDialogResolver = resolve;
+            });
+        },
+
+        async askConfirm(message, options) {
+            const opt = options || {};
+            return this.openUiDialog({
+                title: opt.title || '请确认',
+                message,
+                type: opt.type || 'warning',
+                showCancel: true,
+                confirmText: opt.confirmText || '确定',
+                cancelText: opt.cancelText || '取消'
+            });
+        },
+
+        async showUiAlert(message, options) {
+            const opt = options || {};
+            await this.openUiDialog({
+                title: opt.title || '提示',
+                message,
+                type: opt.type || 'info',
+                showCancel: false,
+                confirmText: opt.confirmText || '知道了'
+            });
+        },
+
+        resolveUiDialog(confirmed) {
+            const resolver = this._uiDialogResolver;
+            this._uiDialogResolver = null;
+            this.uiDialog.show = false;
+            if (resolver) {
+                resolver(!!confirmed);
+            }
+        },
+
+        onUiDialogBackdropClick() {
+            if (!this.uiDialog.show) return;
+            this.resolveUiDialog(!this.uiDialog.showCancel);
         },
 
         // ========== Workflow 解析 ==========
@@ -1594,7 +1744,7 @@ const app = Vue.createApp({
             this.showPromptPresets = false;
         },
 
-        saveCurrentAsBlockPreset() {
+        async saveCurrentAsBlockPreset() {
             const name = (this.newPromptBlockName || '').trim();
             if (!name) {
                 this.setPromptPresetMessage('请输入预设名称', 'warning');
@@ -1612,7 +1762,11 @@ const app = Vue.createApp({
             const now = Date.now();
 
             if (existing) {
-                if (!confirm('已存在同名预设，是否覆盖更新？')) return;
+                const shouldOverwrite = await this.askConfirm('已存在同名预设，是否覆盖更新？', {
+                    title: '覆盖确认',
+                    type: 'warning'
+                });
+                if (!shouldOverwrite) return;
                 existing.prompt = promptVal;
                 existing.negative_prompt = negVal;
                 existing.updatedAt = now;
@@ -1667,9 +1821,13 @@ const app = Vue.createApp({
             this.setPromptPresetMessage('已更新预设内容', 'success');
         },
 
-        deleteBlockPreset(p) {
+        async deleteBlockPreset(p) {
             if (!p || !p.id) return;
-            if (!confirm(`确定要删除预设 “${p.name}” 吗？`)) return;
+            const ok = await this.askConfirm(`确定要删除预设 “${p.name}” 吗？`, {
+                title: '删除确认',
+                type: 'danger'
+            });
+            if (!ok) return;
             this.promptBlockPresets = (this.promptBlockPresets || []).filter(x => x && x.id !== p.id);
             this.persistPromptPresets();
             this.setPromptPresetMessage('已删除预设', 'success');
@@ -1690,7 +1848,7 @@ const app = Vue.createApp({
             this.setPromptPresetMessage(label, 'success');
         },
 
-        saveSnippetPreset() {
+        async saveSnippetPreset() {
             const name = (this.newPromptSnippetName || '').trim();
             const text = String(this.newPromptSnippetText || '').trim();
             if (!name) {
@@ -1705,7 +1863,11 @@ const app = Vue.createApp({
             const existing = (this.promptSnippetPresets || []).find(s => s && s.name === name);
             const now = Date.now();
             if (existing) {
-                if (!confirm('已存在同名片段，是否覆盖更新？')) return;
+                const shouldOverwrite = await this.askConfirm('已存在同名片段，是否覆盖更新？', {
+                    title: '覆盖确认',
+                    type: 'warning'
+                });
+                if (!shouldOverwrite) return;
                 existing.text = text;
                 existing.updatedAt = now;
                 this.persistPromptPresets();
@@ -1764,14 +1926,17 @@ const app = Vue.createApp({
             const t = String(text || '');
             const name = label ? String(label) : '内容';
             if (!t.trim()) {
-                alert(`${name} 为空，无法复制。`);
+                this.showUiToast(`${name} 为空，无法复制。`, 'warning');
                 return;
             }
 
             const ok = await this.copyToClipboard(t);
             if (!ok) {
-                alert('复制失败：浏览器权限限制');
+                this.showUiToast('复制失败：浏览器权限限制', 'danger');
+                return;
             }
+
+            this.showUiToast(`${name} 已复制`, 'success');
         },
 
         async copySnippet(text) {
@@ -1783,9 +1948,13 @@ const app = Vue.createApp({
             }
         },
 
-        deleteSnippetPreset(s) {
+        async deleteSnippetPreset(s) {
             if (!s || !s.id) return;
-            if (!confirm(`确定要删除片段 “${s.name}” 吗？`)) return;
+            const ok = await this.askConfirm(`确定要删除片段 “${s.name}” 吗？`, {
+                title: '删除确认',
+                type: 'danger'
+            });
+            if (!ok) return;
             this.promptSnippetPresets = (this.promptSnippetPresets || []).filter(x => x && x.id !== s.id);
             this.persistPromptPresets();
             this.setPromptPresetMessage('已删除片段', 'success');
@@ -1872,7 +2041,7 @@ const app = Vue.createApp({
 
         confirmSaveTemplate() {
             if (!this.newTemplateName.trim()) {
-                alert('请输入模板名称');
+                this.showUiToast('请输入模板名称', 'warning');
                 return;
             }
 
@@ -1890,34 +2059,43 @@ const app = Vue.createApp({
                 this.selectedTemplate = TemplateManager.get(id);
                 this.showSaveTemplate = false;
 
-                alert('模板保存成功！');
+                this.showUiToast('模板保存成功！', 'success');
             } catch (e) {
-                alert('保存失败: ' + e.message);
+                this.showUiToast('保存失败: ' + e.message, 'danger');
             }
         },
 
-        updateTemplate() {
+        async updateTemplate() {
             if (!this.selectedTemplate || this.selectedTemplate.isBuiltin) return;
 
-            if (confirm('确定要更新模板吗？')) {
-                const defaults = this.getTemplateDefaultsForSave();
-                TemplateManager.update(this.selectedTemplate.id, {
-                    workflow: this.workflowObj,
-                    defaults
-                });
-                alert('模板已更新！');
-            }
+            const ok = await this.askConfirm('确定要更新模板吗？', {
+                title: '更新确认',
+                type: 'warning'
+            });
+            if (!ok) return;
+
+            const defaults = this.getTemplateDefaultsForSave();
+            TemplateManager.update(this.selectedTemplate.id, {
+                workflow: this.workflowObj,
+                defaults
+            });
+            this.showUiToast('模板已更新！', 'success');
         },
 
-        deleteTemplate() {
+        async deleteTemplate() {
             if (!this.selectedTemplate || this.selectedTemplate.isBuiltin) return;
 
-            if (confirm('确定要删除此模板吗？')) {
-                TemplateManager.delete(this.selectedTemplate.id);
-                this.loadUserTemplates();
-                this.selectedTemplateId = '';
-                this.selectedTemplate = null;
-            }
+            const ok = await this.askConfirm('确定要删除此模板吗？', {
+                title: '删除确认',
+                type: 'danger'
+            });
+            if (!ok) return;
+
+            TemplateManager.delete(this.selectedTemplate.id);
+            this.loadUserTemplates();
+            this.selectedTemplateId = '';
+            this.selectedTemplate = null;
+            this.showUiToast('模板已删除', 'success');
         },
 
         exportTemplate() {
@@ -1977,7 +2155,7 @@ const app = Vue.createApp({
                 this.selectedTemplateId = id;
                 this.showImportTemplate = false;
 
-                alert('模板导入成功！');
+                this.showUiToast('模板导入成功！', 'success');
             } catch (e) {
                 this.importError = e.message;
             }
@@ -3174,7 +3352,7 @@ const app = Vue.createApp({
                 ? (window.HistoryStore.LIMITS.maxFavorites || 50)
                 : 50;
             if ((this.favorites || []).length >= maxFav) {
-                alert(`收藏已满（最多 ${maxFav} 张）。请先取消收藏或删除一些图片。`);
+                this.showUiToast(`收藏已满（最多 ${maxFav} 张）。请先取消收藏或删除一些图片。`, 'warning', 2600);
                 return;
             }
 
@@ -3225,7 +3403,12 @@ const app = Vue.createApp({
             if (!image || !image.id) return;
 
             const filename = image.filename || 'image.png';
-            const ok = confirm(`确定要删除这张图片吗？\n${filename}\n\n删除后将无法恢复。`);
+            const ok = await this.askConfirm(`确定要删除这张图片吗？\n${filename}\n\n删除后将无法恢复。`, {
+                title: '删除图片',
+                type: 'danger',
+                confirmText: '删除',
+                cancelText: '取消'
+            });
             if (!ok) return;
 
             const id = image.id;
@@ -3293,12 +3476,15 @@ const app = Vue.createApp({
         },
 
         // ========== 参数回填 ==========
-        applyParamsFromRecord(record) {
+        async applyParamsFromRecord(record) {
             if (!record) return;
 
             const hasChanges = this.workflowJson.trim();
             if (hasChanges) {
-                const ok = confirm('这会覆盖当前的模板/参数设置，是否继续？');
+                const ok = await this.askConfirm('这会覆盖当前的模板/参数设置，是否继续？', {
+                    title: '应用参数',
+                    type: 'warning'
+                });
                 if (!ok) return;
             }
 
@@ -3331,7 +3517,7 @@ const app = Vue.createApp({
             }
         },
 
-        applyParamsFromPreview() {
+        async applyParamsFromPreview() {
             const img = this.previewImage;
             if (!img) return;
 
@@ -3339,7 +3525,7 @@ const app = Vue.createApp({
             if (this.previewMode === 'history') {
                 const rec = this.requestHistory.find(r => r.id === this.previewHistoryId);
                 if (rec) {
-                    this.applyParamsFromRecord(rec);
+                    await this.applyParamsFromRecord(rec);
                     return;
                 }
             }
@@ -3349,7 +3535,7 @@ const app = Vue.createApp({
                 const requestId = img.requestId;
                 const rec = requestId ? this.requestHistory.find(r => r.id === requestId) : null;
                 if (rec) {
-                    this.applyParamsFromRecord(rec);
+                    await this.applyParamsFromRecord(rec);
                     return;
                 }
             }
@@ -3373,14 +3559,17 @@ const app = Vue.createApp({
                         }
                     }
 
-                    this.applyParamsFromRecord(pseudo);
+                    await this.applyParamsFromRecord(pseudo);
                     return;
                 }
             }
 
             // 兜底：只要能拿到参数，就应用到当前占位符（不切换 workflow）
             if (this.previewParamValues) {
-                const ok = confirm('未找到对应的请求记录/模板，仅将参数应用到当前设置，是否继续？');
+                const ok = await this.askConfirm('未找到对应的请求记录/模板，仅将参数应用到当前设置，是否继续？', {
+                    title: '应用参数',
+                    type: 'warning'
+                });
                 if (!ok) return;
 
                 const allowed = new Set((this.placeholders || []).map(p => p.name));
@@ -3399,13 +3588,13 @@ const app = Vue.createApp({
                 return;
             }
 
-            alert('该图片暂无可用参数。');
+            this.showUiToast('该图片暂无可用参数。', 'warning');
         },
 
         copyPreviewText(kind) {
             const v = this.previewParamValues;
             if (!v) {
-                alert('该图片暂无参数信息。');
+                this.showUiToast('该图片暂无参数信息。', 'warning');
                 return;
             }
             if (kind === 'negative') {
@@ -3418,7 +3607,7 @@ const app = Vue.createApp({
         // ========== 图片预览 ==========
         togglePreviewParams() {
             if (!this.previewParamValues) {
-                alert('该图片暂无参数信息（可能是旧收藏或对应请求已被裁剪）。');
+                this.showUiToast('该图片暂无参数信息（可能是旧收藏或对应请求已被裁剪）。', 'warning', 2600);
                 return;
             }
             this.showPreviewParams = !this.showPreviewParams;
@@ -3518,7 +3707,18 @@ const app = Vue.createApp({
             this.selectedHistoryImageIndex = this.previewIndex;
         },
 
+        isTargetInsidePreviewParams(target) {
+            if (!target || !target.closest) return false;
+            return !!target.closest('.rp-preview-params');
+        },
+
         onPreviewTouchStart(e) {
+            if (this.showPreviewParams && this.isTargetInsidePreviewParams(e && e.target)) {
+                this.previewIsDragging = false;
+                this.previewIsSwiping = false;
+                this.previewDragX = 0;
+                return;
+            }
             if (!e || !e.touches || e.touches.length !== 1) return;
             const t = e.touches[0];
             this.previewTouchStartX = t.clientX;
@@ -3531,6 +3731,7 @@ const app = Vue.createApp({
 
         onPreviewTouchMove(e) {
             if (!this.showImageModal) return;
+            if (this.showPreviewParams && this.isTargetInsidePreviewParams(e && e.target)) return;
             if (!this.previewIsDragging) return;
             if (!e || !e.touches || e.touches.length !== 1) return;
 
@@ -3600,6 +3801,17 @@ const app = Vue.createApp({
 
         onGlobalKeydown(e) {
             if (!e) return;
+
+            if (this.uiDialog && this.uiDialog.show) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    this.resolveUiDialog(!this.uiDialog.showCancel);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.resolveUiDialog(true);
+                }
+                return;
+            }
 
             // Ctrl+Enter 快捷生成
             const isEnter = e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter';
