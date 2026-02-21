@@ -2,3 +2,11 @@
 node_modules/
 .env
 *.log
+
+# local archive bundles
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rar
