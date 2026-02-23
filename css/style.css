@@ -346,6 +346,16 @@ input[type="range"].rp-range::-moz-range-thumb {
     color: #fff;
 }
 
+.rp-status-retryable {
+    cursor: pointer;
+    user-select: none;
+    transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.rp-status-retryable:hover {
+    filter: brightness(1.08);
+}
+
 .rp-generate-actions {
     display: flex;
     flex-wrap: wrap;

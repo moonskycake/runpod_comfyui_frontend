@@ -616,7 +616,10 @@
                                                     <div class="fw-semibold text-truncate min-w-0">
                                                         {{ item.templateName || '自定义 Workflow' }}
                                                     </div>
-                                                    <span class="badge" :class="getStatusBadgeClass(item.status)">{{ item.status }}</span>
+                                                    <span class="badge"
+                                                          :class="[getStatusBadgeClass(item.status), { 'rp-status-retryable': canManualRetryRecord(item) }]"
+                                                          :title="getManualRetryTitle(item)"
+                                                          @click.stop="onHistoryStatusClick(item)">{{ item.status }}</span>
                                                 </div>
 
                                                 <div class="small rp-history-meta mt-1">
@@ -645,7 +648,10 @@
                                                 <div class="fw-semibold text-truncate min-w-0">
                                                     {{ item.templateName || '自定义 Workflow' }}
                                                 </div>
-                                                <span class="badge" :class="getStatusBadgeClass(item.status)">{{ item.status }}</span>
+                                                <span class="badge"
+                                                      :class="[getStatusBadgeClass(item.status), { 'rp-status-retryable': canManualRetryRecord(item) }]"
+                                                      :title="getManualRetryTitle(item)"
+                                                      @click.stop="onHistoryStatusClick(item)">{{ item.status }}</span>
                                             </div>
 
                                             <div class="small rp-history-meta mt-1">
@@ -669,7 +675,10 @@
                                                         <div class="h6 text-light mb-0 text-truncate" style="max-width: 60vw;">
                                                             {{ selectedHistoryRecord.templateName || '自定义 Workflow' }}
                                                         </div>
-                                                        <span class="badge" :class="getStatusBadgeClass(selectedHistoryRecord.status)">
+                                                        <span class="badge"
+                                                              :class="[getStatusBadgeClass(selectedHistoryRecord.status), { 'rp-status-retryable': canManualRetryRecord(selectedHistoryRecord) }]"
+                                                              :title="getManualRetryTitle(selectedHistoryRecord)"
+                                                              @click="onHistoryStatusClick(selectedHistoryRecord)">
                                                             {{ selectedHistoryRecord.status }}
                                                         </span>
                                                     </div>

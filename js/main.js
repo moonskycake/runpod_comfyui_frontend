@@ -594,9 +594,9 @@ const app = Vue.createApp({
             inputImageSizeWarning: '',
 
             // ========== 生成调度（并发/排队） ==========
-            // activeJobs: [{ taskId, historyId, runMode, cancelRequested, jobId }]
+            // activeJobs: [{ taskId, historyId, runMode, cancelRequested, jobId, pollOnly? }]
             activeJobs: [],
-            // jobQueue:  [{ taskId, historyId, runMode, cancelRequested, jobId, payload }]
+            // jobQueue:  [{ taskId, historyId, runMode, cancelRequested, jobId, payload, pollOnly? }]
             jobQueue: [],
             errorMessage: '',
 
@@ -2731,6 +2731,99 @@ const app = Vue.createApp({
             };
         },
 
+        buildClientConfigForHistoryRecord(record) {
+            const cfg = this.getClientConfigSnapshot();
+            if (!record || !record.endpointId) return cfg;
+            return {
+                ...cfg,
+                endpointId: String(record.endpointId)
+            };
+        },
+
+        isManualRetryableStatus(status) {
+            return status === 'IN_PROGRESS' || status === 'IN_QUEUE' || status === 'SUBMITTING';
+        },
+
+        getManualRetryState(record) {
+            if (!record || !record.id) {
+                return { ok: false, reason: '请求记录不存在' };
+            }
+
+            if (!this.isConfigured) {
+                return { ok: false, reason: '请先配置 Endpoint 与 API Key' };
+            }
+
+            if (!this.isManualRetryableStatus(record.status)) {
+                return { ok: false, reason: '仅处理中请求支持手动重试轮询' };
+            }
+
+            if (!record.jobId) {
+                return { ok: false, reason: '该请求尚无 Job ID，暂时无法重试' };
+            }
+
+            const historyId = record.id;
+            const active = (this.activeJobs || []).some(t => t && t.historyId === historyId);
+            if (active) {
+                return { ok: false, reason: '该请求已在重试中' };
+            }
+
+            const queued = (this.jobQueue || []).some(t => t && t.historyId === historyId);
+            if (queued) {
+                return { ok: false, reason: '该请求已在队列中' };
+            }
+
+            return { ok: true, reason: '' };
+        },
+
+        getManualRetryTitle(record) {
+            const state = this.getManualRetryState(record);
+            return state.ok ? '点击重试轮询' : state.reason;
+        },
+
+        canManualRetryRecord(record) {
+            return this.getManualRetryState(record).ok;
+        },
+
+        onHistoryStatusClick(record) {
+            if (!record || !record.id) return;
+            const state = this.getManualRetryState(record);
+            if (!state.ok) {
+                this.showUiToast(state.reason, 'info');
+                return;
+            }
+            this.retryHistoryRecord(record.id);
+        },
+
+        retryHistoryRecord(historyId) {
+            const record = (this.requestHistory || []).find(r => r && r.id === historyId);
+            if (!record) return;
+
+            const state = this.getManualRetryState(record);
+            if (!state.ok) {
+                this.showUiToast(state.reason, 'info');
+                return;
+            }
+
+            const jobId = String(record.jobId || '');
+
+            const task = {
+                taskId: generateLocalId('retry'),
+                historyId,
+                runMode: 'run',
+                pollIntervalMs: this.getEffectivePollIntervalMs(),
+                clientConfig: this.buildClientConfigForHistoryRecord(record),
+                payload: null,
+                cancelRequested: false,
+                jobId,
+                pollOnly: true
+            };
+
+            this.errorMessage = '';
+            this.updateHistoryEntry(historyId, { status: 'IN_PROGRESS', errorMessage: '' });
+            this.startTask(task);
+            this.showUiToast('已开始重试轮询', 'info');
+        },
+
         getEffectiveGenerationSettings() {
             const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
             const storeMaxRaw = window.HistoryStore && window.HistoryStore.LIMITS ? window.HistoryStore.LIMITS.maxRequests : 30;
@@ -2837,13 +2930,18 @@ const app = Vue.createApp({
         startTask(task) {
             if (!task || !task.taskId || !task.historyId) return;
 
+            const exists = (this.activeJobs || []).some(j => j && j.historyId === task.historyId);
+            if (exists) return;
+
             if (task.cancelRequested) {
                 this.updateHistoryEntry(task.historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
                 return;
             }
 
             this.activeJobs.push(task);
-            this.updateHistoryEntry(task.historyId, { status: 'SUBMITTING', errorMessage: '' });
+            if (!task.pollOnly) {
+                this.updateHistoryEntry(task.historyId, { status: 'SUBMITTING', errorMessage: '' });
+            }
 
             this.runTask(task)
                 .catch(() => {
@@ -2870,9 +2968,14 @@ const app = Vue.createApp({
         async runTask(task) {
             const historyId = task && task.historyId ? task.historyId : '';
             const clientCfg = task && task.clientConfig ? task.clientConfig : this.getClientConfigSnapshot();
+            const pollOnly = !!(task && task.pollOnly);
             const payload = task && task.payload ? task.payload : null;
 
-            if (!historyId || !payload) {
+            if (!historyId) {
+                return;
+            }
+
+            if (!pollOnly && !payload) {
                 return;
             }
 
@@ -2882,6 +2985,11 @@ const app = Vue.createApp({
             }
 
             try {
+                if (pollOnly) {
+                    await this.pollExistingJob(task, historyId, task.jobId, clientCfg);
+                    return;
+                }
+
                 if (task.runMode === 'runsync') {
                     this.updateHistoryEntry(historyId, { status: 'IN_PROGRESS' });
                     const result = await RunpodClient.runSync(payload, 300000, clientCfg);
@@ -2931,31 +3039,42 @@ const app = Vue.createApp({
                     return;
                 }
 
-                const pollResult = await RunpodClient.poll(jobId, {
-                    intervalMs: task.pollIntervalMs,
-                    onStatus: (data) => {
-                        if (task.cancelRequested) return;
-                        this.updateHistoryEntry(historyId, {
-                            status: data.status,
-                            delayTime: data.delayTime !== undefined ? data.delayTime : null
-                        });
-                    },
-                    shouldStop: () => task.cancelRequested
-                }, clientCfg);
-
-                if (pollResult.success) {
-                    await this.finalizeHistoryEntry(historyId, pollResult.data);
-                } else if (pollResult.cancelled) {
-                    this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
-                } else {
-                    const st = pollResult.status || 'FAILED';
-                    this.errorMessage = pollResult.message;
-                    this.updateHistoryEntry(historyId, { status: st, errorMessage: pollResult.message });
-                }
+                await this.pollExistingJob(task, historyId, jobId, clientCfg);
             } catch (err) {
                 const msg = '生成失败: ' + (err && err.message ? err.message : String(err));
                 this.errorMessage = msg;
                 this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: msg });
+            }
+        },
+
+        async pollExistingJob(task, historyId, jobId, clientCfg) {
+            const id = jobId ? String(jobId) : '';
+            if (!id) {
+                this.errorMessage = '轮询失败：缺少 job id';
+                this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: '轮询失败：缺少 job id' });
+                return;
+            }
+
+            const pollResult = await RunpodClient.poll(id, {
+                intervalMs: task.pollIntervalMs,
+                onStatus: (data) => {
+                    if (task.cancelRequested) return;
+                    this.updateHistoryEntry(historyId, {
+                        status: data.status,
+                        delayTime: data.delayTime !== undefined ? data.delayTime : null
+                    });
+                },
+                shouldStop: () => task.cancelRequested
+            }, clientCfg);
+
+            if (pollResult.success) {
+                await this.finalizeHistoryEntry(historyId, pollResult.data);
+            } else if (pollResult.cancelled) {
+                this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+            } else {
+                const st = pollResult.status || 'FAILED';
+                this.errorMessage = pollResult.message;
+                this.updateHistoryEntry(historyId, { status: st, errorMessage: pollResult.message });
             }
         },
 
