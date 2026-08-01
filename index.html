@@ -259,7 +259,10 @@
                                 </div>
 
                                 <div v-for="p in promptPlaceholders" :key="p.name" class="mb-3">
-                                    <label class="form-label text-light">{{ p.label }}</label>
+                                    <label class="form-label text-light d-flex justify-content-between align-items-center">
+                                        <span>{{ p.label }}</span>
+                                        <button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button>
+                                    </label>
                                      <prompt-textarea
                                          v-model="placeholderValues[p.name]"
                                          :rows="p.rows || 3"
@@ -289,7 +292,10 @@
                                     <div v-if="p.name === 'seed'" class="col-md-6">
                                         <label class="form-label text-light d-flex justify-content-between align-items-center">
                                             <span>{{ p.label }}</span>
-                                            <span class="badge bg-secondary">{{ placeholderValues.seed }}</span>
+                                            <span class="d-flex align-items-center gap-2">
+                                                <button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button>
+                                                <span class="badge bg-secondary">{{ placeholderValues.seed }}</span>
+                                            </span>
                                         </label>
                                         <div class="d-flex gap-2 align-items-center">
                                             <input type="number" class="form-control bg-dark text-light border-secondary"
@@ -314,7 +320,7 @@
 
                                     <!-- 下拉选择 -->
                                     <div v-else-if="p.type === 'select'" class="col-md-6">
-                                        <label class="form-label text-light">{{ p.label }}</label>
+                                        <label class="form-label text-light d-flex justify-content-between align-items-center"><span>{{ p.label }}</span><button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button></label>
                                         <select class="form-select bg-dark text-light border-secondary"
                                                 v-model="placeholderValues[p.name]">
                                             <option v-for="opt in p.options" :key="opt" :value="opt">
@@ -327,7 +333,10 @@
                                     <div v-else-if="p.type === 'range'" class="col-md-6">
                                         <label class="form-label text-light d-flex justify-content-between align-items-center">
                                             <span>{{ p.label }}</span>
-                                            <span class="badge bg-secondary">{{ placeholderValues[p.name] }}</span>
+                                            <span class="d-flex align-items-center gap-2">
+                                                <button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button>
+                                                <span class="badge bg-secondary">{{ placeholderValues[p.name] }}</span>
+                                            </span>
                                         </label>
                                         <div class="d-flex align-items-center gap-3">
                                             <input type="range" class="form-range rp-range"
@@ -341,7 +350,7 @@
 
                                     <!-- 数字输入 -->
                                     <div v-else class="col-md-6">
-                                        <label class="form-label text-light">{{ p.label }}</label>
+                                        <label class="form-label text-light d-flex justify-content-between align-items-center"><span>{{ p.label }}</span><button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button></label>
                                         <input type="number" class="form-control bg-dark text-light border-secondary"
                                                v-model.number="placeholderValues[p.name]"
                                                :min="p.min" :max="p.max" :step="p.step">
@@ -394,10 +403,21 @@
                                 <div class="row g-3">
                                     <template v-for="p in otherPlaceholders" :key="p.name">
                                         <div class="col-md-6">
-                                            <label class="form-label text-light">{{ p.label }}</label>
-                                            <input type="text" class="form-control bg-dark text-light border-secondary"
-                                                   v-model="placeholderValues[p.name]"
-                                                   :placeholder="p.default">
+                                            <label class="form-label text-light d-flex justify-content-between align-items-center">
+                                                <span>{{ p.label }}</span>
+                                                <button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button>
+                                            </label>
+                                            <div v-if="p.type === 'checkbox'" class="form-check form-switch pt-2">
+                                                <input class="form-check-input" type="checkbox" v-model="placeholderValues[p.name]" :id="'workflow-param-' + p.name" :disabled="isParamsLocked">
+                                                <label class="form-check-label text-light" :for="'workflow-param-' + p.name">{{ placeholderValues[p.name] ? '开启' : '关闭' }}</label>
+                                            </div>
+                                            <textarea v-else-if="p.type === 'textarea'" class="form-control bg-dark text-light border-secondary" v-model="placeholderValues[p.name]" :rows="p.rows || 3" :placeholder="p.default" :disabled="isParamsLocked"></textarea>
+                                            <div v-else-if="p.type === 'range'" class="d-flex align-items-center gap-3">
+                                                <input type="range" class="form-range rp-range" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
+                                                <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary rp-range-number" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
+                                            </div>
+                                            <input v-else-if="p.type === 'number'" type="number" class="form-control bg-dark text-light border-secondary" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
+                                            <input v-else type="text" class="form-control bg-dark text-light border-secondary" v-model="placeholderValues[p.name]" :placeholder="p.default" :disabled="isParamsLocked">
                                         </div>
                                     </template>
                                 </div>
@@ -417,77 +437,140 @@
 
             <!-- Workflow 编辑区 -->
             <section class="mb-4">
-                <div class="card bg-dark border-secondary">
-                    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0 text-light">
-                            <i class="bi bi-file-code"></i> Workflow JSON
-                        </h5>
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-outline-info btn-sm" @click="togglePreview"
-                                    :disabled="!workflowJson">
-                                <i class="bi bi-eye"></i> {{ showPreview ? '隐藏' : '预览' }}
-                            </button>
+                <div class="card bg-dark border-secondary rp-workflow-card">
+                    <div class="card-header border-secondary d-flex justify-content-between align-items-center gap-3">
+                        <div class="min-w-0">
+                            <h5 class="mb-1 text-light">
+                                <i class="bi bi-diagram-3"></i> Workflow 编辑器
+                                <span v-if="isWorkflowEditorDirty" class="badge bg-warning text-dark ms-2">未保存</span>
+                            </h5>
+                            <div class="small text-muted">
+                                {{ workflowGraph.nodes.length }} 个节点 · {{ workflowGraph.edges.length }} 条连线
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap justify-content-end">
                             <button class="btn btn-outline-light btn-sm" @click="toggleWorkflowCollapse" title="收起/展开工作流编辑区">
                                 <i class="bi" :class="isWorkflowCollapsed ? 'bi-chevron-down' : 'bi-chevron-up'"></i>
                                 {{ isWorkflowCollapsed ? '展开' : '收起' }}
                             </button>
                         </div>
                     </div>
-                    <div class="card-body" v-show="!isWorkflowCollapsed">
-                        <!-- 快速插入占位符 -->
-                        <div class="mb-3">
-                            <label class="form-label text-light small">快速插入占位符</label>
-                            <div class="d-flex gap-2 flex-wrap">
-                                 <button v-for="chip in placeholderChips" :key="chip"
-                                         class="btn btn-outline-secondary btn-sm"
-                                         @click="insertPlaceholder(chip)"
-                                         :disabled="isParamsLocked">
-                                     {{ chip }}
-                                 </button>
+                    <div class="card-body p-0" v-show="!isWorkflowCollapsed">
+                        <div class="rp-workflow-tabs border-bottom border-secondary px-3 pt-2">
+                            <button class="btn btn-sm" :class="workflowView === 'graph' ? 'btn-primary' : 'btn-outline-secondary'" @click="workflowView = 'graph'">
+                                <i class="bi bi-diagram-3"></i> 流程图
+                            </button>
+                            <button class="btn btn-sm" :class="workflowView === 'template' ? 'btn-primary' : 'btn-outline-secondary'" @click="workflowView = 'template'">
+                                <i class="bi bi-file-code"></i> 模板 JSON
+                            </button>
+                            <button class="btn btn-sm" :class="workflowView === 'execution' ? 'btn-primary' : 'btn-outline-secondary'" @click="workflowView = 'execution'" :disabled="!finalWorkflow">
+                                <i class="bi bi-braces"></i> 执行 JSON
+                            </button>
+                        </div>
+
+                        <div v-show="workflowView === 'graph'" class="rp-workflow-workspace">
+                            <div class="rp-workflow-canvas-column">
+                                <div class="rp-workflow-toolbar d-flex justify-content-between align-items-center gap-2 flex-wrap">
+                                    <div class="small text-muted">
+                                        {{ selectedWorkflowNode ? selectedWorkflowNode.title : '未选择节点' }}
+                                    </div>
+                                    <div class="d-flex gap-1">
+                                        <button class="btn btn-outline-secondary btn-sm" @click="workflowGraphZoom(0.2)" title="放大"><i class="bi bi-zoom-in"></i></button>
+                                        <button class="btn btn-outline-secondary btn-sm" @click="workflowGraphZoom(-0.2)" title="缩小"><i class="bi bi-zoom-out"></i></button>
+                                        <button class="btn btn-outline-secondary btn-sm" @click="workflowGraphFit" title="适应画布"><i class="bi bi-arrows-fullscreen"></i></button>
+                                    </div>
+                                </div>
+                                <div ref="workflowGraph" class="rp-workflow-graph" aria-label="Workflow 流程图"></div>
+                                <div v-if="workflowGraph.warnings.length > 0" class="alert alert-warning m-3 mb-0 py-2 small">
+                                    <i class="bi bi-exclamation-triangle"></i> {{ workflowGraph.warnings.join('；') }}
+                                </div>
                             </div>
+
+                            <aside class="rp-workflow-inspector border-start border-secondary">
+                                <div class="rp-inspector-header d-flex justify-content-between align-items-center">
+                                    <span class="text-light fw-semibold"><i class="bi bi-sliders2"></i> 节点检查器</span>
+                                    <span v-if="selectedWorkflowNode" class="badge bg-secondary">{{ selectedWorkflowNode.id }}</span>
+                                </div>
+                                <div v-if="!selectedWorkflowNode" class="text-muted small p-3">
+                                    未选择节点
+                                </div>
+                                <div v-else class="rp-inspector-body">
+                                    <div class="mb-3">
+                                        <div class="text-light fw-semibold text-break">{{ selectedWorkflowNode.title }}</div>
+                                        <div class="small text-muted text-break">{{ selectedWorkflowNode.classType }}</div>
+                                    </div>
+
+                                    <div v-if="canEditLoraChain" class="rp-lora-panel mb-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span class="text-light fw-semibold"><i class="bi bi-layers"></i> LoRA 链</span>
+                                            <button class="btn btn-outline-warning btn-sm" @click="addWorkflowLora" :disabled="isParamsLocked">
+                                                <i class="bi bi-plus-lg"></i> 添加
+                                            </button>
+                                        </div>
+                                        <div v-if="loraDrafts.length === 0" class="small text-muted">暂无 LoRA 节点</div>
+                                        <div v-for="(lora, index) in loraDrafts" :key="lora.nodeId || index" class="rp-lora-row mb-2">
+                                            <div class="d-flex align-items-center gap-1 mb-1">
+                                                <span class="small text-muted flex-grow-1">LoRA {{ index + 1 }}</span>
+                                                <button class="btn btn-sm btn-outline-secondary" @click="moveWorkflowLora(index, -1)" :disabled="index === 0 || isParamsLocked" title="上移"><i class="bi bi-chevron-up"></i></button>
+                                                <button class="btn btn-sm btn-outline-secondary" @click="moveWorkflowLora(index, 1)" :disabled="index === loraDrafts.length - 1 || isParamsLocked" title="下移"><i class="bi bi-chevron-down"></i></button>
+                                                <button class="btn btn-sm btn-outline-danger" @click="removeWorkflowLora(index)" :disabled="isParamsLocked" title="删除"><i class="bi bi-trash"></i></button>
+                                            </div>
+                                            <input class="form-control form-control-sm bg-dark text-light border-secondary mb-1" v-model="lora.name" @change="applyWorkflowLoraDrafts" placeholder="远端 LoRA 文件名">
+                                            <div class="row g-1">
+                                                <div class="col-6"><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model.number="lora.strengthModel" @change="applyWorkflowLoraDrafts" min="-100" max="100" step="0.01" placeholder="模型强度"></div>
+                                                <div class="col-6"><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model.number="lora.strengthClip" @change="applyWorkflowLoraDrafts" min="-100" max="100" step="0.01" placeholder="CLIP 强度"></div>
+                                            </div>
+                                        </div>
+                                        <div v-if="workflowEditorErrors.length > 0" class="text-warning small mt-2">{{ workflowEditorErrors.join('；') }}</div>
+                                    </div>
+
+                                    <div v-if="selectedWorkflowNode.primitiveInputs.length > 0" class="mb-3">
+                                        <div class="text-light fw-semibold small mb-2">普通输入</div>
+                                        <div v-for="input in selectedWorkflowNode.primitiveInputs" :key="input.name" class="rp-node-input mb-2">
+                                            <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                                <code class="text-info small text-break">{{ input.name }}</code>
+                                                <span v-if="getWorkflowInputBinding(selectedWorkflowNode.id, input.name)" class="badge bg-success">参数</span>
+                                            </div>
+                                            <input v-if="isWorkflowLoaderFilename(selectedWorkflowNode.id, input.name)" class="form-control form-control-sm bg-dark text-light border-secondary" :value="input.value" @change="updateWorkflowPrimitiveInput(selectedWorkflowNode.id, input.name, $event.target.value)" :disabled="isParamsLocked">
+                                            <div v-else class="d-flex align-items-start gap-2">
+                                                <div class="small text-muted text-break flex-grow-1 rp-node-input-value">{{ String(input.value) }}</div>
+                                                <button v-if="!getWorkflowInputBinding(selectedWorkflowNode.id, input.name)" class="btn btn-outline-info btn-sm flex-shrink-0" @click="startExposeWorkflowInput(selectedWorkflowNode.id, input.name, input.value)" :disabled="isParamsLocked" title="加入参数"><i class="bi bi-sliders"></i></button>
+                                                <button v-else class="btn btn-outline-secondary btn-sm flex-shrink-0" @click="removeWorkflowParameter(getWorkflowInputBinding(selectedWorkflowNode.id, input.name).id)" :disabled="isParamsLocked" title="移除参数"><i class="bi bi-link-45deg"></i></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div v-if="selectedWorkflowNode.linkedInputs.length > 0" class="small text-muted">
+                                        <div class="text-light fw-semibold mb-1">连线输入</div>
+                                        <div v-for="link in selectedWorkflowNode.linkedInputs" :key="link.targetInputName" class="text-break mb-1">
+                                            {{ link.targetInputName }} ← 节点 {{ link.sourceNodeId }} 输出 {{ link.sourceOutputIndex }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </aside>
                         </div>
 
-                        <!-- 上传/操作按钮 -->
-                        <div class="mb-3">
-                            <input type="file" ref="workflowFile" @change="handleWorkflowUpload"
-                                   accept=".json" class="d-none">
-                            <div class="d-flex gap-2">
-                                 <button class="btn btn-outline-secondary btn-sm" @click="$refs.workflowFile.click()"
-                                        :disabled="isParamsLocked">
-                                     <i class="bi bi-upload"></i> 上传 JSON
-                                 </button>
-                                 <button class="btn btn-outline-secondary btn-sm" @click="clearWorkflow"
-                                        :disabled="isParamsLocked || !workflowJson">
-                                     <i class="bi bi-trash"></i> 清空
-                                 </button>
+                        <div v-show="workflowView === 'template'" class="p-3">
+                            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+                                <div class="small text-muted">模板 JSON · 保留占位符</div>
+                                <div class="d-flex gap-2">
+                                    <input type="file" ref="workflowFile" @change="handleWorkflowUpload" accept=".json" class="d-none">
+                                    <button class="btn btn-outline-secondary btn-sm" @click="$refs.workflowFile.click()" :disabled="isParamsLocked"><i class="bi bi-upload"></i> 上传 JSON</button>
+                                    <button class="btn btn-outline-secondary btn-sm" @click="clearWorkflow" :disabled="isParamsLocked || !workflowJson"><i class="bi bi-trash"></i> 清空</button>
+                                </div>
                             </div>
+                            <div class="mb-3">
+                                <label class="form-label text-light small">快速插入占位符</label>
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <button v-for="chip in placeholderChips" :key="chip" class="btn btn-outline-secondary btn-sm" @click="insertPlaceholder(chip)" :disabled="isParamsLocked">{{ chip }}</button>
+                                </div>
+                            </div>
+                            <textarea class="form-control bg-dark text-light border-secondary font-monospace rp-workflow-json" v-model="workflowJson" @input="isWorkflowEditorDirty = true" @focus="saveCursorPosition" @keyup="saveCursorPosition" @click="saveCursorPosition" placeholder="在此粘贴 ComfyUI Workflow JSON（使用 Workflow > Export API 导出）&#10;支持占位符如 {{width}}, {{height}}, {{prompt}} 等" :disabled="isParamsLocked" ref="workflowTextarea"></textarea>
+                            <div v-if="workflowError" class="alert alert-danger mt-2 mb-0"><i class="bi bi-exclamation-circle"></i> {{ workflowError }}</div>
                         </div>
 
-                        <!-- JSON 编辑区 -->
-                        <div class="form-group">
-                            <textarea class="form-control bg-dark text-light border-secondary font-monospace"
-                                      style="font-size: 0.85rem;"
-                                      rows="12"
-                                      v-model="workflowJson"
-                                      @focus="saveCursorPosition"
-                                      @keyup="saveCursorPosition"
-                                      @click="saveCursorPosition"
-                                       placeholder="在此粘贴 ComfyUI Workflow JSON（使用 Workflow > Export API 导出）&#10;支持占位符如 {{width}}, {{height}}, {{prompt}} 等"
-                                      :disabled="isParamsLocked"
-                                      ref="workflowTextarea"></textarea>
-                        </div>
-
-                        <!-- JSON 错误提示 -->
-                        <div v-if="workflowError" class="alert alert-danger mt-2 mb-0">
-                            <i class="bi bi-exclamation-circle"></i> {{ workflowError }}
-                        </div>
-
-                        <!-- 替换后预览 -->
-                        <div v-if="showPreview && finalWorkflow" class="mt-3">
-                            <label class="form-label text-light small">
-                                <i class="bi bi-eye"></i> 替换后的 Workflow（只读）
-                            </label>
-                            <pre class="bg-dark text-light border rounded p-3" style="max-height: 300px; overflow: auto; font-size: 0.75rem;">{{ JSON.stringify(finalWorkflow, null, 2) }}</pre>
+                        <div v-show="workflowView === 'execution'" class="p-3">
+                            <div class="small text-muted mb-3">执行 JSON · 本次提交内容</div>
+                            <pre class="bg-dark text-light border rounded p-3 mb-0 rp-workflow-json-output">{{ executionWorkflowJson }}</pre>
                         </div>
                     </div>
                 </div>
@@ -1406,6 +1489,49 @@
             </div>
         </div>
 
+        <!-- 暴露参数弹窗 -->
+        <div v-if="pendingExposeInput" class="modal fade show" style="display: block;" role="dialog" aria-modal="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content bg-dark border-secondary">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title text-light"><i class="bi bi-sliders"></i> 加入参数</h5>
+                        <button type="button" class="btn-close btn-close-white" @click="cancelExposeWorkflowInput"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="small text-muted mb-3">节点 {{ pendingExposeInput.nodeId }} 的 {{ pendingExposeInput.inputName }} 将替换为占位符。</div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">参数 ID</label>
+                            <input class="form-control bg-dark text-light border-secondary" v-model="exposeForm.id">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">显示名称</label>
+                            <input class="form-control bg-dark text-light border-secondary" v-model="exposeForm.label">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-light">控件类型</label>
+                            <select class="form-select bg-dark text-light border-secondary" v-model="exposeForm.control">
+                                <option value="text">单行文本</option>
+                                <option value="textarea">多行文本</option>
+                                <option value="number">数字</option>
+                                <option value="range">滑块</option>
+                                <option value="checkbox">开关</option>
+                            </select>
+                        </div>
+                        <div v-if="exposeForm.control === 'number' || exposeForm.control === 'range'" class="row g-2">
+                            <div class="col-4"><label class="form-label text-light small">最小值</label><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model="exposeForm.min"></div>
+                            <div class="col-4"><label class="form-label text-light small">最大值</label><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model="exposeForm.max"></div>
+                            <div class="col-4"><label class="form-label text-light small">步长</label><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model="exposeForm.step"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary">
+                        <button type="button" class="btn btn-secondary" @click="cancelExposeWorkflowInput">取消</button>
+                        <button type="button" class="btn btn-primary" @click="confirmExposeWorkflowInput">加入参数</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div v-if="pendingExposeInput" class="modal-backdrop fade show"></div>
+
         <!-- 自定义确认弹窗 -->
         <div v-if="uiDialog.show" class="rp-ui-dialog-backdrop" @click.self="onUiDialogBackdropClick">
             <div class="rp-ui-dialog card bg-dark border-secondary" role="dialog" aria-modal="true">
@@ -1431,10 +1557,14 @@
     <!-- 脚本引用 -->
     <script src="./vue/vue.global.prod.js"></script>
     <script src="./js/axios.min.js"></script>
+    <script src="./js/vendor/dagre.min.js"></script>
+    <script src="./js/vendor/cytoscape.min.js"></script>
+    <script src="./js/vendor/cytoscape-dagre.js"></script>
     <script src="./js/settings.js"></script>
     <script src="./js/runpod-client.js"></script>
     <script src="./js/templates.js"></script>
     <script src="./js/placeholders.js"></script>
+    <script src="./js/workflow-editor.js"></script>
     <script src="./js/builtin-templates.js"></script>
     <script src="./js/tag-index.js"></script>
     <script src="./js/history-store.js"></script>

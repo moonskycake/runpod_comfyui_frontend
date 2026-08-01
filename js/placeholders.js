@@ -197,11 +197,17 @@ const PlaceholderEngine = {
    * 替换 workflow 中的占位符
    * @param {Object} workflow - 原始 workflow 对象（会被修改）
    * @param {Object} values - 占位符值 {name: value}
+   * @param {Array} placeholders - 当前占位符控件配置
    * @returns {Object} 替换后的 workflow（深拷贝）
    */
-  replace(workflow, values) {
+  replace(workflow, values, placeholders = []) {
     // 深拷贝
     const result = JSON.parse(JSON.stringify(workflow));
+    const placeholderConfigs = new Map(
+      (Array.isArray(placeholders) ? placeholders : [])
+        .filter(item => item && item.name)
+        .map(item => [String(item.name), item])
+    );
 
     // 递归替换
     const traverse = (obj) => {
@@ -213,9 +219,12 @@ const PlaceholderEngine = {
           const value = values[name];
           if (value !== undefined) {
             // 根据占位符类型决定返回类型
-            const config = this.KNOWN_PLACEHOLDERS[name];
-            if (config && config.type === 'number') {
+            const config = placeholderConfigs.get(name) || this.KNOWN_PLACEHOLDERS[name];
+            if (config && (config.type === 'number' || config.type === 'range')) {
               return Number(value);
+            }
+            if (config && config.type === 'checkbox') {
+              return value === true || value === 'true';
             }
             return value;
           }

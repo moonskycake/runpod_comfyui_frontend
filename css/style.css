@@ -148,6 +148,144 @@ pre {
     }
 }
 
+/* Workflow graph editor */
+.rp-workflow-card {
+    overflow: hidden;
+}
+
+.rp-workflow-tabs {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    background: rgba(0, 0, 0, 0.16);
+}
+
+.rp-workflow-tabs .btn {
+    margin-bottom: 0.5rem;
+}
+
+.rp-workflow-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 330px;
+    min-height: 560px;
+}
+
+.rp-workflow-canvas-column {
+    min-width: 0;
+    background: #171a1d;
+}
+
+.rp-workflow-toolbar {
+    min-height: 52px;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rp-workflow-graph {
+    width: 100%;
+    height: 500px;
+    min-height: 360px;
+    background-color: #15181b;
+    background-image: radial-gradient(rgba(173, 181, 189, 0.18) 1px, transparent 1px);
+    background-size: 20px 20px;
+}
+
+.rp-workflow-inspector {
+    min-width: 0;
+    max-height: 560px;
+    overflow-y: auto;
+    background: #1d2125;
+}
+
+.rp-inspector-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    min-height: 52px;
+    padding: 0.75rem 1rem;
+    background: #212529;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rp-inspector-body {
+    padding: 1rem;
+}
+
+.rp-node-input {
+    padding: 0.55rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.35rem;
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.rp-node-input-value {
+    min-width: 0;
+    max-height: 62px;
+    overflow: hidden;
+    line-height: 1.4;
+}
+
+.rp-lora-panel {
+    padding: 0.75rem;
+    border: 1px solid rgba(255, 193, 7, 0.35);
+    border-radius: 0.45rem;
+    background: rgba(128, 101, 28, 0.1);
+}
+
+.rp-lora-row {
+    padding: 0.55rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.35rem;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.rp-workflow-json,
+.rp-workflow-json-output {
+    min-height: 500px;
+    max-height: 620px;
+    overflow: auto;
+    resize: vertical;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    white-space: pre;
+}
+
+.rp-workflow-json-output {
+    margin: 0;
+}
+
+@media (max-width: 992px) {
+    .rp-workflow-workspace {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .rp-workflow-inspector {
+        max-height: none;
+        border-left: 0 !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.14);
+    }
+}
+
+@media (max-width: 576px) {
+    .rp-workflow-workspace {
+        min-height: 0;
+    }
+
+    .rp-workflow-graph {
+        height: 380px;
+        min-height: 300px;
+    }
+
+    .rp-workflow-toolbar {
+        align-items: flex-start !important;
+    }
+
+    .rp-workflow-json,
+    .rp-workflow-json-output {
+        min-height: 380px;
+    }
+}
+
 /* 状态徽章 */
 .badge {
     font-weight: 500;

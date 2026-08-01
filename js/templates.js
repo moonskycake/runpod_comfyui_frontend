@@ -72,10 +72,12 @@ const TemplateManager = {
 
     const newTemplate = {
       id,
+      schemaVersion: Number(template.schemaVersion || 2),
       name: template.name || '未命名模板',
       description: template.description || '',
       workflow: template.workflow,
       defaults: template.defaults || {},
+      editor: template.editor || {},
       isBuiltin: false,
       createdAt: Date.now()
     };
@@ -133,10 +135,12 @@ const TemplateManager = {
     if (!template) throw new Error('模板不存在');
 
     return JSON.stringify({
+      schemaVersion: Number(template.schemaVersion || 2),
       name: template.name,
       description: template.description || '',
       workflow: template.workflow,
-      defaults: template.defaults
+      defaults: template.defaults,
+      editor: template.editor || {}
     }, null, 2);
   },
 
@@ -161,30 +165,36 @@ const TemplateManager = {
         }
 
         return {
+          schemaVersion: Number(data.schemaVersion || 2),
           name: data.name || '导入的模板',
           description: data.description || '',
           workflow: workflowObj,
-          defaults: data.defaults || {}
+          defaults: data.defaults || {},
+          editor: data.editor || {}
         };
       }
 
       // 2) RunPod 请求格式: { input: { workflow: ... } }
       if (data && typeof data === 'object' && !Array.isArray(data) && data.input && data.input.workflow) {
         return {
+          schemaVersion: Number(data.schemaVersion || 2),
           name: data.name || '导入的工作流',
           description: data.description || '',
           workflow: data.input.workflow,
-          defaults: data.defaults || {}
+          defaults: data.defaults || {},
+          editor: data.editor || {}
         };
       }
 
       // 3) 纯 ComfyUI workflow JSON（API Export）: 直接把整个对象当 workflow
       if (data && typeof data === 'object' && !Array.isArray(data)) {
         return {
+          schemaVersion: 2,
           name: '导入的工作流',
           description: '',
           workflow: data,
-          defaults: {}
+          defaults: {},
+          editor: {}
         };
       }
 

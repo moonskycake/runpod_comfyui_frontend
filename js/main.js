@@ -551,6 +551,20 @@ const app = Vue.createApp({
             showPreview: false,
             isWorkflowCollapsed: false,
             cursorPosition: 0,
+            workflowView: 'graph',
+            workflowEditorMeta: WorkflowEditor.normalizeEditor({}),
+            selectedWorkflowNodeId: '',
+            isWorkflowEditorDirty: false,
+            loraDrafts: [],
+            pendingExposeInput: null,
+            exposeForm: {
+                id: '',
+                label: '',
+                control: 'text',
+                min: '',
+                max: '',
+                step: ''
+            },
 
             // ========== 占位符相关 ==========
             placeholders: [],
@@ -677,6 +691,7 @@ const app = Vue.createApp({
             if (!this.workflowJson.trim()) return false;
             if (this.workflowError) return false;
             if (this.placeholderErrors.length > 0) return false;
+            if (this.workflowEditorErrors.length > 0) return false;
             return true;
         },
 
@@ -1031,10 +1046,56 @@ const app = Vue.createApp({
             return ['{{width}}', '{{height}}', '{{prompt}}', '{{negative_prompt}}', '{{seed}}', '{{steps}}', '{{cfg}}', '{{input_image}}'];
         },
 
+        workflowGraph() {
+            return WorkflowEditor.parse(this.workflowObj);
+        },
+
+        selectedWorkflowNode() {
+            return this.workflowGraph.nodes.find(node => node.id === this.selectedWorkflowNodeId) || null;
+        },
+
+        workflowProfileValidation() {
+            return WorkflowEditor.validateProfile(this.workflowObj, this.workflowEditorMeta);
+        },
+
+        canEditLoraChain() {
+            return this.workflowProfileValidation.valid;
+        },
+
+        workflowEditorErrors() {
+            const errors = [];
+            if (this.canEditLoraChain) {
+                this.loraDrafts.forEach((lora, index) => {
+                    if (!String(lora && lora.name || '').trim()) {
+                        errors.push(`LoRA ${index + 1} 缺少文件名`);
+                    }
+                    ['strengthModel', 'strengthClip'].forEach(key => {
+                        const value = Number(lora && lora[key]);
+                        if (!Number.isFinite(value) || value < -100 || value > 100) {
+                            errors.push(`LoRA ${index + 1} 强度必须在 -100 到 100 之间`);
+                        }
+                    });
+                });
+            }
+            return errors;
+        },
+
+        executionWorkflowJson() {
+            return this.finalWorkflow ? JSON.stringify(this.finalWorkflow, null, 2) : '';
+        },
+
+        workflowParameterBindings() {
+            return WorkflowEditor.mergeParameterBindings(this.workflowObj, this.workflowEditorMeta);
+        },
+
         // 最终替换后的 workflow
         finalWorkflow() {
             if (!this.workflowObj) return null;
-            return PlaceholderEngine.replace(this.workflowObj, this.placeholderValues);
+            return PlaceholderEngine.replace(
+                this.workflowObj,
+                this.placeholderValues,
+                this.placeholders
+            );
         }
     },
 
@@ -1088,6 +1149,7 @@ const app = Vue.createApp({
 
         // 首次渲染后同步桌面历史列表高度
         this.queueSyncHistoryListDesktopHeight();
+        this.$nextTick(() => this.queueWorkflowGraphRender());
     },
 
     beforeUnmount() {
@@ -1126,6 +1188,16 @@ const app = Vue.createApp({
         if (this._uiDialogResolver) {
             this._uiDialogResolver(false);
             this._uiDialogResolver = null;
+        }
+
+        if (this._workflowGraphRaf) {
+            cancelAnimationFrame(this._workflowGraphRaf);
+            this._workflowGraphRaf = null;
+        }
+
+        if (this._workflowCy) {
+            this._workflowCy.destroy();
+            this._workflowCy = null;
         }
     },
 
@@ -1169,6 +1241,12 @@ const app = Vue.createApp({
 
         workflowJson(val) {
             this.parseWorkflow();
+        },
+
+        workflowView(val) {
+            if (val === 'graph') {
+                this.queueWorkflowGraphRender();
+            }
         },
 
         inputImages: {
@@ -1387,6 +1465,300 @@ const app = Vue.createApp({
             this.resolveUiDialog(!this.uiDialog.showCancel);
         },
 
+        // ========== Workflow 图与受控编辑 ==========
+        queueWorkflowGraphRender() {
+            if (this._workflowGraphRaf) return;
+            this._workflowGraphRaf = requestAnimationFrame(() => {
+                this._workflowGraphRaf = null;
+                this.renderWorkflowGraph();
+            });
+        },
+
+        renderWorkflowGraph() {
+            const container = this.$refs.workflowGraph;
+            if (!container || this.workflowView !== 'graph' || !window.cytoscape) return;
+
+            const graph = this.workflowGraph;
+            if (this._workflowCy) {
+                this._workflowCy.destroy();
+                this._workflowCy = null;
+            }
+
+            if (graph.nodes.length === 0) return;
+
+            const elements = [
+                ...graph.nodes.map(node => ({
+                    data: {
+                        id: node.id,
+                        label: node.title,
+                        type: node.classType,
+                        category: node.category
+                    }
+                })),
+                ...graph.edges.map(edge => ({
+                    data: {
+                        id: edge.id,
+                        source: edge.sourceNodeId,
+                        target: edge.targetNodeId,
+                        input: edge.targetInputName
+                    }
+                }))
+            ];
+
+            this._workflowCy = window.cytoscape({
+                container,
+                elements,
+                minZoom: 0.25,
+                maxZoom: 2.5,
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'background-color': '#34495e',
+                            'border-width': 1,
+                            'border-color': '#93a4b8',
+                            'label': 'data(label)',
+                            'color': '#f8f9fa',
+                            'font-size': 12,
+                            'text-wrap': 'wrap',
+                            'text-max-width': 132,
+                            'text-valign': 'center',
+                            'text-halign': 'center',
+                            'width': 166,
+                            'height': 58,
+                            'padding': 8,
+                            'shape': 'round-rectangle'
+                        }
+                    },
+                    { selector: 'node[category = "loader"]', style: { 'background-color': '#176b87' } },
+                    { selector: 'node[category = "conditioning"]', style: { 'background-color': '#80651c' } },
+                    { selector: 'node[category = "sampler"]', style: { 'background-color': '#3b5c9a' } },
+                    { selector: 'node[category = "latent"]', style: { 'background-color': '#704488' } },
+                    { selector: 'node[category = "decode"]', style: { 'background-color': '#386b55' } },
+                    { selector: 'node[category = "output"]', style: { 'background-color': '#8a4a32' } },
+                    { selector: 'node[category = "lora"]', style: { 'background-color': '#855d1c' } },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'curve-style': 'bezier',
+                            'target-arrow-shape': 'triangle',
+                            'line-color': '#8293a8',
+                            'target-arrow-color': '#8293a8',
+                            'width': 2
+                        }
+                    },
+                    {
+                        selector: 'node:selected',
+                        style: {
+                            'border-width': 3,
+                            'border-color': '#6ea8fe',
+                            'overlay-color': '#6ea8fe',
+                            'overlay-opacity': 0.12
+                        }
+                    }
+                ],
+                layout: {
+                    name: window.cytoscapeDagre ? 'dagre' : 'breadthfirst',
+                    rankDir: 'LR',
+                    nodeSep: 48,
+                    rankSep: 86,
+                    padding: 28,
+                    directed: true,
+                    fit: true
+                }
+            });
+
+            this._workflowCy.on('tap', 'node', event => {
+                this.selectWorkflowNode(event.target.id());
+            });
+
+            if (this.selectedWorkflowNodeId) {
+                const selected = this._workflowCy.getElementById(this.selectedWorkflowNodeId);
+                if (selected.length > 0) selected.select();
+            }
+        },
+
+        selectWorkflowNode(nodeId) {
+            this.selectedWorkflowNodeId = String(nodeId || '');
+            if (!this._workflowCy) return;
+            this._workflowCy.nodes().unselect();
+            const node = this._workflowCy.getElementById(this.selectedWorkflowNodeId);
+            if (node.length > 0) {
+                node.select();
+                this._workflowCy.animate({ center: { eles: node }, duration: 180 });
+            }
+        },
+
+        workflowGraphFit() {
+            if (this._workflowCy) this._workflowCy.fit(undefined, 28);
+        },
+
+        workflowGraphZoom(delta) {
+            if (!this._workflowCy) return;
+            const current = this._workflowCy.zoom();
+            this._workflowCy.zoom({ level: Math.max(0.25, Math.min(2.5, current + delta)), renderedPosition: {
+                x: this._workflowCy.width() / 2,
+                y: this._workflowCy.height() / 2
+            } });
+        },
+
+        getWorkflowInputBinding(nodeId, inputName) {
+            return WorkflowEditor.getBindingForInput(
+                this.workflowObj,
+                this.workflowEditorMeta,
+                nodeId,
+                inputName
+            );
+        },
+
+        isWorkflowLoaderFilename(nodeId, inputName) {
+            const roles = this.workflowEditorMeta.roles || {};
+            return ['modelLoader', 'clipLoader', 'vaeLoader'].some(roleName => {
+                const role = roles[roleName];
+                return role && String(role.nodeId) === String(nodeId) && role.filenameInput === inputName;
+            });
+        },
+
+        updateWorkflowPrimitiveInput(nodeId, inputName, value) {
+            try {
+                const next = WorkflowEditor.setInput(this.workflowObj, nodeId, inputName, value);
+                this.workflowJson = JSON.stringify(next, null, 2);
+                this.isWorkflowEditorDirty = true;
+            } catch (e) {
+                this.showUiToast(e.message, 'danger');
+            }
+        },
+
+        startExposeWorkflowInput(nodeId, inputName, value) {
+            const binding = this.getWorkflowInputBinding(nodeId, inputName);
+            if (binding) {
+                this.showUiToast('该字段已经加入参数', 'info');
+                return;
+            }
+
+            const baseId = String(inputName).replace(/[^A-Za-z0-9_]/g, '_') || 'parameter';
+            const existingIds = this.workflowParameterBindings.map(item => item.id);
+            const idRoot = /^[A-Za-z_]/.test(baseId) ? baseId : `param_${baseId}`;
+            let id = idRoot;
+            let suffix = 2;
+            while (existingIds.includes(id)) id = `${idRoot}_${suffix++}`;
+
+            const known = PlaceholderEngine.KNOWN_PLACEHOLDERS
+                && PlaceholderEngine.KNOWN_PLACEHOLDERS[id];
+            this.pendingExposeInput = { nodeId: String(nodeId), inputName, value };
+            this.exposeForm = {
+                id,
+                label: known ? known.label : inputName,
+                control: known ? known.type : WorkflowEditor.inferControl(value),
+                min: known && known.min !== undefined ? known.min : '',
+                max: known && known.max !== undefined ? known.max : '',
+                step: known && known.step !== undefined ? known.step : ''
+            };
+        },
+
+        cancelExposeWorkflowInput() {
+            this.pendingExposeInput = null;
+        },
+
+        confirmExposeWorkflowInput() {
+            if (!this.pendingExposeInput) return;
+            try {
+                const result = WorkflowEditor.exposeInput(
+                    this.workflowObj,
+                    this.workflowEditorMeta,
+                    { ...this.pendingExposeInput, ...this.exposeForm }
+                );
+                this.workflowEditorMeta = result.editor;
+                this.placeholderValues = {
+                    ...this.placeholderValues,
+                    [result.binding.id]: result.initialValue
+                };
+                this.workflowJson = JSON.stringify(result.workflow, null, 2);
+                this.isWorkflowEditorDirty = true;
+                this.pendingExposeInput = null;
+                this.showUiToast(`已加入参数：${result.binding.label}`, 'success');
+            } catch (e) {
+                this.showUiToast(e.message, 'danger');
+            }
+        },
+
+        removeWorkflowParameter(parameterId) {
+            const value = this.placeholderValues && this.placeholderValues[parameterId];
+            try {
+                const result = WorkflowEditor.removeBinding(
+                    this.workflowObj,
+                    this.workflowEditorMeta,
+                    parameterId,
+                    value
+                );
+                this.workflowEditorMeta = result.editor;
+                const nextValues = { ...(this.placeholderValues || {}) };
+                delete nextValues[parameterId];
+                this.placeholderValues = nextValues;
+                this.workflowJson = JSON.stringify(result.workflow, null, 2);
+                this.isWorkflowEditorDirty = true;
+                this.showUiToast('参数已移除，字段已恢复为当前值', 'info');
+            } catch (e) {
+                this.showUiToast(e.message, 'danger');
+            }
+        },
+
+        focusWorkflowParameter(parameterId) {
+            const binding = this.workflowParameterBindings.find(item => item.id === parameterId);
+            if (!binding) return;
+            this.workflowView = 'graph';
+            this.$nextTick(() => this.selectWorkflowNode(binding.nodeId));
+        },
+
+        addWorkflowLora() {
+            if (!this.canEditLoraChain) {
+                this.showUiToast('当前模板不支持受控 LoRA 编辑', 'warning');
+                return;
+            }
+            this.loraDrafts.push({ name: '', strengthModel: 1, strengthClip: 1 });
+            this.applyWorkflowLoraDrafts();
+        },
+
+        removeWorkflowLora(index) {
+            this.loraDrafts.splice(index, 1);
+            this.applyWorkflowLoraDrafts();
+        },
+
+        moveWorkflowLora(index, direction) {
+            const nextIndex = index + direction;
+            if (nextIndex < 0 || nextIndex >= this.loraDrafts.length) return;
+            const items = this.loraDrafts.slice();
+            const [item] = items.splice(index, 1);
+            items.splice(nextIndex, 0, item);
+            this.loraDrafts = items;
+            this.applyWorkflowLoraDrafts();
+        },
+
+        applyWorkflowLoraDrafts() {
+            if (!this.canEditLoraChain) return;
+            try {
+                const result = WorkflowEditor.syncLoraChain(
+                    this.workflowObj,
+                    this.workflowEditorMeta,
+                    this.loraDrafts
+                );
+                this.loraDrafts = result.loras;
+                this.workflowJson = JSON.stringify(result.workflow, null, 2);
+                this.isWorkflowEditorDirty = true;
+            } catch (e) {
+                this.showUiToast(e.message, 'danger');
+            }
+        },
+
+        syncWorkflowEditorState(workflow) {
+            this.loraDrafts = WorkflowEditor.readManagedLoras(workflow);
+            const graph = WorkflowEditor.parse(workflow);
+            if (!graph.nodes.some(node => node.id === this.selectedWorkflowNodeId)) {
+                this.selectedWorkflowNodeId = graph.nodes[0] ? graph.nodes[0].id : '';
+            }
+            this.queueWorkflowGraphRender();
+        },
+
         // ========== Workflow 解析 ==========
         parseWorkflow() {
             this.workflowError = '';
@@ -1407,8 +1779,21 @@ const app = Vue.createApp({
 
                 this.workflowObj = parsed;
 
-                // 扫描占位符
-                this.placeholders = PlaceholderEngine.scan(parsed);
+                // 扫描占位符，并优先使用模板保存的节点字段/控件元数据
+                const bindings = WorkflowEditor.mergeParameterBindings(parsed, this.workflowEditorMeta);
+                this.placeholders = PlaceholderEngine.scan(parsed).map(placeholder => {
+                    const binding = bindings.find(item => item.id === placeholder.name);
+                    if (!binding) return placeholder;
+                    return {
+                        ...placeholder,
+                        ...binding,
+                        name: placeholder.name,
+                        type: binding.control || placeholder.type,
+                        default: binding.defaultValue !== undefined
+                            ? binding.defaultValue
+                            : placeholder.default
+                    };
+                });
 
                 // 设置默认值
                 const defaults = PlaceholderEngine.getDefaults(this.placeholders);
@@ -1447,12 +1832,26 @@ const app = Vue.createApp({
 
                 this.validatePlaceholders();
                 this.onSizeChange();
+                this.syncWorkflowEditorState(parsed);
 
             } catch (e) {
                 this.workflowError = 'JSON 格式错误: ' + e.message;
 
                 // 即使 JSON 暂时无效，也尽量从文本中扫描占位符，方便用户先填参数
-                this.placeholders = PlaceholderEngine.scanText(this.workflowJson);
+                const bindings = WorkflowEditor.mergeParameterBindings(null, this.workflowEditorMeta);
+                this.placeholders = PlaceholderEngine.scanText(this.workflowJson).map(placeholder => {
+                    const binding = bindings.find(item => item.id === placeholder.name);
+                    if (!binding) return placeholder;
+                    return {
+                        ...placeholder,
+                        ...binding,
+                        name: placeholder.name,
+                        type: binding.control || placeholder.type,
+                        default: binding.defaultValue !== undefined
+                            ? binding.defaultValue
+                            : placeholder.default
+                    };
+                });
 
                 const defaults = PlaceholderEngine.getDefaults(this.placeholders);
                 const merged = { ...defaults };
@@ -2014,12 +2413,15 @@ const app = Vue.createApp({
         onTemplateSelect() {
             if (!this.selectedTemplateId) {
                 this.selectedTemplate = null;
+                this.workflowEditorMeta = WorkflowEditor.normalizeEditor({});
+                this.loraDrafts = [];
                 return;
             }
 
             const template = TemplateManager.get(this.selectedTemplateId);
             if (template) {
                 this.selectedTemplate = template;
+                this.workflowEditorMeta = WorkflowEditor.normalizeEditor(template.editor);
                 let workflow = template.workflow;
                 if (typeof workflow === 'string') {
                     try {
@@ -2029,6 +2431,9 @@ const app = Vue.createApp({
                         return;
                     }
                 }
+                this.isWorkflowEditorDirty = false;
+                this.selectedWorkflowNodeId = '';
+                this.loraDrafts = WorkflowEditor.readManagedLoras(workflow);
                 this.workflowJson = JSON.stringify(workflow, null, 2);
             }
         },
@@ -2048,16 +2453,19 @@ const app = Vue.createApp({
             try {
                 const defaults = this.getTemplateDefaultsForSave();
                 const id = TemplateManager.add({
+                    schemaVersion: 2,
                     name: this.newTemplateName,
                     description: this.newTemplateDescription,
                     workflow: this.workflowObj,
-                    defaults
+                    defaults,
+                    editor: WorkflowEditor.deepClone(this.workflowEditorMeta)
                 });
 
                 this.loadUserTemplates();
                 this.selectedTemplateId = id;
                 this.selectedTemplate = TemplateManager.get(id);
                 this.showSaveTemplate = false;
+                this.isWorkflowEditorDirty = false;
 
                 this.showUiToast('模板保存成功！', 'success');
             } catch (e) {
@@ -2077,8 +2485,11 @@ const app = Vue.createApp({
             const defaults = this.getTemplateDefaultsForSave();
             TemplateManager.update(this.selectedTemplate.id, {
                 workflow: this.workflowObj,
-                defaults
+                defaults,
+                schemaVersion: 2,
+                editor: WorkflowEditor.deepClone(this.workflowEditorMeta)
             });
+            this.isWorkflowEditorDirty = false;
             this.showUiToast('模板已更新！', 'success');
         },
 
@@ -2325,6 +2736,9 @@ const app = Vue.createApp({
                     this.workflowJson = e.target.result;
                     this.selectedTemplateId = '';
                     this.selectedTemplate = null;
+                    this.workflowEditorMeta = WorkflowEditor.normalizeEditor({});
+                    this.loraDrafts = [];
+                    this.isWorkflowEditorDirty = false;
                 } catch (err) {
                     this.errorMessage = 'JSON 文件格式错误: ' + err.message;
                 }
@@ -2340,6 +2754,9 @@ const app = Vue.createApp({
             this.placeholderValues = {};
             this.selectedTemplateId = '';
             this.selectedTemplate = null;
+            this.workflowEditorMeta = WorkflowEditor.normalizeEditor({});
+            this.loraDrafts = [];
+            this.isWorkflowEditorDirty = false;
             this.errorMessage = '';
         },
 
