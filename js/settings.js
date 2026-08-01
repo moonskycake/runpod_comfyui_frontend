@@ -9,6 +9,8 @@ function createDefaultSettingsConfig() {
     apiKey: '',
     rememberApiKey: false,
     runMode: 'run', // 'run' 或 'runsync'
+    initialPollDelayEnabled: true,
+    initialPollDelayMs: 3000,
     pollIntervalMs: 2000,
 
     // ========== 生成行为 ==========
@@ -35,6 +37,8 @@ const Settings = {
     API_KEY: 'runpod_api_key',
     REMEMBER_API_KEY: 'runpod_remember_api_key',
     RUN_MODE: 'runpod_run_mode',
+    INITIAL_POLL_DELAY_ENABLED: 'runpod_initial_poll_delay_enabled',
+    INITIAL_POLL_DELAY: 'runpod_initial_poll_delay',
     POLL_INTERVAL: 'runpod_poll_interval',
 
     LOCK_PARAMS_ON_GENERATE: 'runpod_lock_params_on_generate',
@@ -51,6 +55,14 @@ const Settings = {
     const endpointId = localStorage.getItem(this.KEYS.ENDPOINT_ID) || '';
     const rememberApiKey = localStorage.getItem(this.KEYS.REMEMBER_API_KEY) === 'true';
     const runMode = localStorage.getItem(this.KEYS.RUN_MODE) || 'run';
+    const initialPollDelayEnabledRaw = localStorage.getItem(this.KEYS.INITIAL_POLL_DELAY_ENABLED);
+    const initialPollDelayEnabled = initialPollDelayEnabledRaw === null
+      ? this.config.initialPollDelayEnabled
+      : initialPollDelayEnabledRaw === 'true';
+    const initialPollDelayRaw = parseInt(localStorage.getItem(this.KEYS.INITIAL_POLL_DELAY));
+    const initialPollDelayMs = Number.isFinite(initialPollDelayRaw)
+      ? initialPollDelayRaw
+      : this.config.initialPollDelayMs;
     const pollIntervalMs = parseInt(localStorage.getItem(this.KEYS.POLL_INTERVAL)) || 2000;
 
     const lockParamsOnGenerateRaw = localStorage.getItem(this.KEYS.LOCK_PARAMS_ON_GENERATE);
@@ -84,6 +96,8 @@ const Settings = {
       apiKey,
       rememberApiKey,
       runMode,
+      initialPollDelayEnabled,
+      initialPollDelayMs,
       pollIntervalMs,
 
       lockParamsOnGenerate,
@@ -107,6 +121,14 @@ const Settings = {
     localStorage.setItem(this.KEYS.ENDPOINT_ID, this.config.endpointId);
     localStorage.setItem(this.KEYS.REMEMBER_API_KEY, this.config.rememberApiKey);
     localStorage.setItem(this.KEYS.RUN_MODE, this.config.runMode);
+    localStorage.setItem(
+      this.KEYS.INITIAL_POLL_DELAY_ENABLED,
+      String(!!this.config.initialPollDelayEnabled)
+    );
+    localStorage.setItem(
+      this.KEYS.INITIAL_POLL_DELAY,
+      String(Number(this.config.initialPollDelayMs || 0))
+    );
     localStorage.setItem(this.KEYS.POLL_INTERVAL, this.config.pollIntervalMs.toString());
 
     localStorage.setItem(this.KEYS.LOCK_PARAMS_ON_GENERATE, String(!!this.config.lockParamsOnGenerate));

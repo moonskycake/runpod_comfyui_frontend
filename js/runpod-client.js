@@ -195,23 +195,50 @@ const RunpodClient = {
     }
   },
 
+  async waitForPollDelay(delayMs, shouldStop) {
+    const totalMs = Math.max(0, Math.trunc(Number(delayMs) || 0));
+    const deadline = Date.now() + totalMs;
+
+    while (Date.now() < deadline) {
+      if (shouldStop && shouldStop()) return false;
+      const remainingMs = deadline - Date.now();
+      await new Promise(resolve => setTimeout(resolve, Math.min(250, remainingMs)));
+    }
+
+    return !(shouldStop && shouldStop());
+  },
+
   /**
    * 轮询任务状态直到完成或失败
    * @param {string} jobId - 任务 ID
    * @param {Object} options - 选项
+   * @param {number} options.initialDelayMs - 第一次状态查询前的等待时间（默认 0ms）
    * @param {number} options.intervalMs - 轮询间隔（默认 2000ms）
    * @param {Function} options.onStatus - 状态回调
    * @param {Function} options.shouldStop - 是否停止轮询的函数
    * @returns {Promise<Object>} 最终结果
    */
   async poll(jobId, options = {}, cfg) {
-    const { 
-      intervalMs = 2000, 
+    const {
+      initialDelayMs = 0,
+      intervalMs = 2000,
       onStatus = null,
-      shouldStop = null 
+      shouldStop = null
     } = options;
 
     let lastStatus = null;
+
+    if (initialDelayMs > 0) {
+      const shouldContinue = await this.waitForPollDelay(initialDelayMs, shouldStop);
+      if (!shouldContinue) {
+        return {
+          success: false,
+          cancelled: true,
+          message: '用户取消',
+          data: lastStatus
+        };
+      }
+    }
 
     while (true) {
       // 检查是否需要停止

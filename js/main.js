@@ -1,3 +1,55 @@
+const WORKFLOW_EDITOR_LOAD_ERROR = 'Workflow 编辑器脚本未加载，请刷新页面或检查部署资源';
+
+function createEmptyWorkflowGraph() {
+    return { nodes: [], edges: [], warnings: [WORKFLOW_EDITOR_LOAD_ERROR] };
+}
+
+const WorkflowEditor = window.WorkflowEditor || {
+    deepClone(value) {
+        return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    },
+    normalizeEditor(editor) {
+        const value = editor && typeof editor === 'object' ? editor : {};
+        return {
+            profile: String(value.profile || ''),
+            roles: value.roles && typeof value.roles === 'object' ? value.roles : {},
+            parameterBindings: Array.isArray(value.parameterBindings) ? value.parameterBindings : []
+        };
+    },
+    parse() {
+        return createEmptyWorkflowGraph();
+    },
+    validateProfile() {
+        return { valid: false, errors: [WORKFLOW_EDITOR_LOAD_ERROR] };
+    },
+    mergeParameterBindings() {
+        return [];
+    },
+    getBindingForInput() {
+        return null;
+    },
+    inferControl(value) {
+        if (typeof value === 'number') return 'number';
+        if (typeof value === 'boolean') return 'checkbox';
+        return 'text';
+    },
+    readManagedLoras() {
+        return [];
+    },
+    setInput() {
+        throw new Error(WORKFLOW_EDITOR_LOAD_ERROR);
+    },
+    exposeInput() {
+        throw new Error(WORKFLOW_EDITOR_LOAD_ERROR);
+    },
+    removeBinding() {
+        throw new Error(WORKFLOW_EDITOR_LOAD_ERROR);
+    },
+    syncLoraChain() {
+        throw new Error(WORKFLOW_EDITOR_LOAD_ERROR);
+    }
+};
+
 /**
  * 图片上传组件
  */
@@ -186,6 +238,8 @@ function getInitialSettingsState() {
         apiKey: '',
         rememberApiKey: false,
         runMode: 'run',
+        initialPollDelayEnabled: true,
+        initialPollDelayMs: 3000,
         pollIntervalMs: 2000,
 
         lockParamsOnGenerate: true,
@@ -1047,7 +1101,15 @@ const app = Vue.createApp({
         },
 
         workflowGraph() {
-            return WorkflowEditor.parse(this.workflowObj);
+            const graph = WorkflowEditor.parse(this.workflowObj);
+            if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+                return createEmptyWorkflowGraph();
+            }
+            return {
+                nodes: graph.nodes,
+                edges: graph.edges,
+                warnings: Array.isArray(graph.warnings) ? graph.warnings : []
+            };
         },
 
         selectedWorkflowNode() {
@@ -3134,6 +3196,15 @@ const app = Vue.createApp({
             return this.clampInt(n, 1000, 10000);
         },
 
+        getEffectiveInitialPollDelayMs() {
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            if (!base || !base.initialPollDelayEnabled) return 0;
+            const raw = base.initialPollDelayMs !== undefined ? base.initialPollDelayMs : 3000;
+            const n = Math.trunc(Number(raw));
+            if (!Number.isFinite(n)) return 3000;
+            return this.clampInt(n, 0, 60000);
+        },
+
         getEffectiveRunMode() {
             const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
             return base && base.runMode === 'runsync' ? 'runsync' : 'run';
@@ -3227,6 +3298,7 @@ const app = Vue.createApp({
                 taskId: generateLocalId('retry'),
                 historyId,
                 runMode: 'run',
+                initialPollDelayMs: 0,
                 pollIntervalMs: this.getEffectivePollIntervalMs(),
                 clientConfig: this.buildClientConfigForHistoryRecord(record),
                 payload: null,
@@ -3456,6 +3528,21 @@ const app = Vue.createApp({
                     return;
                 }
 
+                if (['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'].includes(initStatus)) {
+                    if (initStatus === 'COMPLETED') {
+                        await this.finalizeHistoryEntry(historyId, runResult.data);
+                    } else {
+                        const message = initStatus === 'FAILED'
+                            ? '任务失败'
+                            : initStatus === 'TIMED_OUT'
+                                ? '任务超时'
+                                : '任务已取消';
+                        this.errorMessage = message;
+                        this.updateHistoryEntry(historyId, { status: initStatus, errorMessage: message });
+                    }
+                    return;
+                }
+
                 await this.pollExistingJob(task, historyId, jobId, clientCfg);
             } catch (err) {
                 const msg = '生成失败: ' + (err && err.message ? err.message : String(err));
@@ -3473,6 +3560,7 @@ const app = Vue.createApp({
             }
 
             const pollResult = await RunpodClient.poll(id, {
+                initialDelayMs: task.pollOnly ? 0 : task.initialPollDelayMs,
                 intervalMs: task.pollIntervalMs,
                 onStatus: (data) => {
                     if (task.cancelRequested) return;
@@ -3518,6 +3606,9 @@ const app = Vue.createApp({
             }
 
             const runMode = this.getEffectiveRunMode();
+            const initialPollDelayMs = runMode === 'run'
+                ? this.getEffectiveInitialPollDelayMs()
+                : 0;
             const pollIntervalMs = this.getEffectivePollIntervalMs();
             const clientConfig = this.getClientConfigSnapshot();
 
@@ -3538,6 +3629,7 @@ const app = Vue.createApp({
                 taskId: generateLocalId('task'),
                 historyId: historyEntry.id,
                 runMode,
+                initialPollDelayMs,
                 pollIntervalMs,
                 clientConfig,
                 payload: build.payload,
@@ -3658,6 +3750,12 @@ const app = Vue.createApp({
             maxQueue = this.clampInt(maxQueue, 0, Math.max(0, storeMax - maxConcurrent));
 
             const pollIntervalMs = this.clampInt(this.toSafeInt(this.settingsForm.pollIntervalMs, 2000), 1000, 10000);
+            const initialPollDelayEnabled = !!this.settingsForm.initialPollDelayEnabled;
+            const initialPollDelayMs = this.clampInt(
+                this.toSafeInt(this.settingsForm.initialPollDelayMs, 3000),
+                0,
+                60000
+            );
             const runMode = this.settingsForm.runMode === 'runsync' ? 'runsync' : 'run';
 
             const endpointId = Settings.extractEndpointId(this.settingsForm.endpointId);
@@ -3667,6 +3765,8 @@ const app = Vue.createApp({
                 apiKey: this.settingsForm.apiKey,
                 rememberApiKey: this.settingsForm.rememberApiKey,
                 runMode,
+                initialPollDelayEnabled,
+                initialPollDelayMs,
                 pollIntervalMs,
 
                 lockParamsOnGenerate,
