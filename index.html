@@ -13,11 +13,15 @@
 <body class="bg-dark">
     <div class="container bg-dark" id="app">
         <!-- 顶部导航 -->
-        <nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom mb-4">
+        <nav class="navbar navbar-expand-lg navbar-dark rp-navbar">
             <div class="container-fluid">
-                <a class="navbar-brand" href="#">RunPod ComfyUI</a>
+                <a class="navbar-brand rp-brand" href="#">
+                    <span class="rp-brand-mark"><i class="bi bi-stars"></i></span>
+                    <span>RunPod ComfyUI</span>
+                </a>
                 <div class="d-flex align-items-center">
-                    <span class="badge me-2" :class="connectionStatusClass">
+                    <span class="badge me-2 rp-conn-badge" :class="connectionStatusClass">
+                        <span class="rp-conn-dot" :class="{ 'is-online': isConfigured, 'is-busy': activeJobCount > 0 }"></span>
                         {{ connectionStatus }}
                     </span>
                     <button class="btn btn-outline-warning btn-sm me-2" @click="toggleFavoritesPanel" title="收藏">
@@ -72,10 +76,21 @@
 
         <!-- 主内容区 -->
         <main>
-            <!-- 未配置提示 -->
-            <div v-if="!isConfigured" class="alert alert-warning" role="alert">
-                <i class="bi bi-exclamation-triangle-fill"></i>
-                请先点击右上角"设置"配置 Endpoint ID 和 API Key
+            <!-- 未配置引导 -->
+            <div v-if="!isConfigured" class="rp-onboarding" role="alert">
+                <div class="rp-onboarding-icon"><i class="bi bi-rocket-takeoff"></i></div>
+                <div class="rp-onboarding-body">
+                    <div class="rp-onboarding-title">开始使用 RunPod ComfyUI</div>
+                    <div class="rp-onboarding-text">配置 Endpoint 与 API Key 后即可生成图片。</div>
+                    <ol class="rp-onboarding-steps">
+                        <li>点击右上角 <i class="bi bi-gear"></i> 设置</li>
+                        <li>填写 Endpoint ID 与 API Key</li>
+                        <li>保存并测试连接</li>
+                    </ol>
+                    <button class="btn btn-primary btn-sm mt-2" @click="openSettings">
+                        <i class="bi bi-gear"></i> 立即配置
+                    </button>
+                </div>
             </div>
 
             <!-- 模板选择区 -->
@@ -167,23 +182,20 @@
                                         {{ placeholderValues.width }}x{{ placeholderValues.height }}
                                     </span>
                                 </div>
-                                <i class="bi rp-param-chevron" :class="paramSectionsOpen.size ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                                <div class="d-flex align-items-center gap-2">
+                                    <select class="form-select form-select-sm rp-size-quick bg-dark text-light border-secondary"
+                                            v-model="selectedSizePreset" title="快速选择预设尺寸" @click.stop>
+                                        <option value="">预设尺寸</option>
+                                        <option v-for="preset in sizePresets" :key="preset.name" :value="preset">
+                                            {{ preset.name }} ({{ preset.width }}x{{ preset.height }})
+                                        </option>
+                                    </select>
+                                    <i class="bi rp-param-chevron" :class="paramSectionsOpen.size ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                                </div>
                             </div>
 
                             <div class="rp-param-body" v-show="paramSectionsOpen.size">
                                 <div class="row g-3">
-                                    <!-- 预设 -->
-                                    <div class="col-12">
-                                        <label class="form-label text-light small">预设</label>
-                                        <select class="form-select form-select-sm bg-dark text-light border-secondary"
-                                                v-model="selectedSizePreset">
-                                            <option value="">-- 自定义 --</option>
-                                            <option v-for="preset in sizePresets" :key="preset.name" :value="preset">
-                                                {{ preset.name }} ({{ preset.width }}x{{ preset.height }})
-                                            </option>
-                                        </select>
-                                    </div>
-
                                     <!-- 宽高 -->
                                     <div class="col-md-5">
                                         <label class="form-label text-light small">宽度</label>
@@ -338,7 +350,7 @@
                                                 <span class="badge bg-secondary">{{ placeholderValues[p.name] }}</span>
                                             </span>
                                         </label>
-                                        <div class="d-flex align-items-center gap-3">
+                                        <div class="rp-range-row">
                                             <input type="range" class="form-range rp-range"
                                                    v-model.number="placeholderValues[p.name]"
                                                    :min="p.min" :max="p.max" :step="p.step">
@@ -412,7 +424,7 @@
                                                 <label class="form-check-label text-light" :for="'workflow-param-' + p.name">{{ placeholderValues[p.name] ? '开启' : '关闭' }}</label>
                                             </div>
                                             <textarea v-else-if="p.type === 'textarea'" class="form-control bg-dark text-light border-secondary" v-model="placeholderValues[p.name]" :rows="p.rows || 3" :placeholder="p.default" :disabled="isParamsLocked"></textarea>
-                                            <div v-else-if="p.type === 'range'" class="d-flex align-items-center gap-3">
+                                            <div v-else-if="p.type === 'range'" class="rp-range-row">
                                                 <input type="range" class="form-range rp-range" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
                                                 <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary rp-range-number" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
                                             </div>
@@ -576,71 +588,32 @@
                 </div>
             </section>
 
-            <!-- 执行控制 -->
-            <section class="mb-4">
-                <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
-                    <div class="rp-generate-actions">
-                        <button class="btn btn-primary btn-lg rp-generate-btn"
-                                @click="generate"
-                                :disabled="!canGenerate || !canAcceptNewJob"
-                                title="快捷键 Ctrl+Enter">
-                            <i class="bi bi-play-fill"></i> 生成
-                        </button>
-                        <button class="btn btn-secondary btn-lg rp-generate-btn"
-                                @click="cancelGeneration"
-                                :disabled="!canCancelSelected">
-                            <i class="bi bi-x-circle"></i> 取消选中
-                        </button>
-                        <button class="btn btn-outline-danger btn-lg rp-generate-btn"
-                                @click="cancelAllGenerations"
-                                :disabled="!canCancelAll">
-                            <i class="bi bi-x-octagon"></i> 取消全部
-                        </button>
-                    </div>
-                    <div class="text-light rp-generate-status">
-                        <span class="badge bg-secondary me-2">{{ runModeLabel }}</span>
-                        <span v-if="activeJobCount > 0" class="badge bg-info me-2">
-                            <span class="spinner-border spinner-border-sm me-1" style="vertical-align: -0.1em;"></span>
-                            运行中 {{ activeJobCount }}
-                        </span>
-                        <span v-if="queuedJobCount > 0" class="badge bg-secondary">
-                            排队 {{ queuedJobCount }}
-                        </span>
-                    </div>
-                </div>
-
-                <!-- 状态显示 -->
-                <div v-if="activeJobCount || queuedJobCount || (selectedHistoryRecord && (selectedHistoryRecord.jobId || selectedHistoryRecord.delayTime !== null || selectedHistoryRecord.executionTime !== null))" class="mt-3">
-                    <div class="card bg-dark border-secondary">
-                        <div class="card-body">
-                            <div v-if="activeJobCount || queuedJobCount" class="d-flex justify-content-between align-items-center mb-2">
-                                <span class="text-light small">运行中 / 排队中:</span>
-                                <span class="text-light small">{{ activeJobCount }} / {{ queuedJobCount }}</span>
-                            </div>
-                            <div v-if="selectedHistoryRecord && selectedHistoryRecord.jobId" class="d-flex justify-content-between align-items-center mb-2">
-                                <span class="text-light small">选中任务 ID:</span>
-                                <code class="text-info small">{{ selectedHistoryRecord.jobId }}</code>
-                            </div>
-                            <div v-if="selectedHistoryRecord && selectedHistoryRecord.delayTime !== null" class="d-flex justify-content-between align-items-center">
-                                <span class="text-light small">选中排队时间:</span>
-                                <span class="text-light small">{{ selectedHistoryRecord.delayTime }}ms</span>
-                            </div>
-                            <div v-if="selectedHistoryRecord && selectedHistoryRecord.executionTime !== null" class="d-flex justify-content-between align-items-center">
-                                <span class="text-light small">选中执行时间:</span>
-                                <span class="text-light small">{{ selectedHistoryRecord.executionTime }}ms</span>
-                            </div>
+            <!-- 执行状态 -->
+            <section class="mb-4" v-if="activeJobCount || queuedJobCount || (selectedHistoryRecord && (selectedHistoryRecord.jobId || selectedHistoryRecord.delayTime !== null || selectedHistoryRecord.executionTime !== null))">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-body">
+                        <div v-if="activeJobCount || queuedJobCount" class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="text-light small">运行中 / 排队中:</span>
+                            <span class="text-light small">{{ activeJobCount }} / {{ queuedJobCount }}</span>
+                        </div>
+                        <div v-if="selectedHistoryRecord && selectedHistoryRecord.jobId" class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="text-light small">选中任务 ID:</span>
+                            <code class="text-info small">{{ selectedHistoryRecord.jobId }}</code>
+                        </div>
+                        <div v-if="selectedHistoryRecord && selectedHistoryRecord.delayTime !== null" class="d-flex justify-content-between align-items-center">
+                            <span class="text-light small">选中排队时间:</span>
+                            <span class="text-light small">{{ selectedHistoryRecord.delayTime }}ms</span>
+                        </div>
+                        <div v-if="selectedHistoryRecord && selectedHistoryRecord.executionTime !== null" class="d-flex justify-content-between align-items-center">
+                            <span class="text-light small">选中执行时间:</span>
+                            <span class="text-light small">{{ selectedHistoryRecord.executionTime }}ms</span>
                         </div>
                     </div>
-                </div>
-
-                <!-- 错误提示 -->
-                <div v-if="errorMessage" class="alert alert-danger mt-3">
-                    <i class="bi bi-exclamation-triangle-fill"></i> {{ errorMessage }}
                 </div>
             </section>
 
             <!-- 结果展示（请求历史 / 图库） -->
-            <section v-if="hasResultsSection" class="mb-4">
+            <section v-if="hasResultsSection" class="mb-4" id="results-section">
                 <div class="card bg-dark border-secondary">
                     <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <h5 class="mb-0 text-light">
@@ -984,6 +957,44 @@
                     </div>
                 </div>
             </section>
+
+            <!-- 固定底部操作栏 -->
+            <section class="rp-action-bar">
+                <div v-if="errorMessage" class="alert alert-danger rp-action-error mb-2 py-2">
+                    <i class="bi bi-exclamation-triangle-fill"></i> {{ errorMessage }}
+                </div>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div class="rp-generate-actions">
+                        <button class="btn btn-primary btn-lg rp-generate-btn rp-btn-generate"
+                                @click="generate"
+                                :disabled="!canGenerate || !canAcceptNewJob"
+                                title="快捷键 Ctrl+Enter">
+                            <i class="bi bi-play-fill"></i> 生成
+                        </button>
+                        <button class="btn btn-secondary btn-lg rp-generate-btn"
+                                @click="cancelGeneration"
+                                :disabled="!canCancelSelected"
+                                title="取消当前选中记录对应的运行/排队任务">
+                            <i class="bi bi-x-circle"></i> 取消当前
+                        </button>
+                        <button class="btn btn-outline-danger btn-lg rp-generate-btn"
+                                @click="cancelAllGenerations"
+                                :disabled="!canCancelAll">
+                            <i class="bi bi-x-octagon"></i> 取消全部
+                        </button>
+                    </div>
+                    <div class="text-light rp-generate-status">
+                        <span class="badge bg-secondary me-2">{{ runModeLabel }}</span>
+                        <span v-if="activeJobCount > 0" class="badge bg-info me-2">
+                            <span class="spinner-border spinner-border-sm me-1" style="vertical-align: -0.1em;"></span>
+                            运行中 {{ activeJobCount }}
+                        </span>
+                        <span v-if="queuedJobCount > 0" class="badge bg-secondary">
+                            排队 {{ queuedJobCount }}
+                        </span>
+                    </div>
+                </div>
+            </section>
         </main>
 
         <!-- 设置模态框 -->
@@ -1148,7 +1159,7 @@
                             <div v-if="connectionTestResult.message" class="mt-1">
                                 {{ connectionTestResult.message }}
                             </div>
-                            <pre v-if="connectionTestResult.data" class="mt-2 mb-0 small">{{ JSON.stringify(connectionTestResult.data, null, 2) }}</pre>
+                            <pre v-if="connectionTestResult.data" class="mt-2 mb-0 small rp-test-result-pre">{{ JSON.stringify(connectionTestResult.data, null, 2) }}</pre>
                         </div>
                     </div>
                     <div class="modal-footer border-secondary">

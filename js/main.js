@@ -603,7 +603,7 @@ const app = Vue.createApp({
             workflowError: '',
             workflowObj: null,
             showPreview: false,
-            isWorkflowCollapsed: false,
+            isWorkflowCollapsed: true,
             cursorPosition: 0,
             workflowView: 'graph',
             workflowEditorMeta: WorkflowEditor.normalizeEditor({}),
@@ -3646,6 +3646,16 @@ const app = Vue.createApp({
 
             // 若此时并发有空位，立即尝试启动队列
             this.pumpQueue();
+
+            // 生成后滚动到结果区
+            this.$nextTick(() => this.scrollToResults());
+        },
+
+        scrollToResults() {
+            const el = document.getElementById('results-section');
+            if (el && el.scrollIntoView) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         },
 
         cancelTaskByHistoryId(historyId) {

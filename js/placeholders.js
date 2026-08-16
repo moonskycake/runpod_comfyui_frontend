@@ -56,7 +56,7 @@ const PlaceholderEngine = {
       label: '采样步数',
       default: 20,
       min: 1,
-      max: 150,
+      max: 50,
       step: 1
     },
     cfg: {
