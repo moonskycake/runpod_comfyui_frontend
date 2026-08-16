@@ -64,7 +64,7 @@ const PlaceholderEngine = {
       label: 'CFG Scale',
       default: 7,
       min: 1,
-      max: 30,
+      max: 20,
       step: 0.1
     },
     denoise: {

@@ -60,7 +60,7 @@ const BuiltinTemplates = [
         { id: 'negative_prompt', nodeId: '12', inputName: 'text', label: '负面提示词', control: 'textarea', rows: 3 },
         { id: 'seed', nodeId: '19', inputName: 'seed', label: '种子', control: 'number' },
         { id: 'steps', nodeId: '19', inputName: 'steps', label: '采样步数', control: 'range', min: 1, max: 50, step: 1 },
-        { id: 'cfg', nodeId: '19', inputName: 'cfg', label: 'CFG Scale', control: 'range', min: 1, max: 30, step: 0.1 },
+        { id: 'cfg', nodeId: '19', inputName: 'cfg', label: 'CFG Scale', control: 'range', min: 1, max: 20, step: 0.1 },
         { id: 'sampler_name', nodeId: '19', inputName: 'sampler_name', label: '采样器', control: 'select' },
         { id: 'scheduler', nodeId: '19', inputName: 'scheduler', label: '调度器', control: 'select' },
         { id: 'denoise', nodeId: '19', inputName: 'denoise', label: '重绘幅度', control: 'range', min: 0, max: 1, step: 0.01 },
@@ -248,7 +248,7 @@ const BuiltinTemplates = [
         { id: 'negative_prompt', nodeId: '12', inputName: 'text', label: '负面提示词', control: 'textarea', rows: 3 },
         { id: 'seed', nodeId: '19', inputName: 'seed', label: '种子', control: 'number' },
         { id: 'steps', nodeId: '19', inputName: 'steps', label: '采样步数', control: 'range', min: 1, max: 50, step: 1 },
-        { id: 'cfg', nodeId: '19', inputName: 'cfg', label: 'CFG Scale', control: 'range', min: 0, max: 30, step: 0.1 },
+        { id: 'cfg', nodeId: '19', inputName: 'cfg', label: 'CFG Scale', control: 'range', min: 0, max: 20, step: 0.1 },
         { id: 'width', nodeId: '54', inputName: 'width', label: '宽度', control: 'number', min: 64, max: 2048, step: 64 },
         { id: 'height', nodeId: '54', inputName: 'height', label: '高度', control: 'number', min: 64, max: 2048, step: 64 },
         { id: 'batch_size', nodeId: '54', inputName: 'batch_size', label: '每批数量', control: 'number', min: 1, max: 8, step: 1 }
