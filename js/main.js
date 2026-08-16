@@ -2642,6 +2642,29 @@ const app = Vue.createApp({
             this.placeholderValues.height = this.selectedSizePreset.height;
         },
 
+        // 步进按钮：按占位符 step 增减，带精度与边界处理
+        stepPlaceholder(p, direction) {
+            if (!p || !p.name) return;
+            const cur = Number(this.placeholderValues[p.name]);
+            if (!Number.isFinite(cur)) return;
+
+            const step = Number(p.step) || 1;
+            const min = (p.min !== undefined && p.min !== null) ? Number(p.min) : -Infinity;
+            const max = (p.max !== undefined && p.max !== null) ? Number(p.max) : Infinity;
+
+            // 浮点精度：按 step 小数位四舍五入，避免 7 + 0.1 = 7.100000000000001
+            const stepStr = String(step);
+            const decimals = (stepStr.split('.')[1] || '').length;
+
+            let next = cur + direction * step;
+            next = Number(next.toFixed(Math.min(decimals, 6)));
+
+            if (next < min) next = min;
+            if (next > max) next = max;
+
+            this.placeholderValues[p.name] = next;
+        },
+
         onSizeChange() {
             // 检查是否匹配某个预设
             const match = this.sizePresets.find(p =>
