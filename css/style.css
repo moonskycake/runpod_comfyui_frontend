@@ -1537,6 +1537,17 @@ input[type="range"].rp-range::-moz-range-thumb {
     }
 }
 
+/* ========== 提示词预设：已应用高亮 ========== */
+.rp-preset-applied {
+    border-color: rgba(var(--rp-accent-rgb), 0.7) !important;
+    background: rgba(var(--rp-accent-rgb), 0.08);
+    box-shadow: inset 3px 0 0 0 var(--rp-accent);
+}
+
+.rp-applied-badge {
+    flex: 0 0 auto;
+}
+
 /* 测试结果 JSON 折叠区 */
 .rp-test-result-pre {
     max-height: 160px;

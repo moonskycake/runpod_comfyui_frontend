@@ -644,6 +644,7 @@ const app = Vue.createApp({
             promptPresetSearch: '',
             newPromptBlockName: '',
             promptBlockPresets: [],
+            appliedBlockPresetId: '',
             newPromptSnippetName: '',
             newPromptSnippetText: '',
             promptSnippetPresets: [],
@@ -1333,6 +1334,16 @@ const app = Vue.createApp({
         placeholderValues: {
             deep: true,
             handler() {
+                // 提示词被改动时，清除"已应用"预设高亮（内容仍匹配则保留）
+                if (this.appliedBlockPresetId) {
+                    const preset = (this.promptBlockPresets || []).find(p => p && p.id === this.appliedBlockPresetId);
+                    const stillMatches = preset
+                        && String(this.placeholderValues.prompt || '') === String(preset.prompt || '')
+                        && String(this.placeholderValues.negative_prompt || '') === String(preset.negative_prompt || '');
+                    if (!stillMatches) {
+                        this.appliedBlockPresetId = '';
+                    }
+                }
                 this.validatePlaceholders();
                 this.queuePersistLastPlaceholderValues();
             }
@@ -2262,6 +2273,7 @@ const app = Vue.createApp({
                 this.placeholderValues.negative_prompt = String(p.negative_prompt || '');
             }
 
+            this.appliedBlockPresetId = p.id;
             this.setPromptPresetMessage('已应用预设', 'success');
         },
 
@@ -2407,6 +2419,30 @@ const app = Vue.createApp({
             } else {
                 this.setPromptPresetMessage('复制失败：浏览器权限限制', 'danger');
             }
+        },
+
+        insertSnippetToPrompt(s, field) {
+            if (!s || !s.text) return;
+            const f = field === 'negative_prompt' ? 'negative_prompt' : 'prompt';
+            if (!this.placeholderValues || this.placeholderValues[f] === undefined) return;
+
+            const snippet = String(s.text || '').trim();
+            if (!snippet) return;
+
+            const cur = String(this.placeholderValues[f] || '').trim();
+            let next;
+            if (!cur) {
+                next = snippet;
+            } else if (/[,，]\s*$/.test(cur)) {
+                next = cur + ' ' + snippet;
+            } else {
+                next = cur + ', ' + snippet;
+            }
+
+            this.placeholderValues[f] = next;
+
+            const label = f === 'negative_prompt' ? '负向' : '正向';
+            this.setPromptPresetMessage(`已插入到${label}提示词`, 'success');
         },
 
         async deleteSnippetPreset(s) {

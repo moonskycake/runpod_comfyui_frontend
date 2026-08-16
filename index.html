@@ -1276,7 +1276,7 @@
                             </li>
                             <li class="nav-item">
                                 <button class="nav-link" :class="{ active: promptPresetTab === 'snippets' }" @click="promptPresetTab = 'snippets'">
-                                    复制片段
+                                    片段库
                                     <span class="badge bg-secondary ms-1">{{ promptSnippetPresets.length }}</span>
                                 </button>
                             </li>
@@ -1314,13 +1314,22 @@
                             </div>
 
                             <div v-if="filteredPromptBlockPresets.length === 0" class="text-muted text-center py-4">
-                                {{ promptPresetSearch ? '无匹配' : '暂无整块预设' }}
+                                <template v-if="promptPresetSearch">无匹配</template>
+                                <template v-else>
+                                    <div class="fs-4 mb-2"><i class="bi bi-bookmark-star"></i></div>
+                                    <div>暂无整块预设</div>
+                                    <div class="small mt-1">在上方输入名称并点「保存当前」，即可把当前正向/负向提示词存为预设，下次一键应用。</div>
+                                </template>
                             </div>
                             <div v-else class="list-group rp-preset-list">
-                                <div v-for="p in filteredPromptBlockPresets" :key="p.id" class="list-group-item bg-dark border-secondary rp-preset-item">
+                                <div v-for="p in filteredPromptBlockPresets" :key="p.id" class="list-group-item bg-dark border-secondary rp-preset-item"
+                                     :class="{ 'rp-preset-applied': appliedBlockPresetId === p.id }">
                                     <div class="d-flex justify-content-between align-items-start gap-3">
                                         <div class="min-w-0">
-                                            <div class="text-light fw-semibold text-truncate">{{ p.name }}</div>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <div class="text-light fw-semibold text-truncate">{{ p.name }}</div>
+                                                <span v-if="appliedBlockPresetId === p.id" class="badge bg-success rp-applied-badge"><i class="bi bi-check2"></i> 已应用</span>
+                                            </div>
                                             <div class="small text-muted rp-clamp-2">正: {{ p.prompt || '-' }}</div>
                                             <div class="small text-muted rp-clamp-2">负: {{ p.negative_prompt || '-' }}</div>
                                         </div>
@@ -1332,7 +1341,7 @@
 
                                             <button class="btn btn-outline-secondary btn-sm" type="button" @click="updateBlockPreset(p)" title="用当前提示词更新此预设">
                                                 <i class="bi bi-arrow-repeat"></i>
-                                                <span class="visually-hidden">更新</span>
+                                                <span class="d-none d-sm-inline ms-1">更新</span>
                                             </button>
 
                                             <button class="btn btn-outline-danger btn-sm" type="button" @click="deleteBlockPreset(p)" title="删除此预设">
@@ -1347,7 +1356,7 @@
 
                         <!-- 复制片段 -->
                         <div v-show="promptPresetTab === 'snippets'">
-                            <div class="text-muted small mb-2">片段仅用于复制（不自动替换当前提示词）。</div>
+                            <div class="text-muted small mb-2">片段可插入到当前正向/负向提示词末尾，或复制到剪贴板。</div>
 
                             <div class="row g-2 mb-3">
                                 <div class="col-12 rp-preset-toolbar">
@@ -1382,7 +1391,12 @@
                             </div>
 
                             <div v-if="filteredPromptSnippetPresets.length === 0" class="text-muted text-center py-4">
-                                {{ promptPresetSearch ? '无匹配' : '暂无片段' }}
+                                <template v-if="promptPresetSearch">无匹配</template>
+                                <template v-else>
+                                    <div class="fs-4 mb-2"><i class="bi bi-puzzle"></i></div>
+                                    <div>暂无片段</div>
+                                    <div class="small mt-1">填写片段名称与内容后点「保存片段」，即可把常用画师/风格串存为片段，一键插入。</div>
+                                </template>
                             </div>
                             <div v-else class="list-group rp-preset-list">
                                 <div v-for="s in filteredPromptSnippetPresets" :key="s.id" class="list-group-item bg-dark border-secondary rp-preset-item">
@@ -1391,14 +1405,22 @@
                                             <div class="text-light fw-semibold text-truncate">{{ s.name }}</div>
                                             <div class="small text-muted rp-clamp-2">{{ s.text }}</div>
                                         </div>
-                                        <div class="btn-group btn-group-sm rp-preset-actions flex-nowrap flex-shrink-0" role="group" aria-label="Snippet actions">
-                                            <button class="btn btn-outline-light" type="button" @click="copySnippet(s.text)" title="复制到剪贴板">
+                                        <div class="d-flex align-items-center gap-1 rp-preset-actions flex-shrink-0 flex-wrap justify-content-end">
+                                            <button class="btn btn-outline-primary btn-sm" type="button" @click="insertSnippetToPrompt(s, 'prompt')" title="插入到正向提示词末尾">
+                                                <i class="bi bi-arrow-down-left"></i>
+                                                <span class="d-none d-sm-inline ms-1">插入正向</span>
+                                            </button>
+                                            <button class="btn btn-outline-danger btn-sm" type="button" @click="insertSnippetToPrompt(s, 'negative_prompt')" title="插入到负向提示词末尾">
+                                                <i class="bi bi-arrow-down-left"></i>
+                                                <span class="d-none d-sm-inline ms-1">插入负向</span>
+                                            </button>
+                                            <button class="btn btn-outline-light btn-sm" type="button" @click="copySnippet(s.text)" title="复制到剪贴板">
                                                 <i class="bi bi-clipboard"></i>
                                                 <span class="d-none d-sm-inline ms-1">复制</span>
                                             </button>
-                                            <button class="btn btn-outline-danger" type="button" @click="deleteSnippetPreset(s)" title="删除此片段">
+                                            <button class="btn btn-outline-secondary btn-sm" type="button" @click="deleteSnippetPreset(s)" title="删除此片段">
                                                 <i class="bi bi-trash"></i>
-                                                <span class="d-none d-sm-inline ms-1">删除</span>
+                                                <span class="visually-hidden">删除</span>
                                             </button>
                                         </div>
                                     </div>
