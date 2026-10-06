@@ -23,7 +23,9 @@ function createDefaultSettingsConfig() {
     // 并发生成上限（allowConcurrent=false 时等价为 1）
     maxConcurrent: 1,
     // 排队上限（allowQueue=false 时等价为 0）
-    maxQueue: 5
+    maxQueue: 5,
+    // 生成后是否自动滚动到结果区
+    autoScrollToResults: true
   };
 }
 
@@ -45,7 +47,8 @@ const Settings = {
     ALLOW_CONCURRENT: 'runpod_allow_concurrent',
     ALLOW_QUEUE: 'runpod_allow_queue',
     MAX_CONCURRENT: 'runpod_max_concurrent',
-    MAX_QUEUE: 'runpod_max_queue'
+    MAX_QUEUE: 'runpod_max_queue',
+    AUTO_SCROLL_TO_RESULTS: 'runpod_auto_scroll_results'
   },
 
   /**
@@ -85,6 +88,11 @@ const Settings = {
 
     const maxQueueRaw = parseInt(localStorage.getItem(this.KEYS.MAX_QUEUE));
     const maxQueue = Number.isFinite(maxQueueRaw) ? maxQueueRaw : this.config.maxQueue;
+
+    const autoScrollToResultsRaw = localStorage.getItem(this.KEYS.AUTO_SCROLL_TO_RESULTS);
+    const autoScrollToResults = autoScrollToResultsRaw === null
+      ? this.config.autoScrollToResults
+      : autoScrollToResultsRaw === 'true';
     
     let apiKey = '';
     if (rememberApiKey) {
@@ -104,7 +112,8 @@ const Settings = {
       allowConcurrent,
       allowQueue,
       maxConcurrent,
-      maxQueue
+      maxQueue,
+      autoScrollToResults
     };
 
     return this.config;
@@ -136,6 +145,7 @@ const Settings = {
     localStorage.setItem(this.KEYS.ALLOW_QUEUE, String(!!this.config.allowQueue));
     localStorage.setItem(this.KEYS.MAX_CONCURRENT, String(Number(this.config.maxConcurrent || 1)));
     localStorage.setItem(this.KEYS.MAX_QUEUE, String(Number(this.config.maxQueue || 0)));
+    localStorage.setItem(this.KEYS.AUTO_SCROLL_TO_RESULTS, String(!!this.config.autoScrollToResults));
 
     // apiKey 仅在用户勾选"记住"时保存
     if (this.config.rememberApiKey) {

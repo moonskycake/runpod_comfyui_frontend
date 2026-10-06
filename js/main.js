@@ -3269,6 +3269,12 @@ const app = Vue.createApp({
             return base && base.runMode === 'runsync' ? 'runsync' : 'run';
         },
 
+        getEffectiveAutoScrollToResults() {
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            // 默认开启：仅在设置中显式关闭时不滚动
+            return !(base && base.autoScrollToResults === false);
+        },
+
         getClientConfigSnapshot() {
             const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
             return {
@@ -3706,8 +3712,10 @@ const app = Vue.createApp({
             // 若此时并发有空位，立即尝试启动队列
             this.pumpQueue();
 
-            // 生成后滚动到结果区
-            this.$nextTick(() => this.scrollToResults());
+            // 生成后滚动到结果区（可在设置 → 生成行为中关闭）
+            if (this.getEffectiveAutoScrollToResults()) {
+                this.$nextTick(() => this.scrollToResults());
+            }
         },
 
         scrollToResults() {
@@ -3842,7 +3850,8 @@ const app = Vue.createApp({
                 allowConcurrent,
                 allowQueue,
                 maxConcurrent,
-                maxQueue
+                maxQueue,
+                autoScrollToResults: !!this.settingsForm.autoScrollToResults
             });
 
             RunpodClient.setConfig({
