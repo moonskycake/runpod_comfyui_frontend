@@ -436,7 +436,9 @@ const PromptTextareaComponent = {
             this.lastToken = token;
 
             const q = (token.query || '').toLowerCase();
-            if (!q || q.length < 2) {
+            // 画师（@ 前缀）允许 1 个字母；@ 单独输入时列出热门画师；普通标签仍需 2 字符
+            const minLen = token.artistOnly ? 0 : 2;
+            if (q.length < minLen) {
                 this.closeMenu();
                 return;
             }
