@@ -1,5 +1,8 @@
 {
   "version": "2026-02-21",
   "updatedAt": "2026-02-21",
-  "source": "https://raw.githubusercontent.com/BetaDoggo/Danbooru-Trends/main/tags/danbooru-2026-02-21.csv"
+  "source": "https://raw.githubusercontent.com/BetaDoggo/Danbooru-Trends/main/tags/danbooru-2026-02-21.csv",
+  "zhVersion": "2026-11-05",
+  "zhUpdatedAt": "2026-11-05",
+  "zhSource": "ffdkj/ffdkj-Danbooru_Tag-Chinese-English-Translation-Table (MIT) + amenorira/danbooru-tags-data-zh (MIT); 生成脚本 tools/build_zh_tags.py"
 }

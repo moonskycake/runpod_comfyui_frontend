@@ -10,3 +10,7 @@ node_modules/
 *.zip
 *.7z
 *.rar
+
+# python cache
+__pycache__/
+*.pyc

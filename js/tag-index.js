@@ -140,24 +140,29 @@
     return { tag, category, count, aliases };
   }
 
-  function parseManifestVersion(manifest) {
+  function parseManifestVersion(manifest, versionKey) {
     if (!manifest || typeof manifest !== 'object') return '';
-    const version = String(manifest.version || '').trim();
+    const version = String(manifest[versionKey || 'version'] || '').trim();
     if (!version) return '';
     return version;
   }
 
   async function resolveDanbooruUrl() {
-    return resolveVersionedUrl(DANBOORU_URL);
+    return resolveVersionedUrl(DANBOORU_URL, 'version');
   }
 
-  async function resolveVersionedUrl(url) {
+  /**
+   * 用 manifest 里的版本号拼缓存参数
+   * @param {string} url
+   * @param {string} [versionKey] manifest 里的版本字段名
+   */
+  async function resolveVersionedUrl(url, versionKey) {
     try {
       const manifestRes = await fetch(DANBOORU_MANIFEST_URL, { cache: 'no-store' });
       if (!manifestRes.ok) return url;
 
       const manifest = await manifestRes.json();
-      const version = parseManifestVersion(manifest);
+      const version = parseManifestVersion(manifest, versionKey);
       if (!version) return url;
 
       const sep = url.includes('?') ? '&' : '?';
@@ -397,7 +402,7 @@
     state.zhLoadingPromise = (async () => {
       await loadDanbooru();
 
-      const csvUrl = await resolveVersionedUrl(ZH_URL);
+      const csvUrl = await resolveVersionedUrl(ZH_URL, 'zhVersion');
       const res = await fetch(csvUrl, { cache: 'force-cache' });
       if (!res.ok) {
         throw new Error(`Failed to load ${csvUrl} (HTTP ${res.status})`);
