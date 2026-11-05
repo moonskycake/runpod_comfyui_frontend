@@ -1188,6 +1188,11 @@ input[type="range"].rp-range::-moz-range-thumb {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
+.rp-ac-zh {
+    font-size: 0.7rem;
+    color: #9aa4ae;
+}
+
 .rp-ac-hint {
     font-size: 0.75rem;
     color: #b7c0c9;

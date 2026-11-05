@@ -251,9 +251,19 @@ function getInitialSettingsState() {
 }
 
 /**
+ * 是否包含中日韩字符（用于把查询路由到中文词库）
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isCjkText(text) {
+    return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(String(text || ''));
+}
+
+/**
  * PromptTextareaComponent
  * - Tag autocomplete for danbooru tags (positive & negative prompt)
  * - Special: token starts with '@' => artist-only search (danbooru category=1)
+ * - 中文关键词（如“白发”）会自动查中文→英文词表
  */
 const PromptTextareaComponent = {
     props: {
@@ -301,9 +311,9 @@ const PromptTextareaComponent = {
             ></textarea>
 
             <div v-if="menuOpen" class="rp-ac-menu position-absolute start-0 top-100 mt-1 w-100" ref="menuPanel">
-                <div v-if="menuLoading" class="px-3 py-2 rp-ac-hint">加载词库中...</div>
+                <div v-if="menuLoading" class="px-3 py-2 rp-ac-hint">{{ menuZhMode ? '加载中文词库中...' : '加载词库中...' }}</div>
                 <div v-else-if="menuError" class="px-3 py-2 text-danger small">{{ menuError }}</div>
-                <div v-else-if="menuItems.length === 0" class="px-3 py-2 rp-ac-hint">无匹配</div>
+                <div v-else-if="menuItems.length === 0" class="px-3 py-2 rp-ac-hint">{{ menuZhMode ? '中文词库无匹配，可改用英文关键词' : '无匹配' }}</div>
                 <button
                     v-for="(item, idx) in menuItems"
                     :key="item.tag"
@@ -313,11 +323,14 @@ const PromptTextareaComponent = {
                     :class="{ active: idx === activeIndex }"
                     @mousedown.prevent="onItemMouseDown(idx)"
                 >
-                    <span class="d-flex align-items-center gap-2 min-w-0">
-                        <span class="rp-ac-tag text-truncate">{{ formatDisplayTag(item.tag) }}</span>
-                        <span v-if="item.catLabel" class="badge bg-secondary">{{ item.catLabel }}</span>
+                    <span class="d-flex flex-column min-w-0">
+                        <span class="d-flex align-items-center gap-2 min-w-0">
+                            <span class="rp-ac-tag text-truncate">{{ formatDisplayTag(item.tag) }}</span>
+                            <span v-if="item.catLabel" class="badge bg-secondary rp-ac-cat">{{ item.catLabel }}</span>
+                        </span>
+                        <span v-if="item.zh" class="rp-ac-zh text-truncate">{{ item.zh }}</span>
                     </span>
-                    <span class="text-muted small ms-2">{{ formatCount(item.count) }}</span>
+                    <span class="text-muted small ms-2 flex-shrink-0">{{ formatCount(item.count) }}</span>
                 </button>
             </div>
         </div>
@@ -331,7 +344,8 @@ const PromptTextareaComponent = {
             menuItems: [],
             activeIndex: 0,
             lastToken: null,
-            searchSeq: 0
+            searchSeq: 0,
+            menuZhMode: false
         };
     },
     methods: {
@@ -408,6 +422,7 @@ const PromptTextareaComponent = {
             this.menuError = '';
             this.menuItems = [];
             this.activeIndex = 0;
+            this.menuZhMode = false;
         },
 
         scrollActiveItemIntoView() {
@@ -435,9 +450,11 @@ const PromptTextareaComponent = {
             const token = this.findToken(value, pos);
             this.lastToken = token;
 
-            const q = (token.query || '').toLowerCase();
-            // 画师（@ 前缀）允许 1 个字母；@ 单独输入时列出热门画师；普通标签仍需 2 字符
-            const minLen = token.artistOnly ? 0 : 2;
+            const rawQuery = token.query || '';
+            const isZhQuery = isCjkText(rawQuery);
+            const q = rawQuery.toLowerCase();
+            // 中文 1 个字即可联想；画师 @ 前缀允许 1 个字母（@ 单独输入列热门画师）；普通标签仍需 2 字符
+            const minLen = isZhQuery ? 1 : (token.artistOnly ? 0 : 2);
             if (q.length < minLen) {
                 this.closeMenu();
                 return;
@@ -447,20 +464,28 @@ const PromptTextareaComponent = {
             this.menuOpen = true;
             this.menuLoading = true;
             this.menuError = '';
+            this.menuZhMode = isZhQuery;
 
             try {
                 if (!window.TagIndex || !window.TagIndex.ensureLoaded) {
                     throw new Error('TagIndex 未加载');
                 }
-                await window.TagIndex.ensureLoaded();
+                if (isZhQuery) {
+                    await window.TagIndex.ensureZhLoaded();
+                } else {
+                    await window.TagIndex.ensureLoaded();
+                }
                 if (seq !== this.searchSeq) return;
 
-                const results = window.TagIndex.search(q, { limit: 20, artistOnly: token.artistOnly });
+                const results = isZhQuery
+                    ? window.TagIndex.searchZh(rawQuery, { limit: 20, artistOnly: token.artistOnly })
+                    : window.TagIndex.search(q, { limit: 20, artistOnly: token.artistOnly });
                 this.menuItems = (results || []).map(r => ({
                     tag: r.tag,
                     category: r.category,
                     catLabel: this.getCatLabel(r.category),
-                    count: r.count
+                    count: r.count,
+                    zh: isZhQuery ? (r.zh || '') : window.TagIndex.getZh(r.tag)
                 }));
                 this.activeIndex = 0;
                 this.menuLoading = false;
@@ -1236,6 +1261,9 @@ const app = Vue.createApp({
         // 首次渲染后同步桌面历史列表高度
         this.queueSyncHistoryListDesktopHeight();
         this.$nextTick(() => this.queueWorkflowGraphRender());
+
+        // 空闲时预加载标签库（含中文词库），避免首次输入时等待
+        this.preloadTagIndexes();
     },
 
     beforeUnmount() {
@@ -2175,6 +2203,20 @@ const app = Vue.createApp({
                 this.persistParamSectionsOpenState();
             }
             this.showPromptRefs = !this.showPromptRefs;
+        },
+
+        preloadTagIndexes() {
+            const run = () => {
+                if (!window.TagIndex || !window.TagIndex.ensureLoaded) return;
+                window.TagIndex.ensureLoaded()
+                    .then(() => window.TagIndex.ensureZhLoaded())
+                    .catch(() => {});
+            };
+            if (typeof window.requestIdleCallback === 'function') {
+                window.requestIdleCallback(run, { timeout: 3000 });
+            } else {
+                setTimeout(run, 1200);
+            }
         },
 
         togglePromptInputOptions() {

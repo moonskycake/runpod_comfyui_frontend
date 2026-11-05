@@ -18,6 +18,7 @@
 
 (function () {
   const DANBOORU_URL = './tags/danbooru.csv';
+  const ZH_URL = './tags/zhcn.csv';
   const DANBOORU_MANIFEST_URL = './tags/manifest.json';
   const PREFIX_LEN = 2;
   const TOP_ARTIST_COUNT = 60;
@@ -30,7 +31,11 @@
    *   wordPrefixMap: Record<string, number[]>,
    *   aliasPrefixMap: Record<string, number[]>,
    *   artistByInitial: Record<string, number[]>,
-   *   topArtists: number[]
+   *   topArtists: number[],
+   *   zhLoaded: boolean,
+   *   zhLoadingPromise: Promise<void>|null,
+   *   zhByTag: Map<string, string>,
+   *   zhIndex: Map<string, number[]>
    * }}
    */
   const state = {
@@ -40,7 +45,11 @@
     wordPrefixMap: Object.create(null),
     aliasPrefixMap: Object.create(null),
     artistByInitial: Object.create(null),
-    topArtists: []
+    topArtists: [],
+    zhLoaded: false,
+    zhLoadingPromise: null,
+    zhByTag: new Map(),
+    zhIndex: new Map()
   };
 
   function normalizeQuery(q) {
@@ -139,18 +148,22 @@
   }
 
   async function resolveDanbooruUrl() {
+    return resolveVersionedUrl(DANBOORU_URL);
+  }
+
+  async function resolveVersionedUrl(url) {
     try {
       const manifestRes = await fetch(DANBOORU_MANIFEST_URL, { cache: 'no-store' });
-      if (!manifestRes.ok) return DANBOORU_URL;
+      if (!manifestRes.ok) return url;
 
       const manifest = await manifestRes.json();
       const version = parseManifestVersion(manifest);
-      if (!version) return DANBOORU_URL;
+      if (!version) return url;
 
-      const sep = DANBOORU_URL.includes('?') ? '&' : '?';
-      return `${DANBOORU_URL}${sep}v=${encodeURIComponent(version)}`;
+      const sep = url.includes('?') ? '&' : '?';
+      return `${url}${sep}v=${encodeURIComponent(version)}`;
     } catch (err) {
-      return DANBOORU_URL;
+      return url;
     }
   }
 
@@ -325,10 +338,159 @@
     return out;
   }
 
+  // ---------- 中文词库（tags/zhcn.csv：英文标签 -> 中文，懒加载） ----------
+
+  // 中文匹配前去掉空白与标点，避免 “白 发”“（白发）” 这类差异
+  function normalizeZh(text) {
+    return String(text || '')
+      .replace(/[\s\u3000]/g, '')
+      .replace(/[()（）\[\]【】,，、。.!！?？;；:：'"“”‘’<>《》~～_\-/\\|]/g, '');
+  }
+
+  function addZhGram(map, gram, idx) {
+    if (!gram) return;
+    const bucket = map.get(gram);
+    if (!bucket) {
+      map.set(gram, [idx]);
+      return;
+    }
+    if (bucket[bucket.length - 1] !== idx) bucket.push(idx);
+  }
+
+  function parseZhLine(line) {
+    const s = String(line || '').trim();
+    if (!s) return null;
+
+    let key = '';
+    let rest = '';
+    if (s.charAt(0) === '"') {
+      const end = s.indexOf('"', 1);
+      if (end === -1) return null;
+      key = s.slice(1, end);
+      rest = s.slice(end + 1);
+    } else {
+      const comma = s.indexOf(',');
+      if (comma === -1) return null;
+      key = s.slice(0, comma);
+      rest = s.slice(comma);
+    }
+
+    if (rest.charAt(0) === ',') rest = rest.slice(1);
+    rest = rest.trim();
+    if (rest.charAt(0) === '"') {
+      rest = rest.slice(1);
+      const close = rest.lastIndexOf('"');
+      if (close !== -1) rest = rest.slice(0, close);
+      rest = rest.replace(/""/g, '"');
+    }
+
+    const en = key.trim().toLowerCase().replace(/\s+/g, '_');
+    const zh = rest.trim();
+    if (!en || !zh) return null;
+    return { en, zh };
+  }
+
+  async function loadZh() {
+    if (state.zhLoaded) return;
+    if (state.zhLoadingPromise) return state.zhLoadingPromise;
+
+    state.zhLoadingPromise = (async () => {
+      await loadDanbooru();
+
+      const csvUrl = await resolveVersionedUrl(ZH_URL);
+      const res = await fetch(csvUrl, { cache: 'force-cache' });
+      if (!res.ok) {
+        throw new Error(`Failed to load ${csvUrl} (HTTP ${res.status})`);
+      }
+      const text = await res.text();
+      const lines = text.split(/\r?\n/);
+
+      const zhByTag = new Map();
+      for (let i = 0; i < lines.length; i++) {
+        const parsed = parseZhLine(lines[i]);
+        if (!parsed) continue;
+        if (!zhByTag.has(parsed.en)) zhByTag.set(parsed.en, parsed.zh);
+      }
+
+      // 只保留当前标签库里的词条；按标签下标顺序写桶，保证结果 ≈ 热度降序
+      const zhIndex = new Map();
+      const tags = state.tags;
+      for (let idx = 0; idx < tags.length; idx++) {
+        const zh = zhByTag.get(tags[idx].key);
+        if (!zh) continue;
+        const compact = normalizeZh(zh);
+        if (!compact) continue;
+        for (let i = 0; i < compact.length; i++) {
+          addZhGram(zhIndex, compact.charAt(i), idx);
+          if (i + 1 < compact.length) addZhGram(zhIndex, compact.slice(i, i + 2), idx);
+        }
+      }
+
+      state.zhByTag = zhByTag;
+      state.zhIndex = zhIndex;
+      state.zhLoaded = true;
+    })();
+
+    try {
+      await state.zhLoadingPromise;
+    } finally {
+      state.zhLoadingPromise = null;
+    }
+  }
+
+  /**
+   * 取标签对应的中文说明（未加载中文库或未收录时返回空串）
+   * @param {string} tag
+   * @returns {string}
+   */
+  function getZh(tag) {
+    if (!state.zhLoaded) return '';
+    return state.zhByTag.get(normalizeKey(tag)) || '';
+  }
+
+  /**
+   * 中文 -> 英文标签
+   * @param {string} query 中文关键词
+   * @param {{ limit?: number, artistOnly?: boolean }} [opts]
+   * @returns {Array<{tag:string, category:number, count:number, zh:string}>}
+   */
+  function searchZh(query, opts) {
+    if (!state.zhLoaded) return [];
+
+    const limit = opts && opts.limit ? Math.max(1, Math.min(opts.limit, 100)) : 20;
+    const artistOnly = !!(opts && opts.artistOnly);
+    const qNorm = normalizeZh(query);
+    if (!qNorm) return [];
+
+    const gram = qNorm.length === 1 ? qNorm : qNorm.slice(0, 2);
+    const candidates = state.zhIndex.get(gram) || [];
+    const out = [];
+
+    for (let i = 0; i < candidates.length; i++) {
+      const idx = candidates[i];
+      const t = state.tags[idx];
+      if (!t) continue;
+      if (artistOnly && t.category !== 1) continue;
+
+      const zh = state.zhByTag.get(t.key) || '';
+      if (!zh) continue;
+      if (!normalizeZh(zh).includes(qNorm)) continue;
+
+      out.push({ tag: t.tag, category: t.category, count: t.count, zh });
+      if (out.length >= limit) break;
+    }
+
+    return out;
+  }
+
   const TagIndex = {
     ensureLoaded: loadDanbooru,
     isLoaded: () => state.loaded,
-    search
+    ensureZhLoaded: loadZh,
+    isZhLoaded: () => state.zhLoaded,
+    getZh,
+    search,
+    searchZh
   };
 
   window.TagIndex = TagIndex;
