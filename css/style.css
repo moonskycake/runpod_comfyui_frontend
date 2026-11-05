@@ -1193,6 +1193,41 @@ input[type="range"].rp-range::-moz-range-thumb {
     color: #9aa4ae;
 }
 
+.rp-ac-hl {
+    color: #ffd166;
+    font-weight: 600;
+}
+
+.rp-ac-cat.rp-cat-artist {
+    background-color: rgba(255, 138, 101, 0.2);
+    color: #ffb59b;
+}
+
+.rp-ac-cat.rp-cat-character {
+    background-color: rgba(77, 182, 172, 0.2);
+    color: #8fdcd6;
+}
+
+.rp-ac-cat.rp-cat-series {
+    background-color: rgba(129, 199, 132, 0.2);
+    color: #a8e0ac;
+}
+
+.rp-ac-cat.rp-cat-meta {
+    background-color: rgba(149, 117, 205, 0.24);
+    color: #c3aef0;
+}
+
+.rp-ac-cat.rp-cat-general {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #cfd6dd;
+}
+
+.rp-ac-dup {
+    background-color: rgba(255, 193, 7, 0.18);
+    color: #ffcd39;
+}
+
 .rp-ac-hint {
     font-size: 0.75rem;
     color: #b7c0c9;

@@ -293,6 +293,16 @@ const PromptTextareaComponent = {
         }
     },
     emits: ['update:modelValue'],
+    computed: {
+        tagStats() {
+            const value = String(this.modelValue || '');
+            const tokens = value
+                .split(/[,\n]/)
+                .map(t => t.trim())
+                .filter(Boolean);
+            return { count: tokens.length, chars: value.length };
+        }
+    },
     template: `
         <div class="position-relative">
             <textarea
@@ -310,6 +320,8 @@ const PromptTextareaComponent = {
                 @compositionend="onCompositionEnd"
             ></textarea>
 
+            <div v-if="tagStats.count > 0" class="rp-ac-hint mt-1">{{ tagStats.count }} 个标签 · {{ tagStats.chars }} 字符</div>
+
             <div v-if="menuOpen" class="rp-ac-menu position-absolute start-0 top-100 mt-1 w-100" ref="menuPanel">
                 <div v-if="menuLoading" class="px-3 py-2 rp-ac-hint">{{ menuZhMode ? '加载中文词库中...' : '加载词库中...' }}</div>
                 <div v-else-if="menuError" class="px-3 py-2 text-danger small">{{ menuError }}</div>
@@ -325,10 +337,15 @@ const PromptTextareaComponent = {
                 >
                     <span class="d-flex flex-column min-w-0">
                         <span class="d-flex align-items-center gap-2 min-w-0">
-                            <span class="rp-ac-tag text-truncate">{{ formatDisplayTag(item.tag) }}</span>
-                            <span v-if="item.catLabel" class="badge bg-secondary rp-ac-cat">{{ item.catLabel }}</span>
+                            <span class="rp-ac-tag text-truncate">
+                                <span v-for="(seg, si) in tagSegments(item.tag)" :key="'t' + si" :class="{ 'rp-ac-hl': seg.hl }">{{ seg.text }}</span>
+                            </span>
+                            <span v-if="item.catLabel" class="badge rp-ac-cat" :class="getCatClass(item.category)">{{ item.catLabel }}</span>
+                            <span v-if="item.duplicate" class="badge rp-ac-cat rp-ac-dup">已添加</span>
                         </span>
-                        <span v-if="item.zh" class="rp-ac-zh text-truncate">{{ item.zh }}</span>
+                        <span v-if="item.zh" class="rp-ac-zh text-truncate">
+                            <span v-for="(seg, si) in zhSegments(item.zh)" :key="'z' + si" :class="{ 'rp-ac-hl': seg.hl }">{{ seg.text }}</span>
+                        </span>
                     </span>
                     <span class="text-muted small ms-2 flex-shrink-0">{{ formatCount(item.count) }}</span>
                 </button>
@@ -345,7 +362,8 @@ const PromptTextareaComponent = {
             activeIndex: 0,
             lastToken: null,
             searchSeq: 0,
-            menuZhMode: false
+            menuZhMode: false,
+            existingTagKeys: []
         };
     },
     methods: {
@@ -375,6 +393,87 @@ const PromptTextareaComponent = {
                 return s.replace(/_/g, ' ');
             }
             return s;
+        },
+
+        getCatClass(cat) {
+            if (cat === 1) return 'rp-cat-artist';
+            if (cat === 3) return 'rp-cat-series';
+            if (cat === 4) return 'rp-cat-character';
+            if (cat === 5) return 'rp-cat-meta';
+            return 'rp-cat-general';
+        },
+
+        // 当前输入 token 的关键词（中文模式直接整串匹配）
+        currentQueryWords(forZh) {
+            const token = this.lastToken || {};
+            const raw = String(token.query || '').replace(/^@/, '').trim().toLowerCase();
+            if (!raw) return [];
+            if (forZh) return [raw];
+            return raw.replace(/_/g, ' ').split(/\s+/).filter(Boolean);
+        },
+
+        // 把命中的片段包上高亮标记
+        highlightSegments(text, words) {
+            const str = String(text || '');
+            if (!str) return [];
+            if (!words || words.length === 0) return [{ text: str, hl: false }];
+
+            const lower = str.toLowerCase();
+            const marks = new Array(str.length).fill(false);
+            for (let w = 0; w < words.length; w++) {
+                const word = words[w];
+                if (!word) continue;
+                let from = 0;
+                while (from <= lower.length - word.length) {
+                    const at = lower.indexOf(word, from);
+                    if (at === -1) break;
+                    for (let i = at; i < at + word.length; i++) marks[i] = true;
+                    from = at + word.length;
+                }
+            }
+
+            const out = [];
+            for (let i = 0; i < str.length; i++) {
+                const hl = marks[i];
+                const last = out[out.length - 1];
+                if (last && last.hl === hl) last.text += str[i];
+                else out.push({ text: str[i], hl });
+            }
+            return out;
+        },
+
+        tagSegments(tag) {
+            return this.highlightSegments(this.formatDisplayTag(tag), this.currentQueryWords(false));
+        },
+
+        zhSegments(zh) {
+            return this.highlightSegments(zh, this.currentQueryWords(true));
+        },
+
+        // 标签名规范化，用于重复检测（去 @、转义、权重、下划线）
+        normalizeTagKey(text) {
+            return String(text || '')
+                .trim()
+                .replace(/^@/, '')
+                .replace(/\\/g, '')
+                .replace(/^\(+|\)+$/g, '')
+                .replace(/:\s*[\d.]+$/, '')
+                .toLowerCase()
+                .replace(/\s+/g, '_');
+        },
+
+        collectTagKeys(value) {
+            const keys = String(value || '')
+                .split(/[,\n]/)
+                .map(t => this.normalizeTagKey(t))
+                .filter(Boolean);
+            return keys;
+        },
+
+        isDuplicateTag(tag) {
+            const key = this.normalizeTagKey(tag);
+            if (!key) return false;
+            return Array.isArray(this.existingTagKeys) && this.existingTagKeys.indexOf(key) !== -1;
         },
 
         findToken(value, cursorPos) {
@@ -480,12 +579,14 @@ const PromptTextareaComponent = {
                 const results = isZhQuery
                     ? window.TagIndex.searchZh(rawQuery, { limit: 20, artistOnly: token.artistOnly })
                     : window.TagIndex.search(q, { limit: 20, artistOnly: token.artistOnly });
+                this.existingTagKeys = this.collectTagKeys(value);
                 this.menuItems = (results || []).map(r => ({
                     tag: r.tag,
                     category: r.category,
                     catLabel: this.getCatLabel(r.category),
                     count: r.count,
-                    zh: isZhQuery ? (r.zh || '') : window.TagIndex.getZh(r.tag)
+                    zh: isZhQuery ? (r.zh || '') : window.TagIndex.getZh(r.tag),
+                    duplicate: this.isDuplicateTag(r.tag)
                 }));
                 this.activeIndex = 0;
                 this.menuLoading = false;
@@ -507,9 +608,6 @@ const PromptTextareaComponent = {
             const pos = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
             const token = this.lastToken || this.findToken(value, pos);
 
-            const before = value.slice(0, token.start);
-            const after = value.slice(token.end);
-
             const opts = this.insertOptions || {};
             const shouldKeepAt = !!opts.keepAtPrefix && !!token.artistOnly;
             const atPrefix = shouldKeepAt ? '@' : '';
@@ -521,29 +619,43 @@ const PromptTextareaComponent = {
                 tagText = tagText.replace(/\(/g, '\\(').replace(/\)/g, '\\)');
             }
 
-            const replacement = `${token.lead || ''}${atPrefix}${tagText}`;
+            let replacement = `${token.lead || ''}${atPrefix}${tagText}`;
 
-            let nextValue = before + replacement + after;
-            let caretPos = (before + replacement).length;
-
-            // 如果是在末尾选择，自动补一个 ", " 方便继续输入
+            // 在末尾选择时自动补 ", " 方便继续输入
+            const after = value.slice(token.end);
             if (!after) {
-                const trimmed = nextValue.trimEnd();
+                const trimmed = (value.slice(0, token.start) + replacement).trimEnd();
                 if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) {
-                    nextValue += ', ';
-                    caretPos += 2;
+                    replacement += ', ';
                 }
             }
 
-            el.value = nextValue;
+            this.replaceRange(el, token.start, token.end, replacement);
+            this.closeMenu();
+        },
+
+        // 用 insertText 写入，保留浏览器原生撤销栈（Ctrl+Z 可回退联想插入）
+        replaceRange(el, start, end, text) {
+            let inserted = false;
             try {
-                el.setSelectionRange(caretPos, caretPos);
+                el.focus();
+                el.setSelectionRange(start, end);
+                inserted = document.execCommand('insertText', false, text);
             } catch (e) {
-                // ignore
+                inserted = false;
             }
 
-            this.$emit('update:modelValue', nextValue);
-            this.closeMenu();
+            if (!inserted) {
+                const current = el.value || '';
+                el.value = current.slice(0, start) + text + current.slice(end);
+                try {
+                    el.setSelectionRange(start + text.length, start + text.length);
+                } catch (e) {
+                    // ignore
+                }
+            }
+
+            this.$emit('update:modelValue', el.value || '');
         },
 
         onItemMouseDown(idx) {
@@ -596,6 +708,16 @@ const PromptTextareaComponent = {
                 e.preventDefault();
                 if (this.menuItems.length === 0) return;
                 this.activeIndex = (this.activeIndex - 1 + this.menuItems.length) % this.menuItems.length;
+                this.scrollActiveItemIntoView();
+            } else if (e.key === 'PageDown') {
+                e.preventDefault();
+                if (this.menuItems.length === 0) return;
+                this.activeIndex = Math.min(this.menuItems.length - 1, this.activeIndex + 5);
+                this.scrollActiveItemIntoView();
+            } else if (e.key === 'PageUp') {
+                e.preventDefault();
+                if (this.menuItems.length === 0) return;
+                this.activeIndex = Math.max(0, this.activeIndex - 5);
                 this.scrollActiveItemIntoView();
             } else if (e.key === 'Escape') {
                 e.preventDefault();
