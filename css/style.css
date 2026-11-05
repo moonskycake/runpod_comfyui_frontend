@@ -1193,6 +1193,46 @@ input[type="range"].rp-range::-moz-range-thumb {
     color: #b7c0c9;
 }
 
+.rp-ac-cat {
+    font-size: 0.62rem;
+    font-weight: 500;
+    vertical-align: middle;
+}
+
+/* Prompt reference sites */
+.rp-ref-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-height: 240px;
+    overflow: auto;
+}
+
+.rp-ref-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.02);
+    color: #e9ecef;
+    text-decoration: none;
+}
+
+.rp-ref-item:hover,
+.rp-ref-item:focus-visible {
+    border-color: rgba(var(--rp-accent-rgb), 0.5);
+    background: rgba(var(--rp-accent-rgb), 0.1);
+    color: #fff;
+    text-decoration: none;
+}
+
+.rp-ref-desc {
+    font-size: 0.72rem;
+    color: #b7c0c9;
+}
+
 /* Prompt presets modal */
 .rp-preset-list {
     display: flex;

@@ -651,6 +651,27 @@ const app = Vue.createApp({
 
             // ========== 提示词输入体验 ==========
             showPromptInputOptions: false,
+
+            // ========== 提示词参考站点 ==========
+            // 面板里的链接完全由这个数组驱动：加一条 = 多一个链接
+            // badge 用作分组标注（画师/标签/作品…），icon 用 bootstrap-icons 名
+            showPromptRefs: false,
+            promptRefSites: [
+                {
+                    name: 'Animadex',
+                    url: 'https://animadex.net/',
+                    desc: '画师 / 作品索引，查画风与代表作',
+                    badge: '画师',
+                    icon: 'bi-person-badge'
+                },
+                {
+                    name: 'Danbooru Wiki',
+                    url: 'https://danbooru.donmai.us/wiki_pages',
+                    desc: '标签释义、别名与相关标签',
+                    badge: '标签',
+                    icon: 'bi-book'
+                }
+            ],
             promptInsertOptions: {
                 keepUnderscore: true,
                 escapeParentheses: true,
@@ -2143,6 +2164,15 @@ const app = Vue.createApp({
             } catch (e) {
                 // ignore
             }
+        },
+
+        togglePromptRefs() {
+            // 打开参考站点时确保提示词区展开，避免面板被折叠隐藏
+            if (this.paramSectionsOpen && this.paramSectionsOpen.prompt === false) {
+                this.paramSectionsOpen = { ...this.paramSectionsOpen, prompt: true };
+                this.persistParamSectionsOpenState();
+            }
+            this.showPromptRefs = !this.showPromptRefs;
         },
 
         togglePromptInputOptions() {

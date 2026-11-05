@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RunPod ComfyUI</title>
     <link rel="stylesheet" href="./bootstrap/bootstrap.min.css">
-    <link rel="stylesheet" href="./css/style.css?v=20260801.2">
+    <link rel="stylesheet" href="./css/style.css?v=20261007.1">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
 </head>
 
@@ -229,6 +229,9 @@
                                     <span class="text-light fw-semibold">提示词</span>
                                 </div>
                                 <div class="d-flex align-items-center gap-2">
+                                    <button class="btn btn-outline-info btn-sm" @click.stop="togglePromptRefs" title="标签参考站点">
+                                        <i class="bi bi-link-45deg"></i> 参考
+                                    </button>
                                     <button class="btn btn-outline-secondary btn-sm" @click.stop="togglePromptInputOptions" title="输入选项">
                                         <i class="bi bi-sliders"></i>
                                     </button>
@@ -240,6 +243,25 @@
                             </div>
 
                             <div class="rp-param-body" v-show="paramSectionsOpen.prompt">
+                                <div v-if="showPromptRefs" class="mb-3 p-3 border border-secondary rounded">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <div class="rp-ac-hint"><i class="bi bi-link-45deg"></i> 参考站点（新窗口打开）</div>
+                                        <button type="button" class="btn-close btn-close-white" style="font-size: .6rem;" @click="togglePromptRefs" aria-label="收起"></button>
+                                    </div>
+                                    <div class="rp-ref-list">
+                                        <a v-for="site in promptRefSites" :key="site.url"
+                                           :href="site.url" target="_blank" rel="noopener noreferrer"
+                                           class="rp-ref-item">
+                                            <span class="d-flex align-items-center gap-2 min-w-0">
+                                                <i class="bi" :class="site.icon || 'bi-link-45deg'"></i>
+                                                <span class="text-truncate">{{ site.name }}</span>
+                                                <span v-if="site.badge" class="badge bg-secondary rp-ac-cat">{{ site.badge }}</span>
+                                            </span>
+                                            <span class="rp-ref-desc" v-if="site.desc">{{ site.desc }}</span>
+                                        </a>
+                                    </div>
+                                </div>
+
                                 <div v-if="showPromptInputOptions" class="mb-3 p-3 border border-secondary rounded">
                                     <div class="form-check form-switch">
                                         <input class="form-check-input" type="checkbox" id="promptKeepUnderscoreToggle"
@@ -1627,19 +1649,19 @@
     <!-- 脚本引用 -->
     <script src="./vue/vue.global.prod.js"></script>
     <script src="./js/axios.min.js"></script>
-    <script src="./js/vendor/dagre.min.js?v=20260801.2"></script>
-    <script src="./js/vendor/cytoscape.min.js?v=20260801.2"></script>
-    <script src="./js/vendor/cytoscape-dagre.js?v=20260801.2"></script>
-    <script src="./js/settings.js?v=20260801.3"></script>
-    <script src="./js/runpod-client.js?v=20260801.3"></script>
-    <script src="./js/templates.js?v=20260801.2"></script>
-    <script src="./js/placeholders.js?v=20260801.2"></script>
-    <script src="./js/workflow-editor.js?v=20260801.2"></script>
-    <script src="./js/builtin-templates.js?v=20260801.2"></script>
+    <script src="./js/vendor/dagre.min.js?v=20261007.1"></script>
+    <script src="./js/vendor/cytoscape.min.js?v=20261007.1"></script>
+    <script src="./js/vendor/cytoscape-dagre.js?v=20261007.1"></script>
+    <script src="./js/settings.js?v=20261007.1"></script>
+    <script src="./js/runpod-client.js?v=20261007.1"></script>
+    <script src="./js/templates.js?v=20261007.1"></script>
+    <script src="./js/placeholders.js?v=20261007.1"></script>
+    <script src="./js/workflow-editor.js?v=20261007.1"></script>
+    <script src="./js/builtin-templates.js?v=20261007.1"></script>
     <script src="./js/tag-index.js"></script>
     <script src="./js/history-store.js"></script>
     <script src="./bootstrap/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
-    <script src="./js/main.js?v=20260801.3"></script>
+    <script src="./js/main.js?v=20261007.1"></script>
 </body>
 
 </html>
