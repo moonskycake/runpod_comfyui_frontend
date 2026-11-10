@@ -1,18 +1,8 @@
 # Catalog backend: install / upgrade / backup runbook
 
-Status: **procedure only**. Nothing here has been executed against the server;
-no live config, credential or RunPod endpoint was touched. The service itself
-is `catalog_service/` (owned by its own implementation); this directory ships
-only operator-facing deployment material.
+Status: **可重复执行的运维程序**。它描述的是“要做什么、怎么验证”，不是实时健康报告：生产已于 2026-11-10 按本文件部署并上线（功能提交 `44b657b`），当前状态以服务器为准，服务实例的具体细节（登录、内容、响应头）以现场 `curl` / `systemctl` 观察为准。重跑本文件不会自动修复已偏离的状态。
 
-Related: `catalog_service/README.md` (service contract, env table, CLI) — on the
-host that file is `/opt/runpod-catalog/app/current/catalog_service/README.md`,
-never a copy at the tree root;
-`docs/catalog-api.md` (frozen API), `docs/plans/shared-library-backend-plan.md`.
-The frontend deploy channel (`deploy/server/runpod-deploy-gateway` + GitHub
-Actions) **cannot** perform any step below: it publishes static files as an
-unprivileged user and has no root, package-install or service-restart rights.
-Bootstrapping the catalog service is a separate, one-time operator action.
+相关：`catalog_service/README.md`（服务契约、env 表、CLI）——在主机上是 `/opt/runpod-catalog/app/current/catalog_service/README.md`，从不在树根放副本；`docs/catalog-api.md`（冻结 API）、`docs/plans/shared-library-backend-plan.md`。前端发布通道（`deploy/server/runpod-deploy-gateway` + GitHub Actions）**不能**执行下面任何一步：它以非特权用户发布静态文件，无 root、无装包、无重启服务权限。后端的安装与升级一律是独立的人工 root 操作，没有自动发版。
 
 ## 0. What runs where
 
@@ -154,7 +144,7 @@ ss -ltnp | grep 8787        # must be 127.0.0.1:8787, never 0.0.0.0:8787
 
 ## 3. Seeding the shared library
 
-Seeding is explicit and never publishes.
+Seeding is explicit and never publishes. Production seeding has already run once with exactly the two builtins (both at `publish v1`); this section stays here so a rebuild from scratch is repeatable, and re-running it only reports `skipped`.
 
 1. Extract the trusted builtins to seed JSON on a dev machine. The helper runs
    `js/builtin-templates.js` in a Node VM with no fs/network access and emits the
@@ -295,10 +285,16 @@ printf 'import sqlite3,sys\nprint(sqlite3.connect(sys.argv[1]).execute("PRAGMA i
   one back into a release directory or into the web root.
 - Copy the newest backup **off the host**; another directory on the same VPS is
   not disaster recovery.
+- **No scheduled backup exists yet.** Backups are hand-run; a timer/cron job is an
+  open candidate, not an implemented feature. Treat the newest file in
+  `/var/backups/runpod-catalog/` as the freshness measure and check the date
+  before any upgrade.
 - Restore: stop the service, install the backup as
   `/var/lib/runpod-catalog/catalog.db` owned `runpod-catalog:runpod-catalog`
   mode 0600, remove stale `-wal`/`-shm` siblings, start the service, then
-  re-check `/api/catalog` and one admin login.
+  re-check `/api/catalog` and one admin login. This is a documented procedure,
+  **not** an exercised drill: only backup + `integrity_check` have actually been
+  run, restore-from-backup has not been performed end to end.
 - Service rollback: `ln -sfn <previous-version> /opt/runpod-catalog/app/current
   && systemctl restart runpod-catalog.service`. Restore the DB only if a
   migration was not backward compatible — the documented exception.

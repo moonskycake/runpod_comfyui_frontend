@@ -8,7 +8,25 @@ Two pieces, no third-party deploy actions, Python standard library only.
 | `server/runpod_deploy.py` | server, as `runpod-deploy` | validates the tar stream, stages, publishes an immutable release, swaps `current`, prunes old releases. Pointers are symlinks **only** — no detection, no fallback, no probe files; `inspect` is read-only and takes no lock |
 | `server/runpod-deploy-gateway` | server, root-owned, executed by sshd as the logged-in user | forced-command allow-list (`deploy <sha40>` / `rollback <sha40>` / `inspect`), execs the publisher |
 | `server/nginx-deploy-snippet.conf` | server, nginx vhost | serves `/` and the runtime `tags/`, `img/`, `favicon.ico` paths from the current release; returns 404 for `/_rel/current*`, and never hard-caches unversioned `tags/` URLs |
-| `tests/test_deploy.py` | anywhere | 21 tests; the state-machine tests are skipped where symlink creation is refused (Windows without Developer Mode) and must run once on the Linux host |
+| `tests/test_deploy.py` | anywhere | 35 test cases; the symlink state-machine tests are skipped where symlink creation is refused (Windows without Developer Mode) and must run once on the Linux host |
+
+## What this channel does not deploy
+
+The catalog backend service itself (`catalog_service/`, FastAPI + SQLite) and its runtime
+data — venv, systemd unit, `catalog.env`, `catalog.db` — are **not** part of this
+channel: GitHub Actions publishes static files as `runpod-deploy`, which has no
+root, no package install and no service restart. The `admin.html` shell and its
+`js/` / `css/` assets **are** static and are packed, validated and published here
+like `index.html` (served at `/admin/`, assets rewritten root-absolute).
+Installing/upgrading the backend and the DB is a separate manual root procedure —
+see `deploy/catalog/README.md`. The Nginx snippet in `server/` covers `/admin`,
+`/admin/` and `^~ /api/` (upstream `127.0.0.1:8787`), so the static and service
+halves meet in one vhost while deploying independently.
+
+Production reference (snapshot, not live): functional commit
+`44b657b99da75f6df79a78e98ed7b78505c360d7`, last static release Actions run
+42841396575 (success), site `https://runpod.hyxer.top/`, admin
+`https://runpod.hyxer.top/admin/`.
 
 ## Release layout
 
@@ -116,7 +134,7 @@ reverting the snippet returns to the previous behaviour immediately.
 ## Local tests
 
 ```bash
-python deploy/tests/test_deploy.py -v      # 21 tests; symlink-dependent ones skip on Windows (WinError 1314)
+python deploy/tests/test_deploy.py -v      # 35 cases; Windows measured 25 passed / 10 skipped (WinError 1314); the 14 subtests are inside those cases, do not add them to the count
 ```
 
 Covered: real-repo packing (whitelist, order, reference completeness), CSS relative layout, CSV change → manifest

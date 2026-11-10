@@ -2,6 +2,33 @@
 
 基线：`frontend` @ `fa60856`。范围：生图页公开、`/admin/` 私有；后台统一管理工作流模板、提示词预设（正负一组）、片段。访客只读已发布的统一库，可复制到本地使用；本地自建资源只存本地、不自动上传。图片收藏本期不变（localStorage 元数据 + IndexedDB 二进制），不上传、不做媒体 API / 私有云同步。
 
+## 0. 实现进度（截至 2026-11-10，非实时）
+
+**结论：核心首期已落地并在生产运行；逐条偏差与验收范围见下表。** 正文其余部分保留为设计与落点依据，不再逐条改写。
+
+| 计划条款 | 状态 |
+|---|---|
+| §1 部署形态：单域名、`/admin/` 固定入口、`/api/` 反代环回、FastAPI + SQLite WAL + venv + systemd | 已实现。生产为 `app/current` + `/opt/runpod-catalog/venv` + `runpod-catalog.service`（仅 `127.0.0.1:8787`），Nginx 同源反代 |
+| §1 后端独立受控发布、无自动发版 | 已实现（且无变化）。静态站走 GitHub Actions，后台靠人工 root 步骤，见 `deploy/catalog/README.md` |
+| §2 `shared:` / `local:` 复合键、允许同名、不跨来源覆盖 | 已实现 |
+| §2 `draft / published / disabled` + `draftRev` / `publishedRevision` / `hasUnpublishedChanges` | 已实现；编辑已发布项只推进 `draftRev`，公开端仍取旧快照 |
+| §2 公开详情：仅草稿 404、已停用 410 | 已实现 |
+| §3 最小 API 集（公开 / 会话 / 管理读 / 草稿写 / 发布 / 停用） | 已实现，契约冻结在 `docs/catalog-api.md` |
+| §3 catalog `ETag` + `no-cache`；admin 全量 `no-store`（含错误响应） | 已实现并在生产响应头复核 |
+| §4 三类内容 schema、未知外层字段拒绝、序列化 ≤1 MB、文本 ≤50 KB | 已实现 |
+| §4 `scrypt` 口令哈希、`Secure; HttpOnly; SameSite=Strict`、token 只存哈希、双维度限速、`Origin` + CSRF 校验 | 已实现 |
+| §4 敏感键名提示（不承诺自动识别任意文本秘密） | 已实现，口径未放宽 |
+| §5 首次建库用两个内置模板作种子、`legacyId` 映射去重 | 已实现。生产恰好两个已发布模板 `anima_preview2_lora_v1`、`anima_priview_v1`（均为 v1）；未把本地 QA 预设/片段或 QA 库搬到生产 |
+| §5 备份走 SQLite backup API、备份需异机 | 已实现（手工）。`PRAGMA integrity_check=ok`，服务器与异机各一份。**定时自动备份未配置**，属候选待决 |
+| §6 `pack_frontend.py` 白名单加 `admin.html`、多 HTML 重写、Nginx `/admin` 与 `/api/` 段 | 已实现（`WHITELIST_FILES`/`HTML_ENTRIES`/`NESTED_HTML_ENTRIES` 均在，`admin.html` 资源重写为根绝对路径） |
+| §6 前端与后端独立发布、数据库在版本目录之外、不动 RunPod 镜像/端点 | 已实现 |
+| §7 B1–B4（骨架 / 修订与发布 / 白名单与重写 / 联调备份回滚） | 首期核心闭环已交付；生产备份已做，但**回滚与恢复演练未完成**（见 §8 行 8） |
+| §8 关键验收 1–8 | 1–7 已实测通过（不含付费生图）；8 **未完成**：旧版目录与切换指针保留、回滚/恢复程序已写入 runbook，但未执行过完整的生产回滚或备份恢复演练 |
+
+后续未完成 / 未批准，不在本期：原「私有双向同步」被「统一库 + 本地库」取代，不再排期；个人云同步、MOSS 集成、平台迁移均未批准，不列为待办。定时备份见上表。
+
+本文其余部分（§1–§8 正文与代码证据）保持设计原貌；如需修订接口契约请改 `docs/catalog-api.md`（已冻结），运维步骤请改 `deploy/catalog/README.md`。
+
 ## 1. 部署形态
 
 单域名：`/` 为现有静态站（GitHub Actions 发布），管理入口**固定 `/admin/`**：Nginx 将 `/admin/` 映射到现有 current 发布指针所指版本内的 `admin.html`；入口不重定向到固定 SHA，后续发布自动跟随 current，无需每次修改 Nginx。`/admin` 永久重定向到 `/admin/`；该 HTML 响应 `Cache-Control: no-cache`，其引用的 js/css 仍走 `_rel/<sha40>/` 不可变缓存。未登录打开 `/admin/` 只显示登录页（前端路由 + 接口 401 双层）。前台设置菜单可放一个"管理员登录"入口指向 `/admin/`，安全只靠接口鉴权，前端显隐不作边界。
