@@ -361,6 +361,7 @@ const PromptTextareaComponent = {
             menuItems: [],
             activeIndex: 0,
             lastToken: null,
+            menuToken: null,
             searchSeq: 0,
             menuZhMode: false,
             existingTagKeys: []
@@ -522,6 +523,7 @@ const PromptTextareaComponent = {
             this.menuItems = [];
             this.activeIndex = 0;
             this.menuZhMode = false;
+            this.menuToken = null;
         },
 
         scrollActiveItemIntoView() {
@@ -580,6 +582,8 @@ const PromptTextareaComponent = {
                     ? window.TagIndex.searchZh(rawQuery, { limit: 20, artistOnly: token.artistOnly })
                     : window.TagIndex.search(q, { limit: 20, artistOnly: token.artistOnly });
                 this.existingTagKeys = this.collectTagKeys(value);
+                // 记录生成当前菜单的 token 快照，选中时用于判定候选是否过期
+                this.menuToken = token;
                 this.menuItems = (results || []).map(r => ({
                     tag: r.tag,
                     category: r.category,
@@ -598,6 +602,16 @@ const PromptTextareaComponent = {
             }
         },
 
+        // 当前 token 是否仍对应生成菜单时的那个 token（避免用旧候选覆盖别的词）
+        isSelectionTokenUsable(token, snapshot, item) {
+            if (!token || !snapshot) return false;
+            if (token.core !== snapshot.core) return false;
+            if (!!token.artistOnly !== !!snapshot.artistOnly) return false;
+            // 画师/普通互斥：候选分类必须与当前 token 的 @ 语义一致
+            const itemIsArtist = Number(item && item.category) === 1;
+            return itemIsArtist === !!token.artistOnly;
+        },
+
         applySelection(item) {
             if (!item || !item.tag) return;
 
@@ -605,8 +619,15 @@ const PromptTextareaComponent = {
             if (!el) return;
             const value = el.value || '';
 
+            // 不信任缓存的 lastToken：按当前值 + 当前选区重新解析 token
             const pos = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
-            const token = this.lastToken || this.findToken(value, pos);
+            const token = this.findToken(value, pos);
+
+            // 输入/光标已改变导致候选过期时：不改文本，直接关菜单
+            if (!this.isSelectionTokenUsable(token, this.menuToken, item)) {
+                this.closeMenu();
+                return;
+            }
 
             const opts = this.insertOptions || {};
             const shouldKeepAt = !!opts.keepAtPrefix && !!token.artistOnly;

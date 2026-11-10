@@ -264,7 +264,8 @@
       if (seen[idx]) continue;
       const t = state.tags[idx];
       if (!t) continue;
-      if (artistOnly && t.category !== 1) continue;
+      // 画师与普通标签互斥：@ 只出画师，非 @ 一律排除画师（category=1）
+      if (artistOnly ? t.category !== 1 : t.category === 1) continue;
       if (!tagMatchesQuery(t, qWords)) continue;
       seen[idx] = 1;
       out.push(t);
@@ -475,7 +476,8 @@
       const idx = candidates[i];
       const t = state.tags[idx];
       if (!t) continue;
-      if (artistOnly && t.category !== 1) continue;
+      // 同 search：@ 只出画师，非 @ 排除画师
+      if (artistOnly ? t.category !== 1 : t.category === 1) continue;
 
       const zh = state.zhByTag.get(t.key) || '';
       if (!zh) continue;
