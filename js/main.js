@@ -911,11 +911,17 @@ const app = Vue.createApp({
 
             // ========== 结果 ==========
             resultsTab: 'history', // 'history' | 'gallery'
+            rightPanelTab: 'results', // 'results' | 'prompts'
             requestHistory: [],
             selectedHistoryId: '',
             selectedHistoryImageIndex: 0,
             selectedGalleryIndex: 0,
-            historyListDesktopMaxHeight: 0,
+            historyPanelOpen: false,
+            historySearch: '',
+            historyFilter: 'all', // 'all' | 'running' | 'completed' | 'failed' | 'cancelled'
+            // 桌面左右分栏比例（仅当前会话）
+            genSplitRatio: 0.44,
+            isSplitDragging: false,
 
             // ========== 收藏 ==========
             favorites: [],
@@ -1232,14 +1238,48 @@ const app = Vue.createApp({
             return found || this.requestHistory[0];
         },
 
-        historyListDesktopStyle() {
-            const h = Number(this.historyListDesktopMaxHeight || 0);
-            if (!Number.isFinite(h) || h <= 0) {
-                return {};
-            }
-            return {
-                maxHeight: `${Math.max(120, Math.floor(h))}px`
-            };
+        historyFilterOptions() {
+            return [
+                { value: 'all', label: '全部' },
+                { value: 'running', label: '进行中' },
+                { value: 'completed', label: '已完成' },
+                { value: 'failed', label: '失败' },
+                { value: 'cancelled', label: '已取消' }
+            ];
+        },
+
+        filteredHistoryRecords() {
+            const list = Array.isArray(this.requestHistory) ? this.requestHistory : [];
+            const q = String(this.historySearch || '').trim().toLowerCase();
+            const filter = this.historyFilter || 'all';
+
+            return list.filter(record => {
+                if (!record) return false;
+                if (filter !== 'all' && this.historyStatusGroup(record.status) !== filter) return false;
+                if (!q) return true;
+                const name = String(record.templateName || '自定义 Workflow').toLowerCase();
+                const values = record.placeholderValues || {};
+                const prompt = String(values.prompt || '').toLowerCase();
+                const negative = String(values.negative_prompt || '').toLowerCase();
+                return name.includes(q) || prompt.includes(q) || negative.includes(q);
+            });
+        },
+
+        hasActiveHistoryFilters() {
+            return !!String(this.historySearch || '').trim() || (this.historyFilter || 'all') !== 'all';
+        },
+
+        splitRatioPercent() {
+            return Math.round(this.genSplitRatio * 100);
+        },
+
+        splitRatioAriaText() {
+            const left = Math.round(this.genSplitRatio * 100);
+            return `编辑区 ${left}%，结果区 ${100 - left}%`;
+        },
+
+        genLayoutStyle() {
+            return { '--rp-left-col': `${(this.genSplitRatio * 100).toFixed(2)}%` };
         },
 
         selectedHistoryParamsForJson() {
@@ -1583,7 +1623,8 @@ const app = Vue.createApp({
 
         // 全局按键（图片预览）
         window.addEventListener('keydown', this.onGlobalKeydown);
-        window.addEventListener('resize', this.onWindowResize);
+        this._splitViewportHandler = () => this.onSplitViewportResize();
+        window.addEventListener('resize', this._splitViewportHandler);
 
         this._uiNoticeHandler = (event) => {
             const detail = event && event.detail ? event.detail : {};
@@ -1591,8 +1632,7 @@ const app = Vue.createApp({
         };
         window.addEventListener('runpod:ui-notice', this._uiNoticeHandler);
 
-        // 首次渲染后同步桌面历史列表高度
-        this.queueSyncHistoryListDesktopHeight();
+        // 首次渲染后绘制 workflow 图
         this.$nextTick(() => this.queueWorkflowGraphRender());
 
         // 空闲时预加载标签库（含中文词库），避免首次输入时等待
@@ -1601,7 +1641,10 @@ const app = Vue.createApp({
 
     beforeUnmount() {
         window.removeEventListener('keydown', this.onGlobalKeydown);
-        window.removeEventListener('resize', this.onWindowResize);
+        if (this._splitViewportHandler) {
+            window.removeEventListener('resize', this._splitViewportHandler);
+            this._splitViewportHandler = null;
+        }
         if (this._promptCaretHandler) {
             document.removeEventListener('focusin', this._promptCaretHandler);
             document.removeEventListener('keyup', this._promptCaretHandler);
@@ -1614,10 +1657,14 @@ const app = Vue.createApp({
             this._uiNoticeHandler = null;
         }
 
-        if (this._historyListDesktopRaf) {
-            cancelAnimationFrame(this._historyListDesktopRaf);
-            this._historyListDesktopRaf = null;
+        if (this.isSplitDragging) {
+            this.endSplitDrag();
         }
+        // 防御：确保分离器监听不泄漏
+        window.removeEventListener('pointermove', this.onSplitPointerMove);
+        window.removeEventListener('pointerup', this.endSplitDrag);
+        window.removeEventListener('pointercancel', this.endSplitDrag);
+        window.removeEventListener('blur', this.onSplitWindowBlur);
 
         if (this._persistTimer) {
             clearTimeout(this._persistTimer);
@@ -1772,76 +1819,10 @@ const app = Vue.createApp({
             if (!val) {
                 this.settingsForm.maxConcurrent = 1;
             }
-        },
-
-        resultsTab() {
-            this.queueSyncHistoryListDesktopHeight();
-        },
-
-        selectedHistoryId() {
-            this.queueSyncHistoryListDesktopHeight();
-        },
-
-        selectedHistoryImageIndex() {
-            this.queueSyncHistoryListDesktopHeight();
-        },
-
-        requestHistory: {
-            deep: true,
-            handler() {
-                this.queueSyncHistoryListDesktopHeight();
-            }
         }
     },
 
     methods: {
-        // ========== 桌面历史列表高度同步 ==========
-        isDesktopViewport() {
-            if (typeof window === 'undefined') return false;
-            if (window.matchMedia) {
-                return window.matchMedia('(min-width: 992px)').matches;
-            }
-            return window.innerWidth >= 992;
-        },
-
-        onWindowResize() {
-            this.queueSyncHistoryListDesktopHeight();
-        },
-
-        queueSyncHistoryListDesktopHeight() {
-            if (this._historyListDesktopRaf) {
-                cancelAnimationFrame(this._historyListDesktopRaf);
-                this._historyListDesktopRaf = null;
-            }
-
-            this._historyListDesktopRaf = requestAnimationFrame(() => {
-                this._historyListDesktopRaf = null;
-                this.syncHistoryListDesktopHeight();
-            });
-        },
-
-        syncHistoryListDesktopHeight() {
-            if (!this.isDesktopViewport() || this.resultsTab !== 'history') {
-                this.historyListDesktopMaxHeight = 0;
-                return;
-            }
-
-            const rightBody = this.$refs.historyDetailDesktopBody || this.$refs.historyDetailDesktop;
-            if (!rightBody || !rightBody.getBoundingClientRect) {
-                this.historyListDesktopMaxHeight = 0;
-                return;
-            }
-
-            const rect = rightBody.getBoundingClientRect();
-            const h = Math.floor(rect.height || 0);
-            if (h > 0) {
-                this.historyListDesktopMaxHeight = h;
-                return;
-            }
-
-            this.historyListDesktopMaxHeight = 0;
-        },
-
         // ========== 自定义通知 / 确认弹窗 ==========
         getUiNoticeIcon(type) {
             if (type === 'success') return 'bi-check-circle-fill';
@@ -4360,7 +4341,7 @@ const app = Vue.createApp({
 
         getManualRetryTitle(record) {
             const state = this.getManualRetryState(record);
-            return state.ok ? '点击重试轮询' : state.reason;
+            return state.ok ? '点击恢复查询（继续轮询该 Job）' : state.reason;
         },
 
         canManualRetryRecord(record) {
@@ -4749,11 +4730,14 @@ const app = Vue.createApp({
         },
 
         scrollToResults() {
+            this.rightPanelTab = 'results';
             this.mobileResultsOpen = true;
-            const el = document.getElementById('results-section');
-            if (el && el.scrollIntoView) {
-                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
+            this.$nextTick(() => {
+                const el = document.getElementById('results-section');
+                if (el && el.scrollIntoView) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
         },
 
         cancelTaskByHistoryId(historyId) {
@@ -4965,6 +4949,202 @@ const app = Vue.createApp({
             if (status === 'IN_PROGRESS') return 'bg-info';
             if (status === 'IN_QUEUE') return 'bg-secondary';
             return 'bg-secondary';
+        },
+
+        // ========== 工作区面板（结果 / 预设与片段） ==========
+        setRightPanelTab(tab) {
+            if (tab !== 'results' && tab !== 'prompts') return;
+            this.rightPanelTab = tab;
+            if (tab === 'results') {
+                this.mobileResultsOpen = true;
+            }
+        },
+
+        isNarrowLayout() {
+            if (typeof window === 'undefined' || !window.matchMedia) return false;
+            return !window.matchMedia('(min-width: 1200px)').matches;
+        },
+
+        // 提示词标题里的「预设/片段」：切到 prompts，窄屏滚到对应区
+        openPromptSidePanel() {
+            this.rightPanelTab = 'prompts';
+            this.showQuickPromptPanel = true;
+            const narrow = this.isNarrowLayout();
+            this.$nextTick(() => {
+                const el = this.$refs.promptSidePanel;
+                if (narrow && el && el.scrollIntoView) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
+        },
+
+        openResultsPanel() {
+            this.scrollToResults();
+        },
+
+        toggleHistoryPanel() {
+            this.historyPanelOpen = !this.historyPanelOpen;
+        },
+
+        clearHistoryFilters() {
+            this.historySearch = '';
+            this.historyFilter = 'all';
+        },
+
+        // ========== 历史状态显示 ==========
+        historyStatusLabel(status) {
+            const map = {
+                SUBMITTING: '提交中',
+                IN_QUEUE: '排队中',
+                IN_PROGRESS: '运行中',
+                COMPLETED: '已完成',
+                FAILED: '失败',
+                TIMED_OUT: '超时',
+                CANCELLED: '已取消'
+            };
+            return map[status] || (status ? String(status) : '未知');
+        },
+
+        // 筛选分组：提交中/排队/运行归进行中；FAILED/TIMED_OUT 归失败；CANCELLED 单独成组
+        historyStatusGroup(status) {
+            if (status === 'SUBMITTING' || status === 'IN_QUEUE' || status === 'IN_PROGRESS') return 'running';
+            if (status === 'COMPLETED') return 'completed';
+            if (status === 'FAILED' || status === 'TIMED_OUT') return 'failed';
+            if (status === 'CANCELLED') return 'cancelled';
+            return 'other';
+        },
+
+        historyRecordThumb(record) {
+            const images = record && Array.isArray(record.images) ? record.images : [];
+            const first = images[0];
+            return first && first.imageUrl ? first.imageUrl : '';
+        },
+
+        historyRecordThumbIcon(record) {
+            const group = this.historyStatusGroup(record && record.status);
+            if (group === 'running') return 'bi-hourglass-split';
+            if (group === 'failed') return 'bi-exclamation-triangle';
+            return 'bi-image';
+        },
+
+        historyRecordSummary(record) {
+            const values = record && record.placeholderValues ? record.placeholderValues : {};
+            const raw = String(values.prompt || values.negative_prompt || '').replace(/\s+/g, ' ').trim();
+            if (!raw) return '无提示词';
+            return raw.length > 60 ? `${raw.slice(0, 60)}…` : raw;
+        },
+
+        historyEmptyImageText(record) {
+            const status = String(record && record.status || '');
+            if (status === 'SUBMITTING') return '正在提交请求，稍后会显示任务状态';
+            if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') return '任务进行中，完成后会显示图片';
+            if (status === 'FAILED' || status === 'TIMED_OUT') return '本次请求未生成图片';
+            if (status === 'CANCELLED') return '请求已取消，没有图片';
+            if (record && record.deletedImages && record.deletedImages.length) return '图片已删除';
+            return '这条记录没有图片';
+        },
+
+        formatDurationMs(ms) {
+            if (ms === null || ms === undefined || ms === '') return '-';
+            const num = Number(ms);
+            if (!Number.isFinite(num) || num < 0) return '-';
+            if (num < 1000) return `${Math.round(num)}ms`;
+            return `${(num / 1000).toFixed(num < 10000 ? 1 : 0)}s`;
+        },
+
+        // ========== 桌面左右分栏拖动（仅当前会话） ==========
+        getSplitBounds() {
+            const el = this.$refs.genLayout;
+            const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+            const width = rect && rect.width > 0 ? rect.width : 1440;
+            // 与 CSS 保持一致：左栏 340px、右栏 420px、拖动条 12px、两处 8px 间隙
+            const MIN_LEFT_PX = 340;
+            const MIN_RIGHT_PX = 420;
+            const SPLITTER_PX = 12;
+            const GAP_PX = 16;
+            const minPx = Math.min(MIN_LEFT_PX, Math.max(1, width - 1));
+            const maxPx = Math.max(minPx + 1, width - MIN_RIGHT_PX - SPLITTER_PX - GAP_PX);
+            return { width, minPx, maxPx, minRatio: minPx / width, maxRatio: maxPx / width };
+        },
+
+        // 窗口变化后重新夹紧旧比例，避免左右栏小于最小宽度
+        onSplitViewportResize() {
+            // 资源库等隐藏视图下容器宽度为 0，不能拿它回退夹紧，否则比例会被改写
+            if (this.mainView !== 'generate') return;
+            if (typeof window === 'undefined' || !window.matchMedia) return;
+            if (!window.matchMedia('(min-width: 1200px)').matches) return;
+            const el = this.$refs.genLayout;
+            const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+            if (!rect || !rect.width) return;
+            this.setSplitRatio(this.genSplitRatio);
+        },
+
+        setSplitRatio(ratio) {
+            const bounds = this.getSplitBounds();
+            const next = Number.isFinite(Number(ratio)) ? Number(ratio) : 0.44;
+            this.genSplitRatio = Math.max(bounds.minRatio, Math.min(bounds.maxRatio, next));
+        },
+
+        applySplitFromClientX(clientX) {
+            const el = this.$refs.genLayout;
+            if (!el || !el.getBoundingClientRect) return;
+            const rect = el.getBoundingClientRect();
+            if (!rect.width) return;
+            this.setSplitRatio((clientX - rect.left) / rect.width);
+        },
+
+        startSplitDrag(event) {
+            if (event && event.button !== undefined && event.button !== 0) return;
+            this.isSplitDragging = true;
+            document.body.classList.add('rp-split-dragging');
+            const handle = (event && event.currentTarget) || this.$refs.genSplitter;
+            if (handle && handle.focus) handle.focus();
+            window.addEventListener('pointermove', this.onSplitPointerMove, { passive: false });
+            window.addEventListener('pointerup', this.endSplitDrag);
+            window.addEventListener('pointercancel', this.endSplitDrag);
+            window.addEventListener('blur', this.onSplitWindowBlur);
+            if (event && event.preventDefault) event.preventDefault();
+        },
+
+        onSplitWindowBlur() {
+            if (!this.isSplitDragging) return;
+            this.endSplitDrag();
+        },
+
+        onSplitPointerMove(event) {
+            if (!this.isSplitDragging) return;
+            if (event && event.preventDefault) event.preventDefault();
+            this.applySplitFromClientX(event.clientX);
+        },
+
+        endSplitDrag() {
+            this.isSplitDragging = false;
+            window.removeEventListener('pointermove', this.onSplitPointerMove);
+            window.removeEventListener('pointerup', this.endSplitDrag);
+            window.removeEventListener('pointercancel', this.endSplitDrag);
+            window.removeEventListener('blur', this.onSplitWindowBlur);
+            if (typeof document !== 'undefined' && document.body) {
+                document.body.classList.remove('rp-split-dragging');
+            }
+        },
+
+        onSplitKeydown(event) {
+            if (!event) return;
+            const step = event.shiftKey ? 0.05 : 0.02;
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                this.setSplitRatio(this.genSplitRatio - step);
+            } else if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                this.setSplitRatio(this.genSplitRatio + step);
+            } else if (event.key === 'Home') {
+                event.preventDefault();
+                this.resetSplitRatio();
+            }
+        },
+
+        resetSplitRatio() {
+            this.genSplitRatio = 0.44;
         },
 
         selectHistoryRecord(id) {

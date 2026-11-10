@@ -128,7 +128,7 @@
                             <button class="btn btn-outline-light btn-sm" @click="loadCatalogIfNeeded(true)">重试</button>
                         </div>
                         <div v-if="libraryLoading" class="row g-3">
-                            <div v-for="n in 3" :key="n" class="col-12 col-md-6 col-xl-4"><div class="rp-library-skeleton"></div></div>
+                            <div v-for="n in 3" :key="n" class="col-12 col-md-6 col-xl-4 col-xxl-3"><div class="rp-library-skeleton"></div></div>
                         </div>
                         <div v-else-if="libraryItems.length === 0" class="text-muted text-center py-5">
                             <div class="fs-4 mb-2"><i class="bi bi-collection"></i></div>
@@ -137,7 +137,7 @@
                             <div v-else>本地还没有内容，可从统一库复制或导入 JSON</div>
                         </div>
                         <div v-else class="row g-3">
-                            <div v-for="item in libraryItems" :key="librarySource + ':' + item.id" class="col-12 col-md-6 col-xl-4">
+                            <div v-for="item in libraryItems" :key="librarySource + ':' + item.id" class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                 <div class="card bg-dark border-secondary h-100 rp-library-card">
                                     <div class="card-body d-flex flex-column">
                                         <div class="rp-library-preview" v-if="item.preview && !isPreviewBroken(item)">
@@ -173,7 +173,7 @@
                 </div>
             </section>
 
-            <div v-show="mainView === 'generate'" class="rp-gen-layout">
+            <div v-show="mainView === 'generate'" class="rp-gen-layout" ref="genLayout" :style="genLayoutStyle">
             <div class="rp-gen-main">
             <!-- 未配置引导 -->
             <div v-if="!isConfigured" class="rp-onboarding" role="alert">
@@ -339,7 +339,8 @@
                                     <button class="btn btn-outline-secondary btn-sm" @click.stop="togglePromptInputOptions" title="输入选项">
                                         <i class="bi bi-sliders"></i>
                                     </button>
-                                    <button class="btn btn-outline-warning btn-sm" @click.stop="showQuickPromptPanel = !showQuickPromptPanel">
+                                    <button class="btn btn-outline-warning btn-sm" @click.stop="openPromptSidePanel"
+                                            title="打开右栏的预设与片段" aria-controls="prompt-side-panel">
                                         <i class="bi bi-bookmark-star"></i> 预设/片段
                                     </button>
                                     <i class="bi rp-param-chevron" :class="paramSectionsOpen.prompt ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
@@ -731,9 +732,9 @@
                             <span class="text-light small">运行中 / 排队中:</span>
                             <span class="text-light small">{{ activeJobCount }} / {{ queuedJobCount }}</span>
                         </div>
-                        <div v-if="selectedHistoryRecord && selectedHistoryRecord.jobId" class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="text-light small">选中任务 ID:</span>
-                            <code class="text-info small">{{ selectedHistoryRecord.jobId }}</code>
+                        <div v-if="selectedHistoryRecord && selectedHistoryRecord.jobId" class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                            <span class="text-light small flex-shrink-0">选中任务 ID:</span>
+                            <code class="text-info small rp-break text-end">{{ selectedHistoryRecord.jobId }}</code>
                         </div>
                         <div v-if="selectedHistoryRecord && selectedHistoryRecord.delayTime !== null" class="d-flex justify-content-between align-items-center">
                             <span class="text-light small">选中排队时间:</span>
@@ -747,394 +748,449 @@
                 </div>
             </section>
             </div>
+            <div class="rp-gen-splitter" role="separator" aria-orientation="vertical"
+                 aria-label="调整编辑区与工作区宽度" tabindex="0"
+                 aria-valuemin="0" aria-valuemax="100"
+                 :aria-valuenow="splitRatioPercent" :aria-valuetext="splitRatioAriaText"
+                 title="拖动调整宽度；←/→ 微调，Home 复位"
+                 @pointerdown="startSplitDrag" @keydown="onSplitKeydown">
+                <span class="rp-gen-splitter-grip" aria-hidden="true"></span>
+            </div>
             <aside class="rp-gen-side">
-                <div class="card bg-dark border-secondary rp-quick-panel mb-3">
-                    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
-                        <span class="text-light fw-semibold"><i class="bi bi-bookmark-star"></i> 快捷提示词库</span>
-                        <button class="btn btn-outline-light btn-sm" @click="showQuickPromptPanel = !showQuickPromptPanel"><i class="bi" :class="showQuickPromptPanel ? 'bi-chevron-up' : 'bi-chevron-down'"></i></button>
-                    </div>
-                    <div class="card-body" v-show="showQuickPromptPanel">
-                        <div class="btn-group btn-group-sm mb-2">
-                            <button class="btn" :class="quickPromptTab === 'presets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'presets'">预设 {{ promptBlockPresets.length }}</button>
-                            <button class="btn" :class="quickPromptTab === 'snippets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'snippets'">片段 {{ promptSnippetPresets.length }}</button>
+                <div class="rp-side-tabs" role="tablist" aria-label="工作区面板">
+                    <button type="button" class="rp-side-tab" :class="{ active: rightPanelTab === 'results' }"
+                            role="tab" :aria-selected="rightPanelTab === 'results'"
+                            @click="setRightPanelTab('results')">
+                        <i class="bi bi-image"></i> 结果
+                    </button>
+                    <button type="button" class="rp-side-tab" :class="{ active: rightPanelTab === 'prompts' }"
+                            role="tab" :aria-selected="rightPanelTab === 'prompts'"
+                            @click="setRightPanelTab('prompts')">
+                        <i class="bi bi-bookmark-star"></i> 预设与片段
+                    </button>
+                </div>
+
+                <!-- 预设与片段面板 -->
+                <div v-show="rightPanelTab === 'prompts'" class="rp-side-panel" id="prompt-side-panel" ref="promptSidePanel">
+                    <div class="card bg-dark border-secondary rp-quick-panel mb-3">
+                        <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                            <span class="text-light fw-semibold"><i class="bi bi-bookmark-star"></i> 快捷提示词库</span>
+                            <button class="btn btn-outline-light btn-sm" @click="showQuickPromptPanel = !showQuickPromptPanel"><i class="bi" :class="showQuickPromptPanel ? 'bi-chevron-up' : 'bi-chevron-down'"></i></button>
                         </div>
-                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2" v-model="quickPromptSearch" placeholder="搜索">
-                        <div class="rp-quick-list">
-                            <template v-if="quickPromptTab === 'presets'">
-                                <div v-for="p in quickPromptPresets" :key="p.id" class="rp-quick-item">
-                                    <span class="rp-quick-thumb" v-if="p.preview && !isPreviewBroken(p)">
-                                        <img :src="p.preview.url" :alt="p.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(p)">
-                                    </span>
-                                    <span class="rp-quick-thumb rp-quick-thumb-empty" v-else><i class="bi bi-image" aria-hidden="true"></i></span>
-                                    <span class="text-light small text-truncate flex-grow-1 min-w-0">{{ p.name }}</span>
-                                    <button class="btn btn-outline-primary btn-sm" @click="applyBlockPreset(p)">替换提示词</button>
-                                </div>
-                                <div v-if="quickPromptPresets.length === 0" class="text-muted small py-2">暂无预设</div>
-                            </template>
-                            <template v-else>
-                                <div v-for="s in quickPromptSnippets" :key="s.id" class="rp-quick-item">
-                                    <span class="rp-quick-thumb" v-if="s.preview && !isPreviewBroken(s)">
-                                        <img :src="s.preview.url" :alt="s.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(s)">
-                                    </span>
-                                    <span class="rp-quick-thumb rp-quick-thumb-empty" v-else><i class="bi bi-image" aria-hidden="true"></i></span>
-                                    <span class="text-light small text-truncate flex-grow-1 min-w-0">{{ s.name }}</span>
-                                    <button class="btn btn-outline-primary btn-sm" @click="insertSnippetToPrompt(s, s.target === 'negative' ? 'negative_prompt' : 'prompt')">插入片段</button>
-                                </div>
-                                <div v-if="quickPromptSnippets.length === 0" class="text-muted small py-2">暂无片段</div>
-                            </template>
-                        </div>
-                        <div class="d-flex gap-2 mt-2 flex-wrap">
-                            <button class="btn btn-outline-warning btn-sm" @click="openPromptPresets"><i class="bi bi-gear"></i> 管理预设/片段</button>
-                            <button v-if="promptUndo" class="btn btn-outline-light btn-sm" @click="undoPromptApply"><i class="bi bi-arrow-counterclockwise"></i> 撤销上次应用</button>
+                        <div class="card-body" v-show="showQuickPromptPanel">
+                            <div class="btn-group btn-group-sm mb-2">
+                                <button class="btn" :class="quickPromptTab === 'presets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'presets'">预设 {{ promptBlockPresets.length }}</button>
+                                <button class="btn" :class="quickPromptTab === 'snippets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'snippets'">片段 {{ promptSnippetPresets.length }}</button>
+                            </div>
+                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2" v-model="quickPromptSearch" placeholder="搜索">
+                            <div class="rp-quick-list">
+                                <template v-if="quickPromptTab === 'presets'">
+                                    <div v-for="p in quickPromptPresets" :key="p.id" class="rp-quick-item">
+                                        <span class="rp-quick-thumb" v-if="p.preview && !isPreviewBroken(p)">
+                                            <img :src="p.preview.url" :alt="p.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(p)">
+                                        </span>
+                                        <span class="rp-quick-thumb rp-quick-thumb-empty" v-else><i class="bi bi-image" aria-hidden="true"></i></span>
+                                        <span class="text-light small text-truncate flex-grow-1 min-w-0">{{ p.name }}</span>
+                                        <button class="btn btn-outline-primary btn-sm" @click="applyBlockPreset(p)">替换提示词</button>
+                                    </div>
+                                    <div v-if="quickPromptPresets.length === 0" class="text-muted small py-2">暂无预设</div>
+                                </template>
+                                <template v-else>
+                                    <div v-for="s in quickPromptSnippets" :key="s.id" class="rp-quick-item">
+                                        <span class="rp-quick-thumb" v-if="s.preview && !isPreviewBroken(s)">
+                                            <img :src="s.preview.url" :alt="s.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(s)">
+                                        </span>
+                                        <span class="rp-quick-thumb rp-quick-thumb-empty" v-else><i class="bi bi-image" aria-hidden="true"></i></span>
+                                        <span class="text-light small text-truncate flex-grow-1 min-w-0">{{ s.name }}</span>
+                                        <button class="btn btn-outline-primary btn-sm" @click="insertSnippetToPrompt(s, s.target === 'negative' ? 'negative_prompt' : 'prompt')">插入片段</button>
+                                    </div>
+                                    <div v-if="quickPromptSnippets.length === 0" class="text-muted small py-2">暂无片段</div>
+                                </template>
+                            </div>
+                            <div class="d-flex gap-2 mt-2 flex-wrap">
+                                <button class="btn btn-outline-warning btn-sm" @click="openPromptPresets"><i class="bi bi-gear"></i> 管理预设/片段</button>
+                                <button v-if="promptUndo" class="btn btn-outline-light btn-sm" @click="undoPromptApply"><i class="bi bi-arrow-counterclockwise"></i> 撤销上次应用</button>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-            <!-- 结果展示（请求历史 / 图库） -->
-            <section v-if="hasResultsSection" class="mb-4 rp-gen-results" :class="{ 'rp-mobile-open': mobileResultsOpen }" id="results-section">
-                <div class="card bg-dark border-secondary">
-                    <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
-                        <h5 class="mb-0 text-light">
-                            <i class="bi bi-image"></i> 生成结果
-                        </h5>
-                        <div class="text-muted small">
-                            {{ requestHistory.length }} 次请求 · {{ galleryImages.length }} 张图片
-                        </div>
+                <!-- 结果面板（请求历史 / 图库） -->
+                <div v-show="rightPanelTab === 'results'" class="rp-side-panel">
+                    <div v-if="!mobileResultsOpen" class="rp-mobile-results-hint">
+                        <div class="small text-muted mb-2">结果区在手机上默认收起，展开后可查看主图与历史。</div>
+                        <button type="button" class="btn btn-outline-light btn-sm" @click="openResultsPanel">
+                            <i class="bi bi-images"></i> 查看生成结果
+                        </button>
                     </div>
-                    <div class="card-body">
-                        <ul class="nav nav-tabs rp-tabs mb-3">
-                            <li class="nav-item">
-                                <a class="nav-link" href="#" :class="{ active: resultsTab === 'history' }" @click.prevent="resultsTab = 'history'">
-                                    请求历史
-                                    <span class="badge bg-secondary ms-1">{{ requestHistory.length }}</span>
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link" href="#" :class="{ active: resultsTab === 'gallery' }" @click.prevent="resultsTab = 'gallery'">
-                                    图库
-                                    <span class="badge bg-secondary ms-1">{{ galleryImages.length }}</span>
-                                </a>
-                            </li>
-                        </ul>
-
-                        <!-- 请求历史 -->
-                        <div v-show="resultsTab === 'history'">
-                            <div class="row g-3 rp-history-desktop-row">
-                                <!-- 手机：下拉 + 折叠列表 -->
-                                <div class="col-12 d-lg-none">
-                                    <div class="d-flex justify-content-between align-items-end gap-2">
-                                        <div class="flex-grow-1 min-w-0">
-                                            <label class="form-label text-light small mb-1">当前请求</label>
-                                            <select class="form-select bg-dark text-light border-secondary"
-                                                    v-model="selectedHistoryId"
-                                                    @change="selectHistoryRecord(selectedHistoryId)">
-                                                <option v-for="item in requestHistory" :key="item.id" :value="item.id">
-                                                    {{ formatDateTimeShort(item.createdAt) }} · {{ item.status }} · {{ item.templateName || '自定义 Workflow' }}
-                                                </option>
-                                            </select>
-                                        </div>
-                                        <button class="btn btn-outline-light btn-sm" @click="resultsTab = 'gallery'" title="打开图库">
-                                            <i class="bi bi-grid-3x3-gap"></i>
-                                        </button>
-                                    </div>
-
-                                    <details class="rp-details-block mt-2">
-                                        <summary class="text-light small">查看全部请求（{{ requestHistory.length }}）</summary>
-                                        <div class="list-group rp-list mt-2">
-                                            <button v-for="item in requestHistory" :key="item.id"
-                                                    type="button"
-                                                    class="list-group-item list-group-item-action bg-dark text-light border-secondary"
-                                                    :class="{ active: selectedHistoryRecord && selectedHistoryRecord.id === item.id }"
-                                                    @click="selectHistoryRecord(item.id)">
-                                                <div class="d-flex justify-content-between align-items-center gap-2">
-                                                    <div class="fw-semibold text-truncate min-w-0">
-                                                        {{ item.templateName || '自定义 Workflow' }}
-                                                    </div>
-                                                    <span class="badge"
-                                                          :class="[getStatusBadgeClass(item.status), { 'rp-status-retryable': canManualRetryRecord(item) }]"
-                                                          :title="getManualRetryTitle(item)"
-                                                          @click.stop="onHistoryStatusClick(item)">{{ item.status }}</span>
-                                                </div>
-
-                                                <div class="small rp-history-meta mt-1">
-                                                    <i class="bi bi-clock"></i> {{ formatDateTimeShort(item.createdAt) }}
-                                                    <span v-if="item.images && item.images.length"> · {{ item.images.length }} 张</span>
-                                                    <span v-if="item.deletedImages && item.deletedImages.length"> · 已删 {{ item.deletedImages.length }}</span>
-                                                </div>
-                                                <div class="small text-muted" v-if="item.jobId">Job: {{ item.jobId }}</div>
-                                                <div class="small text-danger" v-if="item.errorMessage">{{ item.errorMessage }}</div>
-                                            </button>
-                                        </div>
-                                    </details>
+                    <section class="mb-4 rp-gen-results" :class="{ 'rp-mobile-open': mobileResultsOpen }" id="results-section">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                <h5 class="mb-0 text-light">
+                                    <i class="bi bi-image"></i> 生成结果
+                                </h5>
+                                <div class="text-muted small">
+                                    {{ requestHistory.length }} 次请求 · {{ galleryImages.length }} 张图片
                                 </div>
+                            </div>
+                            <div class="card-body">
+                                <ul class="nav nav-tabs rp-tabs mb-3">
+                                    <li class="nav-item">
+                                        <a class="nav-link" href="#" :class="{ active: resultsTab === 'history' }" @click.prevent="resultsTab = 'history'">
+                                            请求历史
+                                            <span class="badge bg-secondary ms-1">{{ requestHistory.length }}</span>
+                                        </a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a class="nav-link" href="#" :class="{ active: resultsTab === 'gallery' }" @click.prevent="resultsTab = 'gallery'">
+                                            图库
+                                            <span class="badge bg-secondary ms-1">{{ galleryImages.length }}</span>
+                                        </a>
+                                    </li>
+                                </ul>
 
-                                <!-- 桌面：常驻列表 -->
-                                <div class="col-lg-4 d-none d-lg-block rp-history-desktop-col">
-                                    <div class="list-group rp-list rp-history-list-desktop"
-                                         ref="historyListDesktop"
-                                         :style="historyListDesktopStyle">
-                                        <button v-for="item in requestHistory" :key="item.id"
-                                                type="button"
-                                                class="list-group-item list-group-item-action bg-dark text-light border-secondary"
-                                                :class="{ active: selectedHistoryRecord && selectedHistoryRecord.id === item.id }"
-                                                @click="selectHistoryRecord(item.id)">
-                                            <div class="d-flex justify-content-between align-items-center gap-2">
-                                                <div class="fw-semibold text-truncate min-w-0">
-                                                    {{ item.templateName || '自定义 Workflow' }}
-                                                </div>
-                                                <span class="badge"
-                                                      :class="[getStatusBadgeClass(item.status), { 'rp-status-retryable': canManualRetryRecord(item) }]"
-                                                      :title="getManualRetryTitle(item)"
-                                                      @click.stop="onHistoryStatusClick(item)">{{ item.status }}</span>
-                                            </div>
-
-                                            <div class="small rp-history-meta mt-1">
-                                                <i class="bi bi-clock"></i> {{ formatDateTimeShort(item.createdAt) }}
-                                                <span v-if="item.images && item.images.length"> · {{ item.images.length }} 张</span>
-                                                <span v-if="item.deletedImages && item.deletedImages.length"> · 已删 {{ item.deletedImages.length }}</span>
-                                            </div>
-                                            <div class="small text-muted" v-if="item.jobId">Job: {{ item.jobId }}</div>
-                                            <div class="small text-danger" v-if="item.errorMessage">{{ item.errorMessage }}</div>
-                                        </button>
+                                <!-- 请求历史 -->
+                                <div v-show="resultsTab === 'history'">
+                                    <div v-if="!hasResultsSection" class="rp-results-empty">
+                                        <i class="bi bi-image" aria-hidden="true"></i>
+                                        <div>还没有生成结果</div>
+                                        <div class="small mt-1">生成后可在这里查看主图、参数与历史记录</div>
                                     </div>
-                                </div>
+                                    <template v-else>
+                                        <!-- 当前请求 + 历史入口 -->
+                                        <div class="rp-history-toolbar">
+                                            <div class="rp-history-current">
+                                                <label class="form-label text-light small mb-1" for="history-current-select">当前请求</label>
+                                                <select id="history-current-select"
+                                                        class="form-select form-select-sm bg-dark text-light border-secondary"
+                                                        v-model="selectedHistoryId"
+                                                        @change="selectHistoryRecord(selectedHistoryId)">
+                                                    <option v-for="item in requestHistory" :key="item.id" :value="item.id">
+                                                        {{ formatDateTimeShort(item.createdAt) }} · {{ historyStatusLabel(item.status) }} · {{ item.templateName || '自定义 Workflow' }}
+                                                    </option>
+                                                </select>
+                                            </div>
+                                            <div class="rp-history-toolbar-actions">
+                                                <button type="button" class="btn btn-outline-light btn-sm"
+                                                        :aria-expanded="historyPanelOpen ? 'true' : 'false'"
+                                                        @click="toggleHistoryPanel">
+                                                    <i class="bi bi-clock-history"></i>
+                                                    {{ historyPanelOpen ? '收起历史' : '查看历史' }}（{{ requestHistory.length }}）
+                                                </button>
+                                            </div>
+                                        </div>
 
-                                <div class="col-lg-8" ref="historyDetailDesktop">
-                                    <div ref="historyDetailDesktopBody">
-                                    <div v-if="selectedHistoryRecord" class="card bg-dark border-secondary">
-                                        <div class="card-body">
-                                            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-                                                <div class="min-w-0">
-                                                    <div class="d-flex align-items-center gap-2 flex-wrap">
-                                                        <div class="h6 text-light mb-0 text-truncate" style="max-width: 60vw;">
-                                                            {{ selectedHistoryRecord.templateName || '自定义 Workflow' }}
+                                        <!-- 历史局部面板 -->
+                                        <div v-show="historyPanelOpen" class="rp-history-panel">
+                                            <div class="rp-history-panel-filters">
+                                                <div class="input-group input-group-sm">
+                                                    <span class="input-group-text bg-dark text-light border-secondary"><i class="bi bi-search"></i></span>
+                                                    <input type="search" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                           v-model="historySearch"
+                                                           placeholder="搜索模板名 / 正向 / 负向提示词"
+                                                           aria-label="搜索历史记录">
+                                                </div>
+                                                <div class="d-flex flex-wrap gap-1" role="group" aria-label="按状态筛选">
+                                                    <button v-for="f in historyFilterOptions" :key="f.value" type="button"
+                                                            class="btn btn-sm"
+                                                            :class="historyFilter === f.value ? 'btn-primary' : 'btn-outline-secondary'"
+                                                            @click="historyFilter = f.value">{{ f.label }}</button>
+                                                </div>
+                                                <div class="d-flex justify-content-between align-items-center gap-2 small text-muted">
+                                                    <span>显示 {{ filteredHistoryRecords.length }} / {{ requestHistory.length }}</span>
+                                                    <button v-if="hasActiveHistoryFilters" type="button" class="btn btn-link btn-sm p-0" @click="clearHistoryFilters">清除筛选</button>
+                                                </div>
+                                            </div>
+                                            <div class="rp-history-panel-list">
+                                                <button v-for="item in filteredHistoryRecords" :key="item.id"
+                                                        type="button"
+                                                        class="rp-history-row"
+                                                        :class="{ 'is-active': selectedHistoryRecord && selectedHistoryRecord.id === item.id }"
+                                                        @click="selectHistoryRecord(item.id)">
+                                                    <span class="rp-history-row-thumb">
+                                                        <img v-if="historyRecordThumb(item)" :src="historyRecordThumb(item)" alt="" loading="lazy" decoding="async">
+                                                        <i v-else class="bi" :class="historyRecordThumbIcon(item)" aria-hidden="true"></i>
+                                                    </span>
+                                                    <span class="rp-history-row-main">
+                                                        <span class="rp-history-row-title">{{ item.templateName || '自定义 Workflow' }}</span>
+                                                        <span class="rp-history-row-prompt">{{ historyRecordSummary(item) }}</span>
+                                                        <span class="rp-history-row-meta">
+                                                            {{ formatDateTimeShort(item.createdAt) }}
+                                                            <span class="badge ms-1 rp-history-status" :class="getStatusBadgeClass(item.status)">{{ historyStatusLabel(item.status) }}</span>
+                                                            <span v-if="(item.images || []).length"> · {{ item.images.length }} 张</span>
+                                                            <span v-else-if="item.deletedImages && item.deletedImages.length"> · 已删 {{ item.deletedImages.length }}</span>
+                                                        </span>
+                                                    </span>
+                                                </button>
+                                                <div v-if="filteredHistoryRecords.length === 0" class="rp-history-empty">
+                                                    <div>没有匹配的请求</div>
+                                                    <button type="button" class="btn btn-outline-light btn-sm mt-2" @click="clearHistoryFilters">清除筛选</button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- 结果详情 -->
+                                        <div v-if="selectedHistoryRecord" class="card bg-dark border-secondary rp-result-detail">
+                                            <div class="card-body">
+                                                <div class="rp-result-head">
+                                                    <div class="min-w-0">
+                                                        <div class="rp-result-title">{{ selectedHistoryRecord.templateName || '自定义 Workflow' }}</div>
+                                                        <div class="small text-muted mt-1">
+                                                            {{ formatDateTime(selectedHistoryRecord.createdAt) }}
+                                                            <span class="badge ms-1" :class="getStatusBadgeClass(selectedHistoryRecord.status)">{{ historyStatusLabel(selectedHistoryRecord.status) }}</span>
                                                         </div>
-                                                        <span class="badge"
-                                                              :class="[getStatusBadgeClass(selectedHistoryRecord.status), { 'rp-status-retryable': canManualRetryRecord(selectedHistoryRecord) }]"
-                                                              :title="getManualRetryTitle(selectedHistoryRecord)"
-                                                              @click="onHistoryStatusClick(selectedHistoryRecord)">
-                                                            {{ selectedHistoryRecord.status }}
+                                                    </div>
+                                                    <div class="rp-result-actions">
+                                                        <button type="button" class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(selectedHistoryRecord)">
+                                                            <i class="bi bi-arrow-up"></i> 应用参数
+                                                        </button>
+                                                        <button v-if="canCancelSelected" type="button" class="btn btn-outline-warning btn-sm"
+                                                                @click="cancelGeneration" title="取消当前选中的运行/排队任务">
+                                                            <i class="bi bi-x-circle"></i> 取消
+                                                        </button>
+                                                        <button type="button" class="btn btn-outline-light btn-sm"
+                                                                @click="onHistoryStatusClick(selectedHistoryRecord)"
+                                                                :disabled="!canManualRetryRecord(selectedHistoryRecord)"
+                                                                :title="getManualRetryTitle(selectedHistoryRecord)">
+                                                            <i class="bi bi-arrow-repeat"></i> 恢复查询
+                                                        </button>
+                                                        <button type="button" class="btn btn-outline-light btn-sm" @click="resultsTab = 'gallery'">
+                                                            <i class="bi bi-grid-3x3-gap"></i> 图库
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                <div v-if="selectedHistoryRecord.errorMessage" class="alert alert-danger py-2 mt-3 mb-0 rp-break small">
+                                                    <i class="bi bi-exclamation-triangle-fill"></i> {{ selectedHistoryRecord.errorMessage }}
+                                                </div>
+
+                                                <!-- 主图 + 缩略图条 -->
+                                                <div v-if="selectedHistoryImage" class="mt-3">
+                                                    <div class="rp-history-main border border-secondary rounded overflow-hidden position-relative"
+                                                         @click="openPreviewFromHistory(selectedHistoryRecord.id, selectedHistoryImageIndex)">
+                                                        <img :src="selectedHistoryImage.imageUrl" class="w-100 rp-history-main-img" alt="">
+
+                                                        <div class="rp-image-actions position-absolute top-0 end-0 m-2 d-flex gap-2">
+                                                            <button class="btn btn-dark btn-sm border border-secondary" @click.stop="toggleFavorite(selectedHistoryImage)"
+                                                                    :title="isFavorited(selectedHistoryImage.id) ? '取消收藏' : '收藏'">
+                                                                <i class="bi" :class="isFavorited(selectedHistoryImage.id) ? 'bi-star-fill text-warning' : 'bi-star text-warning'"></i>
+                                                            </button>
+                                                            <button class="btn btn-dark btn-sm border border-secondary" @click.stop="downloadImage(selectedHistoryImage)" title="下载/打开">
+                                                                <i class="bi bi-download"></i>
+                                                            </button>
+                                                            <button class="btn btn-dark btn-sm border border-secondary" @click.stop="deleteImage(selectedHistoryImage, { recordId: selectedHistoryRecord.id })" title="删除">
+                                                                <i class="bi bi-trash"></i>
+                                                            </button>
+                                                        </div>
+
+                                                        <button class="rp-history-nav rp-history-prev" type="button"
+                                                                @click.stop="historyPrevImage"
+                                                                :disabled="selectedHistoryImageIndex <= 0" aria-label="Previous image">
+                                                            <i class="bi bi-chevron-left"></i>
+                                                        </button>
+                                                        <button class="rp-history-nav rp-history-next" type="button"
+                                                                @click.stop="historyNextImage"
+                                                                :disabled="selectedHistoryImageIndex >= selectedHistoryImages.length - 1" aria-label="Next image">
+                                                            <i class="bi bi-chevron-right"></i>
+                                                        </button>
+
+                                                        <span class="badge bg-dark border border-secondary position-absolute bottom-0 end-0 m-2">
+                                                            {{ selectedHistoryImageIndex + 1 }} / {{ selectedHistoryImages.length }}
                                                         </span>
                                                     </div>
-                                                    <div class="small text-muted mt-1">
-                                                        {{ formatDateTime(selectedHistoryRecord.createdAt) }}
-                                                        <span v-if="selectedHistoryRecord.jobId"> · Job: {{ selectedHistoryRecord.jobId }}</span>
-                                                    </div>
-                                                    <div class="small text-danger mt-1" v-if="selectedHistoryRecord.errorMessage">
-                                                        {{ selectedHistoryRecord.errorMessage }}
+
+                                                    <div class="rp-thumb-strip mt-2 d-flex gap-2 overflow-auto pb-1" v-if="selectedHistoryImages.length > 1">
+                                                        <div v-for="(img, idx) in selectedHistoryImages" :key="img.id"
+                                                             class="rp-thumb-mini border border-secondary rounded overflow-hidden"
+                                                             :class="{ 'rp-thumb-mini-active': idx === selectedHistoryImageIndex }"
+                                                             @click.stop="setHistoryImageIndex(idx)">
+                                                            <img :src="img.imageUrl" alt="" style="width: 96px; height: 72px; object-fit: cover;">
+                                                        </div>
                                                     </div>
                                                 </div>
-
-                                                <div class="d-flex gap-2 flex-wrap">
-                                                    <button class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(selectedHistoryRecord)">
-                                                        <i class="bi bi-arrow-up"></i> 应用参数
-                                                    </button>
-                                                    <button class="btn btn-outline-light btn-sm" @click="resultsTab = 'gallery'">
-                                                        <i class="bi bi-grid-3x3-gap"></i> 打开图库
-                                                    </button>
+                                                <div v-else class="rp-history-noimage mt-3">
+                                                    <i class="bi" :class="historyRecordThumbIcon(selectedHistoryRecord)" aria-hidden="true"></i>
+                                                    <div>{{ historyEmptyImageText(selectedHistoryRecord) }}</div>
                                                 </div>
-                                            </div>
 
-                                            <!-- 主图预览 + 缩略图条 -->
-                                            <div v-if="selectedHistoryImage" class="mt-3">
-                                                 <div class="rp-history-main border border-secondary rounded overflow-hidden position-relative"
-                                                      @click="openPreviewFromHistory(selectedHistoryRecord.id, selectedHistoryImageIndex)">
-                                                     <img :src="selectedHistoryImage.imageUrl" class="w-100 rp-history-main-img" alt=""
-                                                          @load="queueSyncHistoryListDesktopHeight"
-                                                          @error="queueSyncHistoryListDesktopHeight">
-
-                                                     <div class="rp-image-actions position-absolute top-0 end-0 m-2 d-flex gap-2">
-                                                         <button class="btn btn-dark btn-sm border border-secondary" @click.stop="toggleFavorite(selectedHistoryImage)"
-                                                                 :title="isFavorited(selectedHistoryImage.id) ? '取消收藏' : '收藏'">
-                                                             <i class="bi" :class="isFavorited(selectedHistoryImage.id) ? 'bi-star-fill text-warning' : 'bi-star text-warning'"></i>
-                                                         </button>
-                                                         <button class="btn btn-dark btn-sm border border-secondary" @click.stop="downloadImage(selectedHistoryImage)" title="下载/打开">
-                                                             <i class="bi bi-download"></i>
-                                                         </button>
-                                                         <button class="btn btn-dark btn-sm border border-secondary" @click.stop="deleteImage(selectedHistoryImage, { recordId: selectedHistoryRecord.id })" title="删除">
-                                                             <i class="bi bi-trash"></i>
-                                                         </button>
-                                                     </div>
-
-                                                     <button class="rp-history-nav rp-history-prev" type="button"
-                                                             @click.stop="historyPrevImage"
-                                                             :disabled="selectedHistoryImageIndex <= 0" aria-label="Previous image">
-                                                         <i class="bi bi-chevron-left"></i>
-                                                     </button>
-                                                    <button class="rp-history-nav rp-history-next" type="button"
-                                                            @click.stop="historyNextImage"
-                                                            :disabled="selectedHistoryImageIndex >= selectedHistoryImages.length - 1" aria-label="Next image">
-                                                        <i class="bi bi-chevron-right"></i>
-                                                    </button>
-
-                                                    <span class="badge bg-dark border border-secondary position-absolute bottom-0 end-0 m-2">
-                                                        {{ selectedHistoryImageIndex + 1 }} / {{ selectedHistoryImages.length }}
+                                                <!-- 常用参数 -->
+                                                <div class="rp-result-stats mt-2">
+                                                    <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.width && selectedHistoryRecord.placeholderValues.height">
+                                                        <span class="rp-stat-label">尺寸</span>
+                                                        <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.width }}×{{ selectedHistoryRecord.placeholderValues.height }}</span>
+                                                    </span>
+                                                    <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.seed !== undefined">
+                                                        <span class="rp-stat-label">Seed</span>
+                                                        <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.seed }}</span>
+                                                    </span>
+                                                    <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.steps !== undefined">
+                                                        <span class="rp-stat-label">Steps</span>
+                                                        <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.steps }}</span>
+                                                    </span>
+                                                    <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.cfg !== undefined">
+                                                        <span class="rp-stat-label">CFG</span>
+                                                        <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.cfg }}</span>
+                                                    </span>
+                                                    <span class="rp-stat" v-if="selectedHistoryRecord.executionTime !== null && selectedHistoryRecord.executionTime !== undefined">
+                                                        <span class="rp-stat-label">耗时</span>
+                                                        <span class="rp-stat-value">{{ formatDurationMs(selectedHistoryRecord.executionTime) }}</span>
                                                     </span>
                                                 </div>
 
-                                                <div class="rp-thumb-strip mt-2 d-flex gap-2 overflow-auto pb-1" v-if="selectedHistoryImages.length > 1">
-                                                    <div v-for="(img, idx) in selectedHistoryImages" :key="img.id"
-                                                         class="rp-thumb-mini border border-secondary rounded overflow-hidden"
-                                                         :class="{ 'rp-thumb-mini-active': idx === selectedHistoryImageIndex }"
-                                                         @click.stop="setHistoryImageIndex(idx)">
-                                                        <img :src="img.imageUrl" alt="" style="width: 96px; height: 72px; object-fit: cover;">
+                                                <!-- 提示词（可折叠、可复制） -->
+                                                <details class="rp-details-block rp-detail-section mt-3"
+                                                         v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.prompt">
+                                                    <summary class="text-light small"><i class="bi bi-chat-left-text"></i> 正向提示词</summary>
+                                                    <div class="mt-2">
+                                                        <div class="d-flex justify-content-end mb-1">
+                                                            <button class="btn btn-outline-success btn-sm" type="button"
+                                                                    @click="copyText(selectedHistoryRecord.placeholderValues.prompt, 'Prompt')" title="复制正向提示词">
+                                                                <i class="bi bi-clipboard"></i> 复制
+                                                            </button>
+                                                        </div>
+                                                        <pre class="rp-prompt-box small mb-0">{{ selectedHistoryRecord.placeholderValues.prompt }}</pre>
                                                     </div>
-                                                </div>
+                                                </details>
+
+                                                <details class="rp-details-block rp-detail-section mt-2"
+                                                         v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.negative_prompt">
+                                                    <summary class="text-light small"><i class="bi bi-slash-circle"></i> 负向提示词</summary>
+                                                    <div class="mt-2">
+                                                        <div class="d-flex justify-content-end mb-1">
+                                                            <button class="btn btn-outline-danger btn-sm" type="button"
+                                                                    @click="copyText(selectedHistoryRecord.placeholderValues.negative_prompt, 'Negative Prompt')" title="复制负向提示词">
+                                                                <i class="bi bi-clipboard"></i> 复制
+                                                            </button>
+                                                        </div>
+                                                        <pre class="rp-prompt-box rp-prompt-box-negative small mb-0">{{ selectedHistoryRecord.placeholderValues.negative_prompt }}</pre>
+                                                    </div>
+                                                </details>
+
+                                                <!-- 低频技术信息 -->
+                                                <details class="rp-details-block rp-detail-section mt-3">
+                                                    <summary class="text-light small"><i class="bi bi-info-circle"></i> 任务详情</summary>
+                                                    <div class="mt-2">
+                                                        <dl class="rp-detail-kv">
+                                                            <div class="rp-detail-row">
+                                                                <dt>Job ID</dt>
+                                                                <dd>
+                                                                    <code class="rp-break">{{ selectedHistoryRecord.jobId || '-' }}</code>
+                                                                    <button v-if="selectedHistoryRecord.jobId" type="button"
+                                                                            class="btn btn-outline-light btn-sm ms-2"
+                                                                            @click="copyText(selectedHistoryRecord.jobId, 'Job ID')" title="复制 Job ID">
+                                                                        <i class="bi bi-clipboard"></i>
+                                                                    </button>
+                                                                </dd>
+                                                            </div>
+                                                            <div class="rp-detail-row">
+                                                                <dt>运行模式</dt>
+                                                                <dd>{{ selectedHistoryRecord.runMode || '-' }}</dd>
+                                                            </div>
+                                                            <div class="rp-detail-row">
+                                                                <dt>Endpoint</dt>
+                                                                <dd class="rp-break">{{ selectedHistoryRecord.endpointId || '-' }}</dd>
+                                                            </div>
+                                                            <div class="rp-detail-row">
+                                                                <dt>排队时间</dt>
+                                                                <dd>{{ selectedHistoryRecord.delayTime !== null && selectedHistoryRecord.delayTime !== undefined ? formatDurationMs(selectedHistoryRecord.delayTime) : '-' }}</dd>
+                                                            </div>
+                                                            <div class="rp-detail-row">
+                                                                <dt>执行时间</dt>
+                                                                <dd>{{ selectedHistoryRecord.executionTime !== null && selectedHistoryRecord.executionTime !== undefined ? formatDurationMs(selectedHistoryRecord.executionTime) : '-' }}</dd>
+                                                            </div>
+                                                            <div class="rp-detail-row">
+                                                                <dt>请求大小</dt>
+                                                                <dd>{{ formatBytes(selectedHistoryRecord.payloadSize) }}</dd>
+                                                            </div>
+                                                            <div class="rp-detail-row">
+                                                                <dt>图片数</dt>
+                                                                <dd>{{ (selectedHistoryRecord.images || []).length }}</dd>
+                                                            </div>
+                                                            <div class="rp-detail-row" v-if="selectedHistoryRecord.deletedImages && selectedHistoryRecord.deletedImages.length">
+                                                                <dt>已删图片</dt>
+                                                                <dd>{{ selectedHistoryRecord.deletedImages.length }}</dd>
+                                                            </div>
+                                                        </dl>
+
+                                                        <details class="rp-details-block mt-3" v-if="selectedHistoryRecord.placeholderValues">
+                                                            <summary class="text-light small">生成参数 JSON（不含 Prompt）</summary>
+                                                            <pre class="mt-2 mb-0 small">{{ JSON.stringify(selectedHistoryParamsForJson, null, 2) }}</pre>
+                                                        </details>
+
+                                                        <details class="rp-details-block mt-3" v-if="selectedHistoryRecord.deletedImages && selectedHistoryRecord.deletedImages.length">
+                                                            <summary class="text-light small">已删除图片（{{ selectedHistoryRecord.deletedImages.length }}）</summary>
+                                                            <div class="mt-2 small">
+                                                                <div v-for="d in selectedHistoryRecord.deletedImages" :key="d.id" class="text-muted">
+                                                                    {{ d.filename || d.id }} · {{ formatDateTime(d.deletedAt) }}
+                                                                </div>
+                                                            </div>
+                                                        </details>
+                                                    </div>
+                                                </details>
                                             </div>
-
-                                            <!-- 元信息 -->
-                                            <div class="rp-kv-grid mt-3">
-                                                <div class="rp-kv">
-                                                    <div class="small text-muted">运行模式</div>
-                                                    <div class="text-light small">{{ selectedHistoryRecord.runMode || '-' }}</div>
-                                                </div>
-                                                <div class="rp-kv">
-                                                    <div class="small text-muted">Endpoint</div>
-                                                    <div class="text-light small text-truncate">{{ selectedHistoryRecord.endpointId || '-' }}</div>
-                                                </div>
-                                                <div class="rp-kv">
-                                                    <div class="small text-muted">排队时间</div>
-                                                    <div class="text-light small">{{ selectedHistoryRecord.delayTime !== null ? selectedHistoryRecord.delayTime + 'ms' : '-' }}</div>
-                                                </div>
-                                                <div class="rp-kv">
-                                                    <div class="small text-muted">执行时间</div>
-                                                    <div class="text-light small">{{ selectedHistoryRecord.executionTime !== null ? selectedHistoryRecord.executionTime + 'ms' : '-' }}</div>
-                                                </div>
-                                                 <div class="rp-kv">
-                                                     <div class="small text-muted">图片数</div>
-                                                     <div class="text-light small">{{ (selectedHistoryRecord.images || []).length }}</div>
-                                                 </div>
-                                                 <div class="rp-kv" v-if="selectedHistoryRecord.deletedImages && selectedHistoryRecord.deletedImages.length">
-                                                     <div class="small text-muted">已删图片</div>
-                                                     <div class="text-light small">{{ selectedHistoryRecord.deletedImages.length }}</div>
-                                                 </div>
-                                                 <div class="rp-kv">
-                                                     <div class="small text-muted">请求大小</div>
-                                                     <div class="text-light small">{{ formatBytes(selectedHistoryRecord.payloadSize) }}</div>
-                                                 </div>
-                                            </div>
-
-                                            <!-- 参数摘要 -->
-                                            <div v-if="selectedHistoryRecord.placeholderValues" class="mt-3">
-                                                <div class="d-flex flex-wrap gap-2">
-                                                    <span v-if="selectedHistoryRecord.placeholderValues.width && selectedHistoryRecord.placeholderValues.height" class="badge bg-secondary">
-                                                        尺寸 {{ selectedHistoryRecord.placeholderValues.width }}x{{ selectedHistoryRecord.placeholderValues.height }}
-                                                    </span>
-                                                    <span v-if="selectedHistoryRecord.placeholderValues.seed !== undefined" class="badge bg-secondary">Seed {{ selectedHistoryRecord.placeholderValues.seed }}</span>
-                                                    <span v-if="selectedHistoryRecord.placeholderValues.steps !== undefined" class="badge bg-secondary">Steps {{ selectedHistoryRecord.placeholderValues.steps }}</span>
-                                                    <span v-if="selectedHistoryRecord.placeholderValues.cfg !== undefined" class="badge bg-secondary">CFG {{ selectedHistoryRecord.placeholderValues.cfg }}</span>
-                                                    <span v-if="selectedHistoryRecord.placeholderValues.sampler_name" class="badge bg-secondary">Sampler {{ selectedHistoryRecord.placeholderValues.sampler_name }}</span>
-                                                    <span v-if="selectedHistoryRecord.placeholderValues.scheduler" class="badge bg-secondary">Scheduler {{ selectedHistoryRecord.placeholderValues.scheduler }}</span>
-                                                    <span v-if="selectedHistoryRecord.placeholderValues.denoise !== undefined" class="badge bg-secondary">Denoise {{ selectedHistoryRecord.placeholderValues.denoise }}</span>
-                                                </div>
-
-                                                <div class="mt-3">
-                                                    <div class="d-flex justify-content-between align-items-center mb-1">
-                                                        <div class="small text-muted">Prompt</div>
-                                                        <button class="btn btn-outline-success btn-sm" type="button"
-                                                                @click="copyText(selectedHistoryRecord.placeholderValues.prompt, 'Prompt')" title="复制 Prompt">
-                                                            <i class="bi bi-clipboard"></i>
-                                                        </button>
-                                                    </div>
-                                                    <pre class="rp-prompt-box small mb-0">{{ selectedHistoryRecord.placeholderValues.prompt || '-' }}</pre>
-                                                </div>
-
-                                                <div class="mt-3" v-if="selectedHistoryRecord.placeholderValues.negative_prompt">
-                                                    <div class="d-flex justify-content-between align-items-center mb-1">
-                                                        <div class="small text-muted">Negative Prompt</div>
-                                                        <button class="btn btn-outline-danger btn-sm" type="button"
-                                                                @click="copyText(selectedHistoryRecord.placeholderValues.negative_prompt, 'Negative Prompt')" title="复制 Negative Prompt">
-                                                            <i class="bi bi-clipboard"></i>
-                                                        </button>
-                                                    </div>
-                                                    <pre class="rp-prompt-box rp-prompt-box-negative small mb-0">{{ selectedHistoryRecord.placeholderValues.negative_prompt }}</pre>
-                                                </div>
-
-                                                 <details class="rp-details-block mt-3">
-                                                     <summary class="text-light small">生成参数 JSON（不含 Prompt，点击展开）</summary>
-                                                     <pre class="mt-2 mb-0 small">{{ JSON.stringify(selectedHistoryParamsForJson, null, 2) }}</pre>
-                                                 </details>
-
-                                                 <details class="rp-details-block mt-3" v-if="selectedHistoryRecord.deletedImages && selectedHistoryRecord.deletedImages.length">
-                                                     <summary class="text-light small">已删除图片（{{ selectedHistoryRecord.deletedImages.length }}）</summary>
-                                                     <div class="mt-2 small">
-                                                         <div v-for="d in selectedHistoryRecord.deletedImages" :key="d.id" class="text-muted">
-                                                             {{ d.filename || d.id }} · {{ formatDateTime(d.deletedAt) }}
-                                                         </div>
-                                                     </div>
-                                                 </details>
-                                             </div>
-                                         </div>
-                                     </div>
-                                    <div v-else class="text-muted text-center py-5">暂无历史记录</div>
-                                    </div>
+                                        </div>
+                                    </template>
                                 </div>
-                            </div>
-                        </div>
-
                         <!-- 图库 -->
                         <div v-show="resultsTab === 'gallery'">
-                            <div class="row g-3">
-                                <div class="col-lg-8">
-                                    <div v-if="galleryImages.length === 0" class="text-muted text-center py-5">图库暂无图片</div>
-                                    <div v-else class="row g-2">
-                                        <div v-for="(img, idx) in galleryImages" :key="img.id" class="col-6 col-md-4">
-                                            <div class="rp-thumb border border-secondary rounded overflow-hidden position-relative" @click="openPreviewFromGallery(idx)">
-                                                <img :src="img.imageUrl" class="w-100" style="height: 180px; object-fit: cover;">
-                                                <span class="badge bg-dark position-absolute top-0 start-0 m-2">{{ idx + 1 }}</span>
-                                            </div>
+                            <div v-if="galleryImages.length === 0" class="text-muted text-center py-5">图库暂无图片</div>
+                            <template v-else>
+                                <div class="row g-2">
+                                    <div v-for="(img, idx) in galleryImages" :key="img.id" class="col-6 col-md-4 col-xl-3">
+                                        <div class="rp-thumb border border-secondary rounded overflow-hidden position-relative" @click="openPreviewFromGallery(idx)">
+                                            <img :src="img.imageUrl" class="w-100" style="height: 150px; object-fit: cover;">
+                                            <span class="badge bg-dark position-absolute top-0 start-0 m-2">{{ idx + 1 }}</span>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div class="col-lg-4">
-                                    <div v-if="detailImage && detailRecord" class="card bg-dark border-secondary">
-                                        <div class="card-body">
-                                            <div class="d-flex justify-content-between align-items-start gap-2">
-                                                <div class="text-truncate">
-                                                    <div class="text-light fw-semibold">图片详情</div>
-                                                    <div class="small text-muted">{{ detailImage.filename || 'image.png' }}</div>
-                                                </div>
-                                                 <div class="d-flex gap-2">
-                                                     <button class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(detailRecord)" title="应用参数">
-                                                         <i class="bi bi-arrow-up"></i>
-                                                     </button>
-                                                     <button class="btn btn-outline-warning btn-sm" @click="toggleFavorite(detailImage)"
-                                                             :title="isFavorited(detailImage.id) ? '取消收藏' : '收藏'">
-                                                         <i class="bi" :class="isFavorited(detailImage.id) ? 'bi-star-fill' : 'bi-star'"></i>
-                                                     </button>
-                                                     <button class="btn btn-outline-light btn-sm" @click="downloadImage(detailImage)" title="下载/打开">
-                                                         <i class="bi bi-download"></i>
-                                                     </button>
-                                                     <button class="btn btn-outline-danger btn-sm" @click="deleteImage(detailImage, { recordId: detailRecord.id })" title="删除">
-                                                         <i class="bi bi-trash"></i>
-                                                     </button>
-                                                 </div>
-                                             </div>
-
-                                            <div class="mt-3 rp-thumb border border-secondary rounded overflow-hidden">
-                                                <img :src="detailImage.imageUrl" class="w-100" style="max-height: 260px; object-fit: contain; background:#111;" @click="openPreviewFromGallery(selectedGalleryIndex)">
+                                <div v-if="detailImage && detailRecord" class="card bg-dark border-secondary mt-3 rp-gallery-detail">
+                                    <div class="card-body">
+                                        <div class="rp-gallery-detail-head">
+                                            <div class="rp-gallery-detail-title">
+                                                <div class="text-light fw-semibold">图片详情</div>
+                                                <div class="small text-muted text-truncate">{{ detailImage.filename || 'image.png' }}</div>
                                             </div>
-
-                                            <div class="mt-3 small text-muted">
-                                                <div>请求: {{ detailRecord.templateName || '自定义 Workflow' }}</div>
-                                                <div>时间: {{ formatDateTime(detailRecord.createdAt) }}</div>
-                                                <div v-if="detailRecord.jobId">Job: {{ detailRecord.jobId }}</div>
+                                            <div class="rp-gallery-detail-actions">
+                                                <button class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(detailRecord)" title="应用参数">
+                                                    <i class="bi bi-arrow-up"></i>
+                                                </button>
+                                                <button class="btn btn-outline-warning btn-sm" @click="toggleFavorite(detailImage)"
+                                                        :title="isFavorited(detailImage.id) ? '取消收藏' : '收藏'">
+                                                    <i class="bi" :class="isFavorited(detailImage.id) ? 'bi-star-fill' : 'bi-star'"></i>
+                                                </button>
+                                                <button class="btn btn-outline-light btn-sm" @click="downloadImage(detailImage)" title="下载/打开">
+                                                    <i class="bi bi-download"></i>
+                                                </button>
+                                                <button class="btn btn-outline-danger btn-sm" @click="deleteImage(detailImage, { recordId: detailRecord.id })" title="删除">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
                                             </div>
-
-                                            <details class="rp-details-block mt-3" v-if="detailRecord.placeholderValues">
-                                                <summary class="text-light small">生成参数（点击展开）</summary>
-                                                <pre class="mt-2 mb-0 small">{{ JSON.stringify(detailRecord.placeholderValues, null, 2) }}</pre>
-                                            </details>
                                         </div>
+
+                                        <div class="mt-3 rp-thumb border border-secondary rounded overflow-hidden">
+                                            <img :src="detailImage.imageUrl" class="w-100" style="max-height: 320px; object-fit: contain; background:#111;" @click="openPreviewFromGallery(selectedGalleryIndex)">
+                                        </div>
+
+                                        <div class="mt-3 small text-muted">
+                                            <div class="rp-break">请求: {{ detailRecord.templateName || '自定义 Workflow' }}</div>
+                                            <div>时间: {{ formatDateTime(detailRecord.createdAt) }}</div>
+                                            <div v-if="detailRecord.jobId" class="rp-break">Job: {{ detailRecord.jobId }}</div>
+                                        </div>
+
+                                        <details class="rp-details-block mt-3" v-if="detailRecord.placeholderValues">
+                                            <summary class="text-light small">生成参数（点击展开）</summary>
+                                            <pre class="mt-2 mb-0 small">{{ JSON.stringify(detailRecord.placeholderValues, null, 2) }}</pre>
+                                        </details>
                                     </div>
-                                    <div v-else class="text-muted text-center py-5">请选择一张图片</div>
                                 </div>
-                            </div>
+                                <div v-else class="text-muted text-center py-5">请选择一张图片</div>
+                            </template>
                         </div>
                     </div>
                 </div>
             </section>
+            </div>
             </aside>
             </div>
 
@@ -1145,7 +1201,7 @@
                 </div>
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div class="rp-generate-actions">
-                        <button class="btn btn-outline-light btn-lg rp-generate-btn d-lg-none" @click="mobileResultsOpen = !mobileResultsOpen">
+                        <button class="btn btn-outline-light btn-lg rp-generate-btn d-lg-none" @click="openResultsPanel">
                             <i class="bi bi-images"></i> 结果
                         </button>
                         <button class="btn btn-primary btn-lg rp-generate-btn rp-btn-generate"
@@ -1158,12 +1214,15 @@
                                 @click="cancelGeneration"
                                 :disabled="!canCancelSelected"
                                 title="取消当前选中记录对应的运行/排队任务">
-                            <i class="bi bi-x-circle"></i> 取消当前
+                            <i class="bi bi-x-circle"></i>
+                            <span class="rp-label-desktop">取消当前</span><span class="rp-label-mobile">取消</span>
                         </button>
                         <button class="btn btn-outline-danger btn-lg rp-generate-btn"
                                 @click="cancelAllGenerations"
-                                :disabled="!canCancelAll">
-                            <i class="bi bi-x-octagon"></i> 取消全部
+                                :disabled="!canCancelAll"
+                                title="取消全部运行中与排队任务">
+                            <i class="bi bi-x-octagon"></i>
+                            <span class="rp-label-desktop">取消全部</span><span class="rp-label-mobile">全取消</span>
                         </button>
                     </div>
                     <div class="text-light rp-generate-status">
