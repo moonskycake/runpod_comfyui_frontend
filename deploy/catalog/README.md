@@ -178,11 +178,16 @@ Seeding is explicit and never publishes.
    ```bash
    install -m 600 -o runpod-catalog -g runpod-catalog \
            <builtin-seeds.json> /var/lib/runpod-catalog/seeds.json
+   cd /opt/runpod-catalog/app/current
    sudo -u runpod-catalog -H /opt/runpod-catalog/venv/bin/python -m catalog_service.cli \
      --db /var/lib/runpod-catalog/catalog.db \
      seed /var/lib/runpod-catalog/seeds.json
    # expect {"inserted": 2, "skipped": 0, "idConflicts": []} on the first run
    ```
+
+   The CLI needs the current app directory on `sys.path` to import the module.
+   `sudo -H` changes `HOME`, **not** cwd — running it from `/root` or anywhere
+   else fails with `ModuleNotFoundError: No module named 'catalog_service'`.
 
    Idempotent: `legacyId` gives deterministic `shared:<uuid5>` ids, so re-running
    only reports `skipped`. Delete `/var/lib/runpod-catalog/seeds.json` (or leave it
@@ -264,6 +269,7 @@ account switch is needed (and never `sudo -u runpod-catalog` into a root-owned d
 ```bash
 install -d -m 700 -o root -g root /var/backups/runpod-catalog
 umask 077
+cd /opt/runpod-catalog/app/current     # CLI must import catalog_service from here
 /opt/runpod-catalog/venv/bin/python -m catalog_service.cli \
   --db /var/lib/runpod-catalog/catalog.db \
   backup /var/backups/runpod-catalog/catalog-$(date +%Y%m%d-%H%M%S).db
