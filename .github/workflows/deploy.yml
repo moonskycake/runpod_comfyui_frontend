@@ -1,0 +1,160 @@
+name: deploy-frontend
+
+# Publishes this repository to runpod.hyxer.top over a restricted SSH channel.
+# The server never executes anything from the bundle: it validates a fixed
+# whitelist of static files and swaps an immutable release directory.
+#
+# Required configuration (repository settings):
+#   secret DEPLOY_SSH_KEY   private key of the deploy key (never in the repo)
+#   vars   DEPLOY_HOST      server host or IP
+#   vars   DEPLOY_PORT      ssh port
+#   vars   DEPLOY_USER      deploy account (default: runpod-deploy)
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "publish-current = redeploy this ref, rollback = switch to an existing release"
+        type: choice
+        options: [publish-current, rollback]
+        default: publish-current
+      sha:
+        description: "40-hex release sha (required for rollback)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-runpod-hyxer-top
+  cancel-in-progress: false
+
+env:
+  # Public host key fingerprint of the deploy target. Recorded by earlier
+  # read-only probes of 45.149.156.164:25598 (TOFU pin, not independently
+  # attested). Update only with an out-of-band verified value.
+  SITE_HOST_KEY_SHA256: "SHA256:mlUDGAbjplvcWtF9w0Kj1JCt+RRlNKRrXKBlWDlSFes"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Prepare deploy target
+        id: target
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          host="${DEPLOY_HOST:?DEPLOY_HOST repository variable is required}"
+          port="${DEPLOY_PORT:-22}"
+          user="${DEPLOY_USER:-runpod-deploy}"
+          {
+            echo "host=$host"
+            echo "port=$port"
+            echo "user=$user"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Pin server host key
+        env:
+          HOST: ${{ steps.target.outputs.host }}
+          PORT: ${{ steps.target.outputs.port }}
+        run: |
+          set -euo pipefail
+          umask 077
+          kh="$RUNNER_TEMP/known_hosts"
+          : > "$kh"
+          ssh-keyscan -p "$PORT" -T 15 "$HOST" 2>/dev/null > "$RUNNER_TEMP/scanned" || true
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            fp="$(printf '%s\n' "$line" | ssh-keygen -lf - | awk '{print $2}')"
+            if [ "$fp" = "$SITE_HOST_KEY_SHA256" ]; then
+              printf '%s\n' "$line" >> "$kh"
+            fi
+          done < "$RUNNER_TEMP/scanned"
+          rm -f "$RUNNER_TEMP/scanned"
+          if [ ! -s "$kh" ]; then
+            echo "::error::host key fingerprint did not match the pinned value"
+            exit 1
+          fi
+          echo "host key pinned ($SITE_HOST_KEY_SHA256)"
+
+      - name: Install deploy key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ -z "${DEPLOY_SSH_KEY:-}" ]; then
+            echo "::error::DEPLOY_SSH_KEY secret is not set"
+            exit 1
+          fi
+          key="$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key"
+          chmod 600 "$key"
+
+      - name: Pack bundle
+        run: |
+          set -euo pipefail
+          python3 deploy/pack_frontend.py \
+            --repo . \
+            --sha "$GITHUB_SHA" \
+            --out "$RUNNER_TEMP/site.tar.gz"
+
+      - name: Publish
+        if: github.event_name == 'push' || inputs.action == 'publish-current'
+        env:
+          HOST: ${{ steps.target.outputs.host }}
+          PORT: ${{ steps.target.outputs.port }}
+          USERNAME: ${{ steps.target.outputs.user }}
+        run: |
+          set -euo pipefail
+          ssh -T \
+            -i "$RUNNER_TEMP/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+            -o ConnectTimeout=20 \
+            -o LogLevel=ERROR \
+            -p "$PORT" "$USERNAME@$HOST" "deploy $GITHUB_SHA" < "$RUNNER_TEMP/site.tar.gz"
+
+      - name: Rollback
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'rollback'
+        env:
+          HOST: ${{ steps.target.outputs.host }}
+          PORT: ${{ steps.target.outputs.port }}
+          USERNAME: ${{ steps.target.outputs.user }}
+          TARGET_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$TARGET_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::rollback needs a 40-hex sha input"
+            exit 1
+          fi
+          ssh -T \
+            -i "$RUNNER_TEMP/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+            -o ConnectTimeout=20 \
+            -o LogLevel=ERROR \
+            -p "$PORT" "$USERNAME@$HOST" "rollback $TARGET_SHA"
+
+      - name: Remove deploy key
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts" || true

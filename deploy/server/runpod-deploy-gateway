@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Forced-command gateway for the runpod.hyxer.top frontend deploy channel.
+
+Installed root-owned at /usr/local/sbin/runpod-deploy-gateway and referenced from
+the deploy key's authorized_keys entry:
+
+    restrict,command="/usr/local/sbin/runpod-deploy-gateway" ssh-ed25519 AAAA... gh-actions-deploy
+
+sshd runs this process **as the authenticated user** (`runpod-deploy`), so no
+privilege switching happens here: the gateway can only do what that account may
+do. It validates the requested action against a strict allow-list and execs the
+publisher with an argument vector (no shell, no interpolation), forwarding
+stdin so the bundle streams straight into the publisher.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import sys
+
+PUBLISHER = "/usr/local/lib/runpod-deploy/runpod_deploy.py"
+ALLOWED = re.compile(r"^(?P<action>deploy|rollback|inspect)(?: (?P<sha>[0-9a-f]{40}))?$")
+NEEDS_SHA = {"deploy", "rollback"}
+
+
+def main() -> int:
+    requested = os.environ.get("SSH_ORIGINAL_COMMAND", "").strip()
+    match = ALLOWED.match(requested)
+    if not match:
+        sys.stderr.write("rejected: unsupported command\n")
+        return 1
+
+    action = match.group("action")
+    sha = match.group("sha")
+
+    # deploy/rollback carry a tar stream on stdin; inspect must not consume it.
+    if action in NEEDS_SHA and not sha:
+        sys.stderr.write("rejected: %s needs a 40-hex sha\n" % action)
+        return 1
+    if action == "inspect" and sha:
+        sys.stderr.write("rejected: inspect takes no sha\n")
+        return 1
+    if not os.path.isfile(PUBLISHER):
+        sys.stderr.write("misconfigured: publisher missing\n")
+        return 1
+
+    argv = [sys.executable, PUBLISHER, "publish" if action == "deploy" else action]
+    if sha:
+        argv.append(sha)
+    os.execv(sys.executable, argv)
+    return 1  # unreachable
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
