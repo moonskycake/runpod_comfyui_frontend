@@ -42,6 +42,8 @@ const CSV_FIXTURE = [
   'wlop,1,393,wang_ling',
   'dairi,1,18643,',
   'hammer_(sunset_beach),1,5567,aenobas',
+  'no_humans,0,900000,nohumans',
+  'no_man,1,700,',
 ].join('\n');
 
 // 中文词库 fixture（格式 tag,中文）
@@ -224,7 +226,19 @@ async function runTagIndexCases(env) {
   checkEq(tagsOf(TI.search('w', { artistOnly: true })), ['wlop'], '@ 单字母 "w" 命中画师首字母桶');
   checkEq(tagsOf(TI.search('d', { artistOnly: true })), ['dairi'], '@ 单字母 "d" 命中画师首字母桶');
 
-  // 6. 中文模式：非@排除画师、@只画师
+  // 6. 多词查询：空格与下划线同义，末词只输 1 个字母也要命中
+  checkEq(tagsOf(TI.search('no h', { artistOnly: false })), ['no_humans'], '多词 "no h" 命中 no_humans');
+  checkEq(
+    tagsOf(TI.search('no_h', { artistOnly: false })),
+    tagsOf(TI.search('no h', { artistOnly: false })),
+    '"no h" 与 "no_h" 结果一致'
+  );
+  checkEq(tagsOf(TI.search('no hu', { artistOnly: false })), ['no_humans'], '多词 "no hu" 命中 no_humans');
+  // 多词画师：非@ 排除，@ 只出画师
+  checkEq(tagsOf(TI.search('no m', { artistOnly: false })), [], '非@ 多词 "no m" 不返回画师 no_man');
+  checkEq(tagsOf(TI.search('no m', { artistOnly: true })), ['no_man'], '@ 多词 "no m" 命中画师 no_man');
+
+  // 7. 中文模式：非@排除画师、@只画师
   checkEq(tagsOf(TI.searchZh('樱花', { artistOnly: false })), ['sakura'], '中文非@可搜普通标签');
   checkEq(tagsOf(TI.searchZh('韩国画师', { artistOnly: false })), [], '中文非@不返回画师');
   checkEq(tagsOf(TI.searchZh('坂道', { artistOnly: false })), [], '中文非@不返回画师（别名/中文名）');
@@ -422,6 +436,14 @@ async function runComponentCases() {
       instZhAt.menuItems.map((m) => `${m.tag}/${m.catLabel}`),
       ['wlop/画师'],
       '中文@ 只联想画师'
+    );
+
+    const instMulti = makeInstance(env);
+    await typeValue(instMulti, 'no h');
+    checkEq(
+      instMulti.menuItems.map((m) => m.tag),
+      ['no_humans'],
+      '组件级：输入 "no h" 即联想 no_humans'
     );
 
     const instZhPlain = makeInstance(env);

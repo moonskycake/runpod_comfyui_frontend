@@ -274,8 +274,24 @@
     return false;
   }
 
+  // 选一个最小的候选桶来扫；短于 PREFIX_LEN 的词（如 "no h" 的 "h"）只是更长单词的前缀，
+  // 建索引时它没有自己的桶，把它当作选桶条件会让整个查询无命中。
+  // 这类词不参与选桶，命中与否仍由 keyMatchesQuery 逐词校验。
   function smallestBucket(map, words) {
     let bucket = null;
+    let hasShortWord = false;
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      if (w.length < PREFIX_LEN) {
+        hasShortWord = true;
+        continue;
+      }
+      const b = map[getPrefix(w)];
+      if (!b || !b.length) return null;
+      if (!bucket || b.length < bucket.length) bucket = b;
+    }
+    if (bucket || !hasShortWord) return bucket;
+    // 全部词都短于 PREFIX_LEN（例如单个字母）：沿用整词桶查，行为与修复前一致
     for (let i = 0; i < words.length; i++) {
       const b = map[getPrefix(words[i])];
       if (!b || !b.length) return null;
