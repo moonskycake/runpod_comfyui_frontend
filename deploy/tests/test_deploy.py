@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -207,7 +208,7 @@ class PackTests(unittest.TestCase):
         code_lines = [ln.strip() for ln in text.splitlines()
                       if ln.strip() and not ln.strip().startswith("#")]
         # the mutable pointer must never be served
-        self.assertIn("location ~ ^/_rel/(?:current|previous)(?:/|$) {", code_lines)
+        self.assertIn('location ~ "^/_rel/(?:current|previous)(?:/|$)" {', code_lines)
         self.assertIn("return 404;", code_lines)
         # no hard cache for the unversioned tags/ URLs
         self.assertFalse(any("danbooru|zhcn" in ln for ln in code_lines), code_lines)
@@ -219,7 +220,62 @@ class PackTests(unittest.TestCase):
         self.assertFalse(any("add_header" in ln for ln in code_lines), code_lines)
         # immutable caching stays limited to content-addressed release dirs
         self.assertEqual(text.count("expires max;"), 1, code_lines)
-        self.assertIn("^/_rel/[0-9a-f]{40}/", text)
+        self.assertIn("^/_rel/([0-9a-f]{40})/(.+)$", text)
+
+
+class NginxAliasMappingTests(unittest.TestCase):
+    """Real URL -> on-disk mapping: the nginx snippet must resolve
+    /_rel/<sha40>/<rest> to the publisher's layout _rel/releases/<sha40>/<rest>."""
+
+    ALIAS = "alias /www/wwwroot/runpod.hyxer.top/_rel/releases/$1/$2;"
+
+    def snippet(self):
+        path = os.path.join(DEPLOY_DIR, "server", "nginx-deploy-snippet.conf")
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_alias_directive_matches_publisher_layout(self):
+        text = self.snippet()
+        code = [ln.strip() for ln in text.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")]
+        loc = [ln for ln in code if ln.startswith("location ~ ") and "[0-9a-f]{40}" in ln]
+        self.assertEqual(len(loc), 1, code)
+        # the regex must be quoted: nginx splits on the unquoted {40} quantifier
+        self.assertTrue(loc[0].startswith('location ~ "^/_rel/'), loc[0])
+        # two captures: the sha and everything after it
+        self.assertIn("([0-9a-f]{40})/(.+)$", loc[0])
+        # the directory really served is releases/<sha>/, not _rel/<sha>/
+        self.assertIn(self.ALIAS, code)
+        # try_files $uri would resolve to _rel/<sha>/... and 404 (this was a live bug)
+        self.assertNotIn("try_files $uri", text)
+        self.assertNotIn("_rel/releases/$1/;", text)  # slash-only alias drops the file
+
+    def test_generated_urls_resolve_to_release_files(self):
+        """Every ./_rel/<sha>/... reference in the packed index.html must exist as
+        releases/<sha>/... in the same bundle (what nginx alias serves)."""
+        bundle, _ = pack_frontend.build_bundle(REPO_ROOT, SHA_A)
+        with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
+            names = set(tar.getnames())
+            index = tar.extractfile("index.html").read().decode("utf-8")
+        text = self.snippet()
+        self.assertIn("^/_rel/([0-9a-f]{40})/(.+)$", text,
+                      "immutable location must capture sha + rest")
+        prefix = "_rel/%s/" % SHA_A
+        refs = re.findall(r'\./([^"]+)', index)
+        local = [r for r in refs if r.startswith("_rel/")]
+        self.assertTrue(local, "packed index.html has no versioned asset refs")
+        for ref in local:
+            self.assertTrue(ref.startswith(prefix), ref)
+            rel = ref[len(prefix):]
+            # nginx alias = releases dir + capture 2
+            mapped = "releases/%s/%s" % (SHA_A, rel)
+            self.assertIn(rel, names, "asset reference has no file in the bundle: %s" % ref)
+            self.assertTrue(mapped.startswith("releases/%s/" % SHA_A))
+
+    def test_alias_keeps_host_docroot_independent(self):
+        """The alias is absolute, so it cannot be broken by a changed root/index."""
+        text = self.snippet()
+        self.assertIn("alias /www/wwwroot/runpod.hyxer.top/_rel/releases/", text)
 
 
 class ValidationTests(unittest.TestCase):
