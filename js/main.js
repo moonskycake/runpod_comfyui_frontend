@@ -642,16 +642,28 @@ const PromptTextareaComponent = {
 
             let replacement = `${token.lead || ''}${atPrefix}${tagText}`;
 
+            // token 解析会把 CRLF 行尾的 \r 归入 token，这里退回以免插入时删掉 CR
+            let tokenEnd = token.end;
+            if (tokenEnd > token.start && value[tokenEnd - 1] === '\r' && value[tokenEnd] === '\n') {
+                tokenEnd -= 1;
+            }
+
             // 在末尾选择时自动补 ", " 方便继续输入
-            const after = value.slice(token.end);
+            const after = value.slice(tokenEnd);
             if (!after) {
                 const trimmed = (value.slice(0, token.start) + replacement).trimEnd();
                 if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) {
                     replacement += ', ';
                 }
+            } else if (/^\r?\n/.test(after)) {
+                // token 在行末（后面紧跟换行）：只补逗号，不加空格，保留原换行与后续行
+                const prefix = (value.slice(0, token.start) + replacement).trimEnd();
+                if (prefix && !prefix.endsWith(',')) {
+                    replacement += ',';
+                }
             }
 
-            this.replaceRange(el, token.start, token.end, replacement);
+            this.replaceRange(el, token.start, tokenEnd, replacement);
             this.closeMenu();
         },
 

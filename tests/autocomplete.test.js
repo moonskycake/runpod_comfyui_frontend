@@ -287,14 +287,52 @@ async function runComponentCases() {
     checkEq(inst.el.value, '1girl, wlop, 8k', 'token 后已有逗号时原地替换、不重复补逗号');
   }
 
-  // ---- 换行保留（不把 ", " 加到换行前）----
+  // ---- 换行前补全：补逗号，且保留原换行与后续行 ----
   {
     const env = buildEnv();
     await env.window.TagIndex.ensureLoaded();
     const inst = makeInstance(env);
     await typeValue(inst, '@wl\n8k', 3);
     inst.applySelection(inst.menuItems[0]);
-    checkEq(inst.el.value, 'wlop\n8k', 'token 后是换行时保留换行、不补逗号');
+    checkEq(inst.el.value, 'wlop,\n8k', 'token 后是换行时补逗号，保留换行与后续行');
+  }
+  {
+    // 复现：光标停在行末 token 末（换行符之前）
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl\n', 10);
+    checkEq(inst.menuItems[0] && inst.menuItems[0].tag, 'wlop', '换行前 token 末光标仍能选到 wlop');
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop,\n', '换行前选画师补逗号（不在换行前加空格）');
+    checkEq(inst.el.selectionStart, 12, '换行前选中后光标停在插入内容之后');
+  }
+  {
+    // 后续多行内容全部保留
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl\n8k, long_hair\n', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop,\n8k, long_hair\n', '换行前补逗号并保留后续行内容');
+  }
+  {
+    // 已有逗号不重复加
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl,\n8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop,\n8k', '换行前已有逗号时不重复补逗号');
+  }
+  {
+    // CRLF 不被破坏
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl\r\n8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop,\r\n8k', 'CRLF 行尾补逗号且不破坏 \\r\\n');
   }
 
   // ---- keepAtPrefix / keepUnderscore / escapeParentheses ----
