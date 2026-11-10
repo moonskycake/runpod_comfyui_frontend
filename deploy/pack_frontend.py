@@ -7,8 +7,14 @@ Design notes
 - Immutable release id: the 40-hex commit SHA. Published URLs are
   ``./_rel/<sha40>/<original path>``; nothing is renamed, so relative CSS
   references (e.g. bootstrap-icons' ``url("./fonts/...")``) keep working.
-- Only two artefacts are rewritten inside the bundle:
-  1. ``index.html`` asset attributes (order preserved, attributes only).
+- Only two kinds of artefact are rewritten inside the bundle:
+  1. asset attributes (order preserved, attributes only) of every HTML entry
+     document present in the repo: ``index.html`` (served at ``/``) and the
+     optional ``admin.html`` (served at the nested ``/admin/``).
+     ``index.html`` keeps its relative ``./_rel/<sha>/...`` form for
+     compatibility; ``admin.html`` must use root-absolute
+     ``/_rel/<sha>/...`` because a relative URL there would resolve below
+     ``/admin/`` and 404.
   2. ``tags/manifest.json`` ``version`` / ``zhVersion`` -> content hashes of
      the CSVs, so the existing runtime cache-busting in ``js/tag-index.js``
      picks up new tag data without touching business JS.
@@ -34,13 +40,29 @@ import tarfile
 RELEASE_PREFIX = "_rel"
 
 # Files published as-is (site root level).
-WHITELIST_FILES = ("index.html", "favicon.ico")
+WHITELIST_FILES = ("index.html", "admin.html", "favicon.ico")
 # Directories published recursively and layout-preserving.
 WHITELIST_DIRS = ("css", "js", "bootstrap", "vue", "tags", "img")
 
-# Never packed even if inside a whitelisted directory.
+# HTML entry documents: index.html is required, admin.html is optional.
+# Published URL differs, so the rewrite target differs as well.
+HTML_ENTRIES = ("index.html", "admin.html")
+REQUIRED_HTML = "index.html"
+# Entry documents served from a nested URL (relative asset links would break).
+NESTED_HTML_ENTRIES = {"admin.html": "/admin/"}
+
+# Never packed even if inside a whitelisted directory. This is defence in
+# depth: service/database/env artefacts of the catalog backend must never ride
+# along inside a static release.
 EXCLUDE_NAMES = {".DS_Store", "Thumbs.db", "__pycache__"}
-EXCLUDE_SUFFIXES = (".log", ".pyc", ".tar", ".tar.gz", ".tgz", ".zip", ".7z", ".rar")
+EXCLUDE_SUFFIXES = (
+    ".log", ".pyc", ".tar", ".tar.gz", ".tgz", ".zip", ".7z", ".rar",
+    ".py", ".pyo", ".pem", ".key", ".crt", ".service", ".sqlite",
+    ".sqlite3", ".db", ".db-wal", ".db-shm", ".env", ".bak", ".orig",
+    ".swp", ".ini",
+)
+# Dotfiles (.env, .htpasswd, ...) are never part of the static site.
+EXCLUDE_NAME_PREFIXES = (".",)
 
 # CSV -> manifest version key (schema owned by js/tag-index.js)
 MANIFEST_PATH = "tags/manifest.json"
@@ -66,6 +88,8 @@ def sha256_prefix(data: bytes, n: int = 12) -> str:
 def _is_excluded(rel_posix: str) -> bool:
     name = rel_posix.rsplit("/", 1)[-1]
     if name in EXCLUDE_NAMES:
+        return True
+    if name.startswith(EXCLUDE_NAME_PREFIXES):
         return True
     return name.lower().endswith(EXCLUDE_SUFFIXES)
 
@@ -93,8 +117,22 @@ def collect_files(repo_root: str) -> list[str]:
     return sorted(set(out))
 
 
-def rewrite_index_html(text: str, sha: str, packed: set[str]) -> tuple[str, list[str]]:
-    """Point local asset attributes at the immutable release directory."""
+def rewrite_html(text: str, sha: str, packed: set[str],
+                 entry: str = "index.html") -> tuple[str, list[str]]:
+    """Point local asset attributes at the immutable release directory.
+
+    ``index.html`` is served at ``/`` so ``./_rel/<sha>/x`` resolves correctly
+    (and keeps working for the existing document). ``admin.html`` is served at
+    ``/admin/``, where the same relative URL would resolve to
+    ``/admin/_rel/...`` and 404, so its rewritten attributes are
+    root-absolute: ``/_rel/<sha>/x``.
+
+    Only ``src``/``href`` attributes of files that are actually packed are
+    touched; ``/api/...`` links, anchors and absolute URLs are left alone.
+    """
+    if entry not in HTML_ENTRIES:
+        raise PackError("unknown HTML entry %r" % (entry,))
+    nested = entry in NESTED_HTML_ENTRIES
     rewritten: list[str] = []
     missing: list[str] = []
 
@@ -107,6 +145,8 @@ def rewrite_index_html(text: str, sha: str, packed: set[str]) -> tuple[str, list
         path = path.split("?", 1)[0].split("#", 1)[0]
         if path in packed:
             rewritten.append(path)
+            if nested:
+                return '%s="/%s/%s/%s"' % (attr, RELEASE_PREFIX, sha, path)
             return '%s="./%s/%s/%s"' % (attr, RELEASE_PREFIX, sha, path)
         missing.append(path)
         return match.group(0)
@@ -114,8 +154,8 @@ def rewrite_index_html(text: str, sha: str, packed: set[str]) -> tuple[str, list
     out = ATTR_RE.sub(_sub, text)
     if missing:
         raise PackError(
-            "index.html references files that are not packable: %s"
-            % ", ".join(sorted(set(missing)))
+            "%s references files that are not packable: %s"
+            % (entry, ", ".join(sorted(set(missing))))
         )
     return out, rewritten
 
@@ -144,17 +184,32 @@ def build_bundle(repo_root: str, sha: str) -> tuple[bytes, dict]:
         raise PackError("sha must be 40 lowercase hex chars, got %r" % (sha,))
 
     rel_paths = collect_files(repo_root)
-    if "index.html" not in rel_paths:
-        raise PackError("index.html missing from %s" % repo_root)
+    if REQUIRED_HTML not in rel_paths:
+        raise PackError("%s missing from %s" % (REQUIRED_HTML, repo_root))
 
     files: dict[str, bytes] = {}
     for rel in rel_paths:
         with open(os.path.join(repo_root, rel.replace("/", os.sep)), "rb") as fh:
             files[rel] = fh.read()
 
-    index_raw = files["index.html"].decode("utf-8")
-    index_out, rewritten = rewrite_index_html(index_raw, sha, set(files))
-    files["index.html"] = index_out.encode("utf-8")
+    packed = set(files)
+    html_rewrites: dict[str, int] = {}
+    for entry in HTML_ENTRIES:
+        if entry not in files:
+            continue
+        try:
+            raw = files[entry].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise PackError("%s is not valid UTF-8: %s" % (entry, exc)) from exc
+        out, rewritten = rewrite_html(raw, sha, packed, entry)
+        files[entry] = out.encode("utf-8")
+        html_rewrites[entry] = len(rewritten)
+        if entry in NESTED_HTML_ENTRIES and not rewritten:
+            raise PackError(
+                "%s has no local asset references to rewrite; refusing to ship "
+                "an entry document whose assets would not resolve from %s"
+                % (entry, NESTED_HTML_ENTRIES[entry])
+            )
 
     if MANIFEST_PATH in files:
         files[MANIFEST_PATH] = rewrite_tag_manifest(files[MANIFEST_PATH], sha, files)
@@ -185,7 +240,9 @@ def build_bundle(repo_root: str, sha: str) -> tuple[bytes, dict]:
         "files": len(files),
         "uncompressed_bytes": sum(len(v) for v in files.values()),
         "bundle_bytes": len(payload),
-        "index_rewrites": len(rewritten),
+        "index_rewrites": html_rewrites.get("index.html", 0),
+        "html_rewrites": html_rewrites,
+        "html_entries": sorted(html_rewrites),
         "tag_versions": {k: json.loads(files[MANIFEST_PATH])[k] for _, k in CSV_VERSION_KEYS},
         "missing_bootstrap_fonts": not any(p.startswith("bootstrap/fonts/") for p in files),
     }

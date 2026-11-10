@@ -10,13 +10,68 @@ const TemplateManager = {
   // 内置模板
   builtinTemplates: [],
 
+  // 运行时模板（统一库详情，不写入 localStorage）
+  runtimeTemplates: [],
+
   /**
-   * 加载所有模板（内置 + 用户自定义）
+   * 本地模板只接受站内预览接口 URL（公开 revision 路径），其余按无图处理。
+   * 与 CatalogClient.normalizePreview 保持同一契约，但本模块可独立加载。
+   * @param {object|null|undefined} preview
+   */
+  sanitizePreview(preview) {
+    if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
+    const url = typeof preview.url === 'string' ? preview.url.trim() : '';
+    if (!url || url.charAt(0) !== '/' || url.startsWith('//') || url.length > 2048) return null;
+    if (/[\\\u0000-\u001f\s]/.test(url) || url.indexOf('..') >= 0) return null;
+    if (!/^\/api\/catalog\/[^/?#]+\/preview(?:\?[^#]*)?$/.test(url)) return null;
+    if (!/(?:^|&)revision=\d+(?:&|$)/.test(url.split('?')[1] || '')) return null;
+    if (String(preview.mime || '').toLowerCase() !== 'image/webp') return null;
+    const width = Number(preview.width);
+    const height = Number(preview.height);
+    const bytes = Number(preview.bytes);
+    if (!Number.isInteger(width) || width <= 0 || width > 480) return null;
+    if (!Number.isInteger(height) || height <= 0 || height > 480) return null;
+    if (!Number.isInteger(bytes) || bytes < 0 || bytes > 64 * 1024) return null;
+    return { url, width, height, bytes, mime: 'image/webp' };
+  },
+
+  /**
+   * 统一库/内置模板只读；只有本地模板可编辑删除。
+   * @param {object} template
+   * @returns {boolean}
+   */
+  isReadonly(template) {
+    if (!template || typeof template !== 'object') return true;
+    if (template.isBuiltin) return true;
+    if (template.source === 'shared') return true;
+    if (typeof template.id === 'string' && template.id.startsWith('shared:')) return true;
+    return false;
+  },
+
+  /**
+   * 加载所有模板（内置 + 统一库运行时 + 用户自定义）
    * @returns {Array} 模板列表
    */
   loadAll() {
     const userTemplates = this.loadUserTemplates();
-    return [...this.builtinTemplates, ...userTemplates];
+    return [...this.builtinTemplates, ...this.runtimeTemplates, ...userTemplates];
+  },
+
+  /**
+   * 注册统一库模板（仅当前会话，不持久化）。
+   * @param {Array} templates
+   */
+  setRuntimeTemplates(templates) {
+    this.runtimeTemplates = (Array.isArray(templates) ? templates : [])
+      .filter(t => t && t.id)
+      .map(t => ({ ...t, source: 'shared', isBuiltin: false }));
+  },
+
+  upsertRuntimeTemplate(template) {
+    if (!template || !template.id) return;
+    const list = this.runtimeTemplates.filter(t => t.id !== template.id);
+    list.push({ ...template, source: 'shared', isBuiltin: false });
+    this.runtimeTemplates = list;
   },
 
   /**
@@ -67,8 +122,10 @@ const TemplateManager = {
   add(template) {
     const userTemplates = this.loadUserTemplates();
 
-    // 生成唯一 ID
-    const id = 'user_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
+    // 新本地模板使用 local: 命名空间；旧 user_* 历史 ID 保持不动
+    const id = (template && typeof template.id === 'string' && template.id.startsWith('local:'))
+      ? template.id
+      : 'local:' + Date.now() + '-' + Math.random().toString(36).slice(2, 11);
 
     const newTemplate = {
       id,
@@ -79,6 +136,12 @@ const TemplateManager = {
       defaults: template.defaults || {},
       editor: template.editor || {},
       isBuiltin: false,
+      source: 'local',
+      sourceId: template.sourceId || '',
+      sourceRevision: Number.isFinite(Number(template.sourceRevision))
+        ? Number(template.sourceRevision)
+        : null,
+      preview: this.sanitizePreview(template.preview),
       createdAt: Date.now()
     };
 
@@ -99,12 +162,18 @@ const TemplateManager = {
     const index = userTemplates.findIndex(t => t.id === id);
 
     if (index === -1) return false;
+    if (this.isReadonly(userTemplates[index])) return false;
 
-    userTemplates[index] = {
+    const patch = updates && typeof updates === 'object' ? updates : {};
+    const merged = {
       ...userTemplates[index],
-      ...updates,
+      ...patch,
       updatedAt: Date.now()
     };
+    if (Object.prototype.hasOwnProperty.call(patch, 'preview')) {
+      merged.preview = this.sanitizePreview(patch.preview);
+    }
+    userTemplates[index] = merged;
 
     this.saveUserTemplates(userTemplates);
     return true;
@@ -117,6 +186,9 @@ const TemplateManager = {
    */
   delete(id) {
     const userTemplates = this.loadUserTemplates();
+    const target = userTemplates.find(t => t.id === id);
+    if (!target) return false;
+    if (this.isReadonly(target)) return false;
     const filtered = userTemplates.filter(t => t.id !== id);
 
     if (filtered.length === userTemplates.length) return false;

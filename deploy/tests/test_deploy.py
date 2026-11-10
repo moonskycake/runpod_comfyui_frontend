@@ -35,6 +35,9 @@ SERVER = os.path.join(DEPLOY_DIR, "server", "runpod_deploy.py")
 sys.path.insert(0, DEPLOY_DIR)
 import pack_frontend  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(SERVER))
+import runpod_deploy  # noqa: E402
+
 SHA_A = "a" * 40
 SHA_B = "b" * 40
 SHA_C = "c" * 40
@@ -87,7 +90,7 @@ def make_tar(entries) -> bytes:
 
 
 def fixture_site(sha: str, danbooru: bytes = b"tag,0,1,\n",
-                 zhcn: bytes = b"tag,x\n") -> list:
+                 zhcn: bytes = b"tag,x\n", admin: bytes | None = None) -> list:
     manifest = json.dumps({
         "version": hashlib.sha256(danbooru).hexdigest()[:12],
         "updatedAt": "2026-02-21",
@@ -102,7 +105,7 @@ def fixture_site(sha: str, danbooru: bytes = b"tag,0,1,\n",
         '<script src="./_rel/%s/js/app.js"></script>\n'
         "</body></html>\n" % (sha, sha)
     )
-    return [
+    entries = [
         ("index.html", index.encode()),
         ("favicon.ico", b"ico"),
         ("css/style.css", b"body{color:#111}\n"),
@@ -112,6 +115,20 @@ def fixture_site(sha: str, danbooru: bytes = b"tag,0,1,\n",
         ("tags/zhcn.csv", zhcn),
         ("img/demo.png", b"\x89PNG\r\n\x1a\n"),
     ]
+    if admin is not None:
+        entries.append(("admin.html", admin))
+    return entries
+
+
+def admin_html(sha: str, extra: str = "") -> bytes:
+    """A valid /admin/ shell: root-absolute release refs only."""
+    return (
+        "<!doctype html><html><head>\n"
+        '<link rel="stylesheet" href="/_rel/%s/css/style.css">\n'
+        "</head><body>\n"
+        '<script src="/_rel/%s/js/app.js"></script>%s\n'
+        "</body></html>\n" % (sha, sha, extra)
+    ).encode()
 
 
 class PackTests(unittest.TestCase):
@@ -200,6 +217,90 @@ class PackTests(unittest.TestCase):
         with self.assertRaises(pack_frontend.PackError):
             pack_frontend.build_bundle(REPO_ROOT, "abc123")
 
+    def test_optional_admin_html_rewritten_root_absolute(self):
+        """admin.html is served at /admin/, so its refs must be /_rel/<sha>/..."""
+        with tempfile.TemporaryDirectory() as repo:
+            for rel in ("css", "js", "tags"):
+                os.makedirs(os.path.join(repo, rel))
+
+            def w(rel, data):
+                with open(os.path.join(repo, rel), "wb") as fh:
+                    fh.write(data.encode() if isinstance(data, str) else data)
+
+            w("tags/manifest.json", json.dumps(
+                {"version": "x", "source": "s", "zhVersion": "y"}))
+            w("tags/danbooru.csv", b"a,0,1,\n")
+            w("tags/zhcn.csv", b"a,x\n")
+            w("css/style.css", b'@import url("./nested/font.css");')
+            w("js/app.js", b"1;")
+            w("index.html", '<link rel="stylesheet" href="./css/style.css?v=1">\n'
+                            '<a href="/api/catalog">api</a>\n'
+                            '<script src="./js/app.js?v=1"></script>\n')
+            w("admin.html", '<link rel="stylesheet" href="./css/style.css">\n'
+                            '<a href="/api/admin/session">api</a>\n'
+                            '<script src="./js/app.js"></script>\n')
+            bundle, report = pack_frontend.build_bundle(repo, SHA_A)
+            with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
+                names = tar.getnames()
+                index = tar.extractfile("index.html").read().decode()
+                admin = tar.extractfile("admin.html").read().decode()
+        self.assertIn("admin.html", names)
+        self.assertEqual(report["html_entries"], ["admin.html", "index.html"])
+        self.assertEqual(report["html_rewrites"]["admin.html"], 2)
+        # index keeps the compatibility-relative form
+        self.assertIn('./_rel/%s/css/style.css' % SHA_A, index)
+        self.assertIn('./_rel/%s/js/app.js' % SHA_A, index)
+        # admin is nested: root-absolute only
+        self.assertIn('/_rel/%s/css/style.css' % SHA_A, admin)
+        self.assertIn('/_rel/%s/js/app.js' % SHA_A, admin)
+        self.assertNotIn('./_rel/', admin)
+        self.assertNotIn('href="/_rel/%s/css/style.css"' % SHA_A, index)
+        # API links and other navigation are never rewritten
+        for doc in (index, admin):
+            self.assertIn('href="/api/', doc)
+        # the HTML itself must not be rewritten into a release path
+        self.assertNotIn("/_rel/%s/admin.html" % SHA_A, admin)
+
+    def test_pack_rejects_unpackable_admin_reference(self):
+        with tempfile.TemporaryDirectory() as repo:
+            os.makedirs(os.path.join(repo, "tags"))
+            for rel, data in (("tags/manifest.json", b"{}"),
+                              ("tags/danbooru.csv", b"a"),
+                              ("tags/zhcn.csv", b"a"),
+                              ("index.html", b'<script src="./js/app.js"></script>'),
+                              ("js/app.js", b"1;"),
+                              ("admin.html", b'<script src="./js/admin-missing.js"></script>')):
+                path = os.path.join(repo, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as fh:
+                    fh.write(data)
+            with self.assertRaises(pack_frontend.PackError) as ctx:
+                pack_frontend.build_bundle(repo, SHA_A)
+            self.assertIn("admin", str(ctx.exception))
+
+    def test_pack_excludes_service_and_secret_artifacts(self):
+        """Backend/db/env files never ride along, even inside js/ or tags/."""
+        with tempfile.TemporaryDirectory() as repo:
+            os.makedirs(os.path.join(repo, "tags"))
+            os.makedirs(os.path.join(repo, "js"))
+            for rel, data in (("tags/manifest.json", b"{}"),
+                              ("tags/danbooru.csv", b"a"),
+                              ("tags/zhcn.csv", b"a"),
+                              ("index.html", b'<script src="./js/app.js"></script>'),
+                              ("js/app.js", b"1;"),
+                              ("js/.env", b"SECRET=1"),
+                              ("js/catalog.db", b"SQLite"),
+                              ("tags/service.py", b"import os"),
+                              ("js/runpod-catalog.service", b"[Unit]")):
+                with open(os.path.join(repo, rel), "wb") as fh:
+                    fh.write(data)
+            bundle, _ = pack_frontend.build_bundle(repo, SHA_B)
+            with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
+                names = set(tar.getnames())
+        for forbidden in ("js/.env", "js/catalog.db", "tags/service.py",
+                          "js/runpod-catalog.service"):
+            self.assertNotIn(forbidden, names)
+
     def test_nginx_snippet_invariants(self):
         """Static guards on the vhost snippet (no nginx binary needed)."""
         path = os.path.join(DEPLOY_DIR, "server", "nginx-deploy-snippet.conf")
@@ -278,6 +379,73 @@ class NginxAliasMappingTests(unittest.TestCase):
         self.assertIn("alias /www/wwwroot/runpod.hyxer.top/_rel/releases/", text)
 
 
+class AdminAndApiSnippetTests(unittest.TestCase):
+    """Guards for the /admin/ entry and the /api/ loopback proxy."""
+
+    def snippet(self):
+        path = os.path.join(DEPLOY_DIR, "server", "nginx-deploy-snippet.conf")
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_admin_entry_follows_current_without_fixed_sha(self):
+        text = self.snippet()
+        code = [ln.strip() for ln in text.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")]
+        self.assertIn("location = /admin {", code)
+        self.assertIn("return 301 /admin/;", code)
+        self.assertIn("location = /admin/ {", code)
+        admin_block = text.split("location = /admin/ {", 1)[1].split("}", 1)[0]
+        self.assertIn("try_files /_rel/current/admin.html =404;", admin_block)
+        self.assertIn("expires -1;", admin_block)
+        self.assertNotIn("expires max", admin_block)
+        # no pinned release directory and no long cache for the entry document
+        self.assertFalse(re.search(r"/_rel/[0-9a-f]{40}/admin\.html", text))
+        self.assertNotIn("location = /admin.html", text)
+
+    def test_api_proxy_is_loopback_with_uri_preserved(self):
+        text = self.snippet()
+        self.assertIn("location ^~ /api/ {", text)
+        block = text.split("location ^~ /api/ {", 1)[1].split("}", 1)[0]
+        self.assertIn("proxy_pass http://127.0.0.1:8787;", block)  # no URI part
+        self.assertNotIn("proxy_pass http://127.0.0.1:8787/", block)
+        self.assertNotIn("expires max", block)
+        self.assertIn("proxy_set_header Host $host;", block)
+        self.assertIn("proxy_set_header Origin $http_origin;", block)
+        self.assertIn("proxy_set_header X-Forwarded-For $remote_addr;", block)
+        self.assertNotIn("$proxy_add_x_forwarded_for", block)
+        # backend cache semantics must pass through untouched: /api/admin is
+        # no-store (including errors), /api/catalog is no-cache + ETag.
+        self.assertIn("expires off;", block)
+        self.assertIn("proxy_cache off;", block)
+        self.assertNotIn("expires -1;", block)
+        self.assertNotIn("proxy_hide_header", block)
+        self.assertNotIn("proxy_ignore_headers", block)
+        # inherited server-level headers must not be shadowed in this location
+        self.assertNotIn("add_header", block)
+
+    def test_admin_bundle_paths_resolve_from_nested_url(self):
+        """Packed admin.html refs must be root-absolute and exist in the bundle."""
+        with tempfile.TemporaryDirectory() as repo:
+            for rel in ("css", "js", "tags"):
+                os.makedirs(os.path.join(repo, rel))
+            for rel, data in (("tags/manifest.json", b"{}"),
+                              ("tags/danbooru.csv", b"a"),
+                              ("tags/zhcn.csv", b"a"),
+                              ("css/style.css", b"body{}"),
+                              ("js/app.js", b"1;"),
+                              ("index.html", b'<script src="./js/app.js"></script>'),
+                              ("admin.html", b'<script src="./js/app.js"></script>')):
+                with open(os.path.join(repo, rel), "wb") as fh:
+                    fh.write(data)
+            bundle, _ = pack_frontend.build_bundle(repo, SHA_A)
+            with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
+                names = set(tar.getnames())
+                admin = tar.extractfile("admin.html").read().decode()
+        for ref in re.findall(r'="(/[^"]+)"', admin):
+            self.assertTrue(ref.startswith("/_rel/%s/" % SHA_A), ref)
+            self.assertIn(ref[len("/_rel/%s/" % SHA_A):], names)
+
+
 class ValidationTests(unittest.TestCase):
     """Bundle rejection paths: these must work on every OS (no symlinks needed)."""
 
@@ -306,12 +474,59 @@ class ValidationTests(unittest.TestCase):
             "outside_whitelist": [("deploy/evil.py", b"x")],
             "repo_meta": [(".github/workflows/x.yml", b"x")],
             "release_prefix": [("_rel/abc/index.html", b"x")],
+            "dotenv": [("js/.env", b"SECRET=1")],
+            "database": [("js/catalog.db", b"SQLite")],
+            "service_code": [("tags/catalog.py", b"import os")],
+            "systemd_unit": [("js/runpod-catalog.service", b"[Unit]")],
+            "nested_html": [("js/admin.html", b"<html></html>")],
         }
         for label, extra in cases.items():
             with self.subTest(label):
                 proc = self.publish(SHA_A, fixture_site(SHA_A) + extra)
                 self.assertEqual(proc.returncode, 2, "%s -> %s" % (label, proc.stderr))
                 self.assert_no_pointer()
+
+    def test_accepts_optional_admin_html(self):
+        staging = os.path.join(self.tmp, "staging-admin")
+        os.makedirs(staging)
+        for name, data in fixture_site(SHA_A, admin=admin_html(SHA_A)):
+            path = os.path.join(staging, *name.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as fh:
+                fh.write(data)
+        result = runpod_deploy.verify_staged(SHA_A, staging)
+        self.assertEqual(result["html_refs"]["admin.html"], 2)
+        self.assertEqual(result["index_refs"], 2)
+        with open(os.path.join(staging, "admin.html"), encoding="utf-8") as fh:
+            self.assertIn('/_rel/%s/js/app.js' % SHA_A, fh.read())
+
+    def test_rejects_admin_relative_refs(self):
+        """From /admin/ a relative ./_rel/... ref 404s, so it must be refused."""
+        bad = (
+            '<link rel="stylesheet" href="./_rel/%s/css/style.css">\n'
+            '<script src="./_rel/%s/js/app.js"></script>' % (SHA_A, SHA_A)
+        ).encode()
+        proc = self.publish(SHA_A, fixture_site(SHA_A, admin=bad))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn(b"admin.html", proc.stderr)
+        self.assert_no_pointer()
+
+    def test_rejects_admin_without_refs(self):
+        proc = self.publish(SHA_A, fixture_site(SHA_A, admin=b"<html>static</html>"))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assert_no_pointer()
+
+    def test_rejects_admin_foreign_release_or_missing_file(self):
+        foreign = admin_html(SHA_B)
+        proc = self.publish(SHA_A, fixture_site(SHA_A, admin=foreign))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn(b"foreign release", proc.stderr)
+        missing = admin_html(SHA_A, extra='<script src="/_rel/%s/js/gone.js"></script>'
+                                       % SHA_A)
+        proc = self.publish(SHA_A, fixture_site(SHA_A, admin=missing))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn(b"missing file", proc.stderr)
+        self.assert_no_pointer()
 
     def test_rejects_duplicates(self):
         proc = self.publish(SHA_A, fixture_site(SHA_A) + [("js/app.js", b"other")])

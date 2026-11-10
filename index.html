@@ -15,20 +15,28 @@
         <!-- 顶部导航 -->
         <nav class="navbar navbar-expand-lg navbar-dark rp-navbar">
             <div class="container-fluid">
-                <a class="navbar-brand rp-brand" href="#">
+                <a class="navbar-brand rp-brand" href="#" @click.prevent="switchMainView('generate')">
                     <span class="rp-brand-mark"><i class="bi bi-stars"></i></span>
                     <span>RunPod ComfyUI</span>
                 </a>
-                <div class="d-flex align-items-center">
+                <div class="rp-nav-links d-flex align-items-center gap-1 me-auto ms-lg-3">
+                    <button class="rp-nav-link" :class="{ active: mainView === 'generate' }" @click="switchMainView('generate')">生图</button>
+                    <button class="rp-nav-link" :class="{ active: mainView === 'library' }" @click="switchMainView('library')">资源库</button>
+                </div>
+                <div class="d-flex align-items-center flex-wrap gap-1">
                     <span class="badge me-2 rp-conn-badge" :class="connectionStatusClass">
                         <span class="rp-conn-dot" :class="{ 'is-online': isConfigured, 'is-busy': activeJobCount > 0 }"></span>
                         {{ connectionStatus }}
                     </span>
-                    <button class="btn btn-outline-warning btn-sm me-2" @click="toggleFavoritesPanel" title="收藏">
+                    <button class="btn btn-outline-warning btn-sm me-2" @click="toggleFavoritesPanel" title="本地收藏">
                         <i class="bi" :class="showFavoritesPanel ? 'bi-star-fill' : 'bi-star'"></i>
-                        收藏
+                        本地收藏
                         <span class="badge bg-dark text-warning border border-warning ms-1">{{ favoriteCount }}</span>
                     </button>
+                    <a class="btn btn-outline-info btn-sm me-2 rp-admin-link" href="/admin/" title="管理控制台">
+                        <i class="bi bi-shield-lock"></i>
+                        <span class="rp-admin-link-label ms-1">管理控制台</span>
+                    </a>
                     <button class="btn btn-outline-light btn-sm" @click="openSettings">
                         <i class="bi bi-gear"></i> 设置
                     </button>
@@ -76,6 +84,97 @@
 
         <!-- 主内容区 -->
         <main>
+            <!-- 资源库（统一库只读 / 我的本地） -->
+            <section v-show="mainView === 'library'" class="rp-library mb-4">
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h5 class="mb-0 text-light"><i class="bi bi-collection"></i> 资源库</h5>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <span class="badge bg-secondary">{{ catalogSourceLabel }}</span>
+                            <button class="btn btn-outline-light btn-sm" @click="loadCatalogIfNeeded(true)" :disabled="libraryLoading">
+                                <i class="bi bi-arrow-repeat"></i> 刷新
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <ul class="nav nav-tabs rp-tabs mb-3">
+                            <li class="nav-item" v-for="k in [{id:'template',label:'工作流模板'},{id:'preset',label:'提示词预设'},{id:'snippet',label:'片段'}]" :key="k.id">
+                                <button class="nav-link" :class="{ active: libraryKind === k.id }" @click="libraryKind = k.id; libraryCategory = ''">{{ k.label }}</button>
+                            </li>
+                        </ul>
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                            <div class="btn-group" role="group" aria-label="资源来源">
+                                <button class="btn btn-sm" :class="librarySource === 'shared' ? 'btn-primary' : 'btn-outline-secondary'" @click="librarySource = 'shared'">统一库</button>
+                                <button class="btn btn-sm" :class="librarySource === 'local' ? 'btn-primary' : 'btn-outline-secondary'" @click="librarySource = 'local'">我的本地</button>
+                            </div>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary rp-library-search" v-model="librarySearch" placeholder="搜索名称/分类">
+                                <select class="form-select form-select-sm bg-dark text-light border-secondary" v-model="libraryCategory" v-if="libraryCategories.length > 0">
+                                    <option value="">全部分类</option>
+                                    <option v-for="c in libraryCategories" :key="c" :value="c">{{ c }}</option>
+                                </select>
+                                <template v-if="librarySource === 'local'">
+                                    <button class="btn btn-outline-info btn-sm" @click="exportLocalKind"><i class="bi bi-download"></i> 导出</button>
+                                    <button class="btn btn-outline-warning btn-sm" @click="triggerLocalImport"><i class="bi bi-upload"></i> 导入</button>
+                                    <input type="file" ref="localImportFile" class="d-none" accept=".json" @change="handleLocalImportFile">
+                                </template>
+                            </div>
+                        </div>
+                        <div v-if="catalogStatus === 'offline'" class="alert alert-warning py-2">
+                            <i class="bi bi-wifi-off"></i> 离线数据 · 最后同步 {{ catalogCacheAgeLabel }}（只读，本地资源不受影响）
+                        </div>
+                        <div v-if="catalogError" class="alert alert-danger py-2 d-flex justify-content-between align-items-center gap-2">
+                            <span><i class="bi bi-exclamation-circle"></i> {{ catalogError }}</span>
+                            <button class="btn btn-outline-light btn-sm" @click="loadCatalogIfNeeded(true)">重试</button>
+                        </div>
+                        <div v-if="libraryLoading" class="row g-3">
+                            <div v-for="n in 3" :key="n" class="col-12 col-md-6 col-xl-4"><div class="rp-library-skeleton"></div></div>
+                        </div>
+                        <div v-else-if="libraryItems.length === 0" class="text-muted text-center py-5">
+                            <div class="fs-4 mb-2"><i class="bi bi-collection"></i></div>
+                            <div v-if="librarySource === 'shared' && catalogStatus === 'error'">统一库暂不可用，本地与内置模板仍可使用。</div>
+                            <div v-else-if="librarySource === 'shared'">统一库暂无已发布内容</div>
+                            <div v-else>本地还没有内容，可从统一库复制或导入 JSON</div>
+                        </div>
+                        <div v-else class="row g-3">
+                            <div v-for="item in libraryItems" :key="librarySource + ':' + item.id" class="col-12 col-md-6 col-xl-4">
+                                <div class="card bg-dark border-secondary h-100 rp-library-card">
+                                    <div class="card-body d-flex flex-column">
+                                        <div class="rp-library-preview" v-if="item.preview && !isPreviewBroken(item)">
+                                            <img :src="item.preview.url" :alt="item.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(item)">
+                                        </div>
+                                        <div class="rp-library-preview rp-library-preview-empty" v-else>
+                                            <i class="bi bi-image" aria-hidden="true"></i>
+                                            <span class="visually-hidden">暂无预览图</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-start gap-2">
+                                            <div class="text-light fw-semibold text-break">{{ item.name }}</div>
+                                            <span class="badge" :class="librarySource === 'shared' ? 'bg-info text-dark' : 'bg-secondary'">{{ librarySource === 'shared' ? '统一库' : '本地' }}</span>
+                                        </div>
+                                        <div class="small text-muted mt-1 rp-clamp-2">{{ item.description || '暂无描述' }}</div>
+                                        <div class="small text-muted mt-2 d-flex flex-wrap gap-2">
+                                            <span v-if="item.category">{{ item.category }}</span>
+                                            <span v-if="librarySource === 'shared'">v{{ item.publishedRevision === null ? '-' : item.publishedRevision }}</span>
+                                            <span v-if="librarySource === 'local' && item.sourceId">来源 v{{ item.sourceRevision === null ? '-' : item.sourceRevision }} · 未跟随</span>
+                                        </div>
+                                        <div class="d-flex gap-2 flex-wrap mt-3 pt-2 border-top border-secondary">
+                                            <button class="btn btn-outline-primary btn-sm" @click="useLibraryItem(item)" :disabled="libraryDetailLoadingId === item.id">{{ libraryUseLabel }}</button>
+                                            <button v-if="librarySource === 'shared'" class="btn btn-outline-light btn-sm" @click="copyLibraryItemToLocal(item)" :disabled="libraryDetailLoadingId === item.id">复制到本地</button>
+                                            <template v-else>
+                                                <button class="btn btn-outline-secondary btn-sm" @click="openRenameLocalItem(item)">重命名</button>
+                                                <button class="btn btn-outline-danger btn-sm" @click="deleteLibraryLocalItem(item)">删除</button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div v-show="mainView === 'generate'" class="rp-gen-layout">
+            <div class="rp-gen-main">
             <!-- 未配置引导 -->
             <div v-if="!isConfigured" class="rp-onboarding" role="alert">
                 <div class="rp-onboarding-icon"><i class="bi bi-rocket-takeoff"></i></div>
@@ -110,9 +209,14 @@
                                         v-model="selectedTemplateId"
                                         :disabled="isParamsLocked">
                                     <option value="">-- 自定义 Workflow --</option>
-                                    <optgroup label="内置模板">
-                                        <option v-for="t in builtinTemplates" :key="t.id" :value="t.id">
+                                    <optgroup label="内置模板" v-if="visibleBuiltinTemplates.length > 0">
+                                        <option v-for="t in visibleBuiltinTemplates" :key="t.id" :value="t.id">
                                             {{ t.name }}
+                                        </option>
+                                    </optgroup>
+                                    <optgroup label="统一库模板" v-if="catalogTemplateItems.length > 0">
+                                        <option v-for="t in catalogTemplateItems" :key="t.id" :value="t.id">
+                                            {{ t.name }}{{ t.publishedRevision === null ? '' : ' · v' + t.publishedRevision }}
                                         </option>
                                     </optgroup>
                                     <optgroup label="我的模板" v-if="userTemplates.length > 0">
@@ -235,8 +339,8 @@
                                     <button class="btn btn-outline-secondary btn-sm" @click.stop="togglePromptInputOptions" title="输入选项">
                                         <i class="bi bi-sliders"></i>
                                     </button>
-                                    <button class="btn btn-outline-warning btn-sm" @click.stop="openPromptPresets">
-                                        <i class="bi bi-bookmark-star"></i> 预设
+                                    <button class="btn btn-outline-warning btn-sm" @click.stop="showQuickPromptPanel = !showQuickPromptPanel">
+                                        <i class="bi bi-bookmark-star"></i> 预设/片段
                                     </button>
                                     <i class="bi rp-param-chevron" :class="paramSectionsOpen.prompt ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
                                 </div>
@@ -303,6 +407,7 @@
                                          :placeholder="p.default"
                                          :disabled="isParamsLocked"
                                          :insert-options="promptInsertOptions"
+                                         :field-name="p.name"
                                      ></prompt-textarea>
                                 </div>
                             </div>
@@ -641,9 +746,52 @@
                     </div>
                 </div>
             </section>
+            </div>
+            <aside class="rp-gen-side">
+                <div class="card bg-dark border-secondary rp-quick-panel mb-3">
+                    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                        <span class="text-light fw-semibold"><i class="bi bi-bookmark-star"></i> 快捷提示词库</span>
+                        <button class="btn btn-outline-light btn-sm" @click="showQuickPromptPanel = !showQuickPromptPanel"><i class="bi" :class="showQuickPromptPanel ? 'bi-chevron-up' : 'bi-chevron-down'"></i></button>
+                    </div>
+                    <div class="card-body" v-show="showQuickPromptPanel">
+                        <div class="btn-group btn-group-sm mb-2">
+                            <button class="btn" :class="quickPromptTab === 'presets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'presets'">预设 {{ promptBlockPresets.length }}</button>
+                            <button class="btn" :class="quickPromptTab === 'snippets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'snippets'">片段 {{ promptSnippetPresets.length }}</button>
+                        </div>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2" v-model="quickPromptSearch" placeholder="搜索">
+                        <div class="rp-quick-list">
+                            <template v-if="quickPromptTab === 'presets'">
+                                <div v-for="p in quickPromptPresets" :key="p.id" class="rp-quick-item">
+                                    <span class="rp-quick-thumb" v-if="p.preview && !isPreviewBroken(p)">
+                                        <img :src="p.preview.url" :alt="p.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(p)">
+                                    </span>
+                                    <span class="rp-quick-thumb rp-quick-thumb-empty" v-else><i class="bi bi-image" aria-hidden="true"></i></span>
+                                    <span class="text-light small text-truncate flex-grow-1 min-w-0">{{ p.name }}</span>
+                                    <button class="btn btn-outline-primary btn-sm" @click="applyBlockPreset(p)">替换提示词</button>
+                                </div>
+                                <div v-if="quickPromptPresets.length === 0" class="text-muted small py-2">暂无预设</div>
+                            </template>
+                            <template v-else>
+                                <div v-for="s in quickPromptSnippets" :key="s.id" class="rp-quick-item">
+                                    <span class="rp-quick-thumb" v-if="s.preview && !isPreviewBroken(s)">
+                                        <img :src="s.preview.url" :alt="s.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(s)">
+                                    </span>
+                                    <span class="rp-quick-thumb rp-quick-thumb-empty" v-else><i class="bi bi-image" aria-hidden="true"></i></span>
+                                    <span class="text-light small text-truncate flex-grow-1 min-w-0">{{ s.name }}</span>
+                                    <button class="btn btn-outline-primary btn-sm" @click="insertSnippetToPrompt(s, s.target === 'negative' ? 'negative_prompt' : 'prompt')">插入片段</button>
+                                </div>
+                                <div v-if="quickPromptSnippets.length === 0" class="text-muted small py-2">暂无片段</div>
+                            </template>
+                        </div>
+                        <div class="d-flex gap-2 mt-2 flex-wrap">
+                            <button class="btn btn-outline-warning btn-sm" @click="openPromptPresets"><i class="bi bi-gear"></i> 管理预设/片段</button>
+                            <button v-if="promptUndo" class="btn btn-outline-light btn-sm" @click="undoPromptApply"><i class="bi bi-arrow-counterclockwise"></i> 撤销上次应用</button>
+                        </div>
+                    </div>
+                </div>
 
             <!-- 结果展示（请求历史 / 图库） -->
-            <section v-if="hasResultsSection" class="mb-4" id="results-section">
+            <section v-if="hasResultsSection" class="mb-4 rp-gen-results" :class="{ 'rp-mobile-open': mobileResultsOpen }" id="results-section">
                 <div class="card bg-dark border-secondary">
                     <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <h5 class="mb-0 text-light">
@@ -987,6 +1135,8 @@
                     </div>
                 </div>
             </section>
+            </aside>
+            </div>
 
             <!-- 固定底部操作栏 -->
             <section class="rp-action-bar">
@@ -995,6 +1145,9 @@
                 </div>
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div class="rp-generate-actions">
+                        <button class="btn btn-outline-light btn-lg rp-generate-btn d-lg-none" @click="mobileResultsOpen = !mobileResultsOpen">
+                            <i class="bi bi-images"></i> 结果
+                        </button>
                         <button class="btn btn-primary btn-lg rp-generate-btn rp-btn-generate"
                                 @click="generate"
                                 :disabled="!canGenerate || !canAcceptNewJob"
@@ -1178,6 +1331,11 @@
                             <div class="form-text text-muted">
                                 关闭后点击“生成”不再自动滚动到结果区，保持当前视图位置。
                             </div>
+                        </div>
+
+                        <div class="mb-3 d-flex align-items-center gap-2 flex-wrap">
+                            <a class="btn btn-outline-secondary btn-sm" href="/admin/"><i class="bi bi-shield-lock"></i> 管理员登录 / 管理后台</a>
+                            <span class="small text-muted">入口 /admin/（权限由接口校验）</span>
                         </div>
 
                         <!-- 测试连接 -->
@@ -1624,6 +1782,20 @@
         </div>
         <div v-if="pendingExposeInput" class="modal-backdrop fade show"></div>
 
+        <!-- 重命名弹窗 -->
+        <div v-if="renameState.show" class="rp-ui-dialog-backdrop" @click.self="renameState.show = false">
+            <div class="rp-ui-dialog card bg-dark border-secondary" role="dialog" aria-modal="true">
+                <div class="card-header border-secondary text-light fw-semibold">重命名本地资源</div>
+                <div class="card-body">
+                    <input type="text" class="form-control bg-dark text-light border-secondary" v-model="renameState.value" @keyup.enter="confirmRenameLocalItem">
+                </div>
+                <div class="card-footer border-secondary d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-light" @click="renameState.show = false">取消</button>
+                    <button class="btn btn-primary" @click="confirmRenameLocalItem">保存</button>
+                </div>
+            </div>
+        </div>
+
         <!-- 自定义确认弹窗 -->
         <div v-if="uiDialog.show" class="rp-ui-dialog-backdrop" @click.self="onUiDialogBackdropClick">
             <div class="rp-ui-dialog card bg-dark border-secondary" role="dialog" aria-modal="true">
@@ -1654,6 +1826,7 @@
     <script src="./js/vendor/cytoscape-dagre.js?v=20261105.1"></script>
     <script src="./js/settings.js?v=20261105.1"></script>
     <script src="./js/runpod-client.js?v=20261105.1"></script>
+    <script src="./js/catalog-client.js?v=20261110.1"></script>
     <script src="./js/templates.js?v=20261105.1"></script>
     <script src="./js/placeholders.js?v=20261105.1"></script>
     <script src="./js/workflow-editor.js?v=20261105.1"></script>

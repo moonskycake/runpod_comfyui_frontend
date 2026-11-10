@@ -283,6 +283,10 @@ const PromptTextareaComponent = {
             type: Boolean,
             default: false
         },
+        fieldName: {
+            type: String,
+            default: ''
+        },
         insertOptions: {
             type: Object,
             default: () => ({
@@ -311,6 +315,7 @@ const PromptTextareaComponent = {
                 :rows="rows"
                 :placeholder="placeholder"
                 :disabled="disabled"
+                :data-prompt-field="fieldName"
                 :value="modelValue"
                 @input="onInput"
                 @keydown="onKeydown"
@@ -780,6 +785,38 @@ const app = Vue.createApp({
             userTemplates: [],
             selectedTemplate: null,
 
+            // ========== 前台视图 / 统一库 ==========
+            mainView: 'generate', // 'generate' | 'library'
+            visibleBuiltinTemplates: [],
+            catalogStatus: 'idle', // 'idle' | 'loading' | 'ready' | 'offline' | 'error'
+            catalogVersion: 0,
+            catalogItems: [],
+            catalogError: '',
+            catalogEtag: '',
+            catalogSavedAt: null,
+            catalogAliasMap: {},
+            catalogDetails: {},
+            previewBroken: {},
+            libraryKind: 'template', // 'template' | 'preset' | 'snippet'
+            librarySource: 'shared', // 'shared' | 'local'
+            librarySearch: '',
+            libraryCategory: '',
+            libraryLoading: false,
+            libraryDetailLoadingId: '',
+            templateDetailLoadingId: '',
+            mobileResultsOpen: false,
+            showQuickPromptPanel: true,
+            quickPromptSearch: '',
+            quickPromptTab: 'presets', // 'presets' | 'snippets'
+            promptUndo: null,
+            lastPromptField: '',
+            renameState: {
+                show: false,
+                id: '',
+                kind: '',
+                value: ''
+            },
+
             // ========== Workflow 相关 ==========
             workflowJson: '',
             workflowError: '',
@@ -945,6 +982,7 @@ const app = Vue.createApp({
         },
 
         canGenerate() {
+            if (this.templateDetailLoadingId) return false;
             if (!this.isConfigured) return false;
             if (!this.workflowJson.trim()) return false;
             if (this.workflowError) return false;
@@ -967,6 +1005,8 @@ const app = Vue.createApp({
         },
 
         isParamsLocked() {
+            // 统一库模板详情加载中：禁止提交/改参数，避免用旧 workflow 提交
+            if (this.templateDetailLoadingId) return true;
             const s = this.effectiveGenerationSettings;
             if (!s.lockParamsOnGenerate) return false;
             return this.activeJobCount > 0;
@@ -997,11 +1037,134 @@ const app = Vue.createApp({
         },
 
         canUpdateTemplate() {
-            return this.selectedTemplate && !this.selectedTemplate.isBuiltin && this.canSaveTemplate;
+            return this.selectedTemplate && !TemplateManager.isReadonly(this.selectedTemplate) && this.canSaveTemplate;
         },
 
         canDeleteTemplate() {
-            return this.selectedTemplate && !this.selectedTemplate.isBuiltin;
+            return this.selectedTemplate && !TemplateManager.isReadonly(this.selectedTemplate);
+        },
+
+        // ========== 统一库 / 本地资源 ==========
+        isCatalogOnline() {
+            return this.catalogStatus === 'ready';
+        },
+
+        catalogCacheAgeLabel() {
+            return CatalogClient.formatCacheAge(this.catalogSavedAt);
+        },
+
+        catalogSourceLabel() {
+            if (this.catalogStatus === 'offline') {
+                return `离线数据 · 最后同步 ${this.catalogCacheAgeLabel}`;
+            }
+            if (this.catalogStatus === 'loading') return '同步中...';
+            if (this.catalogStatus === 'error') return '统一库暂不可用';
+            return `统一库 v${this.catalogVersion || 0}`;
+        },
+
+        catalogTemplateItems() {
+            return (this.catalogItems || []).filter(item => item && item.kind === 'template');
+        },
+
+        libraryLocalItems() {
+            const kind = this.libraryKind;
+            if (kind === 'template') {
+                return (this.userTemplates || []).map(t => ({
+                    id: t.id,
+                    kind: 'template',
+                    name: t.name,
+                    description: t.description || '',
+                    category: '',
+                    source: CatalogClient.sourceOf(t),
+                    isBuiltin: !!t.isBuiltin,
+                    sourceId: t.sourceId || '',
+                    sourceRevision: Number.isFinite(Number(t.sourceRevision)) ? Number(t.sourceRevision) : null,
+                    preview: CatalogClient.normalizePreview(t.preview),
+                    updatedAt: t.updatedAt || t.createdAt || null
+                }));
+            }
+            if (kind === 'preset') {
+                return (this.promptBlockPresets || []).map(p => ({
+                    id: p.id,
+                    kind: 'preset',
+                    name: p.name,
+                    description: [p.prompt ? `正: ${p.prompt}` : '', p.negative_prompt ? `负: ${p.negative_prompt}` : ''].filter(Boolean).join(' · '),
+                    category: '',
+                    source: CatalogClient.sourceOf(p),
+                    sourceId: p.sourceId || '',
+                    sourceRevision: Number.isFinite(Number(p.sourceRevision)) ? Number(p.sourceRevision) : null,
+                    preview: CatalogClient.normalizePreview(p.preview),
+                    updatedAt: p.updatedAt || p.createdAt || null
+                }));
+            }
+            return (this.promptSnippetPresets || []).map(s => ({
+                id: s.id,
+                kind: 'snippet',
+                name: s.name,
+                description: s.text || '',
+                category: '',
+                source: CatalogClient.sourceOf(s),
+                sourceId: s.sourceId || '',
+                sourceRevision: Number.isFinite(Number(s.sourceRevision)) ? Number(s.sourceRevision) : null,
+                preview: CatalogClient.normalizePreview(s.preview),
+                target: s.target === 'negative' ? 'negative' : 'positive',
+                updatedAt: s.updatedAt || s.createdAt || null
+            }));
+        },
+
+        libraryItems() {
+            const sourceItems = this.librarySource === 'shared'
+                ? (this.catalogItems || [])
+                : this.libraryLocalItems;
+            const q = String(this.librarySearch || '').trim().toLowerCase();
+            const category = String(this.libraryCategory || '').trim();
+            return sourceItems.filter(item => {
+                if (!item || item.kind !== this.libraryKind) return false;
+                if (category && String(item.category || '') !== category) return false;
+                if (!q) return true;
+                const haystack = [item.name, item.description, item.category].map(v => String(v || '').toLowerCase()).join('\n');
+                return haystack.includes(q);
+            });
+        },
+
+        libraryCategories() {
+            const sourceItems = this.librarySource === 'shared' ? (this.catalogItems || []) : this.libraryLocalItems;
+            const values = new Set();
+            sourceItems.forEach(item => {
+                if (!item || item.kind !== this.libraryKind) return;
+                const c = String(item.category || '').trim();
+                if (c) values.add(c);
+            });
+            return Array.from(values).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+        },
+
+        libraryKindLabel() {
+            if (this.libraryKind === 'template') return '工作流模板';
+            if (this.libraryKind === 'preset') return '提示词预设';
+            return '片段';
+        },
+
+        libraryUseLabel() {
+            if (this.libraryKind === 'template') return '使用模板';
+            if (this.libraryKind === 'preset') return '替换提示词';
+            return '插入片段';
+        },
+
+        quickPromptPresets() {
+            const q = String(this.quickPromptSearch || '').trim().toLowerCase();
+            const list = Array.isArray(this.promptBlockPresets) ? this.promptBlockPresets : [];
+            if (!q) return list;
+            return list.filter(p => p && (String(p.name || '').toLowerCase().includes(q)
+                || String(p.prompt || '').toLowerCase().includes(q)
+                || String(p.negative_prompt || '').toLowerCase().includes(q)));
+        },
+
+        quickPromptSnippets() {
+            const q = String(this.quickPromptSearch || '').trim().toLowerCase();
+            const list = Array.isArray(this.promptSnippetPresets) ? this.promptSnippetPresets : [];
+            if (!q) return list;
+            return list.filter(s => s && (String(s.name || '').toLowerCase().includes(q)
+                || String(s.text || '').toLowerCase().includes(q)));
         },
 
         canTestConnection() {
@@ -1388,6 +1551,8 @@ const app = Vue.createApp({
         // 加载内置模板
         TemplateManager.setBuiltinTemplates(window.BuiltinTemplates || []);
         this.builtinTemplates = TemplateManager.builtinTemplates;
+        this.visibleBuiltinTemplates = this.builtinTemplates.slice();
+        this.catalogAliasMap = CatalogClient.loadAliasMap(localStorage);
         this.loadUserTemplates();
 
         // 恢复上次选择的模板（工作流）
@@ -1402,6 +1567,19 @@ const app = Vue.createApp({
 
         // 加载提示词预设
         this.loadPromptPresets();
+
+        // 统一库为增强能力：后台不可用时保持内置/本地工作流可生成
+        this.loadCatalogIfNeeded();
+
+        this._promptCaretHandler = (event) => {
+            const el = event && event.target;
+            if (!el || el.tagName !== 'TEXTAREA') return;
+            this.recordPromptCaret(el);
+        };
+        document.addEventListener('focusin', this._promptCaretHandler);
+        document.addEventListener('keyup', this._promptCaretHandler);
+        document.addEventListener('mouseup', this._promptCaretHandler);
+        document.addEventListener('input', this._promptCaretHandler);
 
         // 全局按键（图片预览）
         window.addEventListener('keydown', this.onGlobalKeydown);
@@ -1424,6 +1602,13 @@ const app = Vue.createApp({
     beforeUnmount() {
         window.removeEventListener('keydown', this.onGlobalKeydown);
         window.removeEventListener('resize', this.onWindowResize);
+        if (this._promptCaretHandler) {
+            document.removeEventListener('focusin', this._promptCaretHandler);
+            document.removeEventListener('keyup', this._promptCaretHandler);
+            document.removeEventListener('mouseup', this._promptCaretHandler);
+            document.removeEventListener('input', this._promptCaretHandler);
+            this._promptCaretHandler = null;
+        }
         if (this._uiNoticeHandler) {
             window.removeEventListener('runpod:ui-notice', this._uiNoticeHandler);
             this._uiNoticeHandler = null;
@@ -1474,14 +1659,14 @@ const app = Vue.createApp({
         selectedTemplateId(newVal, oldVal) {
             this.persistSelectedTemplateId();
 
-            // 切换模板时，尽量保持当前参数不变（仅在新模板不存在该占位符时自然丢弃）
-            if (newVal && newVal !== oldVal) {
-                const cur = this.placeholderValues || {};
-                const keep = deepCloneJson(cur);
-
-                // 记录下来，等模板 defaults 应用后再覆盖一次，确保“模板不影响参数”
-                this._templateSwitchKeepValues = keep;
-
+            // 切换模板：先保存旧模板自己的草稿，再载入目标模板的草稿（无则默认值）
+            if (newVal !== oldVal) {
+                // 只保存“实际已应用”模板的草稿：未应用/挂起的 oldVal 不写，避免把当前值当成它的草稿
+                if (oldVal && this.selectedTemplate && this.selectedTemplate.id === oldVal) {
+                    this.persistTemplateDraftFor(oldVal, this.placeholderValues);
+                }
+                this._pendingTemplateDraft = this.loadTemplateDraftFor(newVal);
+                this._templateSwitchKeepValues = null;
                 this.selectedSizePreset = '';
                 this.showPromptInputOptions = false;
             }
@@ -1510,6 +1695,12 @@ const app = Vue.createApp({
 
         workflowJson(val) {
             this.parseWorkflow();
+        },
+
+        mainView(val) {
+            if (val === 'library') {
+                this.loadCatalogIfNeeded();
+            }
         },
 
         workflowView(val) {
@@ -2095,16 +2286,15 @@ const app = Vue.createApp({
                     });
                 }
 
-                // 模板切换时保留当前参数（仅保留新模板中存在的占位符）
-                if (this._templateSwitchKeepValues) {
-                    const keep = this._templateSwitchKeepValues;
+                // 模板切换：优先恢复该模板自己的草稿，否则使用模板默认值
+                if (this._pendingTemplateDraft) {
+                    const draft = this._pendingTemplateDraft;
                     const next = { ...(this.placeholderValues || {}) };
-                    Object.keys(keep).forEach(key => {
-                        if (!Object.prototype.hasOwnProperty.call(next, key)) return;
-                        next[key] = keep[key];
+                    Object.keys(draft).forEach(key => {
+                        if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = draft[key];
                     });
                     this.placeholderValues = next;
-                    this._templateSwitchKeepValues = null;
+                    this._pendingTemplateDraft = null;
                 }
 
                 this.applyLastPlaceholderValuesIfNeeded();
@@ -2151,15 +2341,14 @@ const app = Vue.createApp({
                     });
                 }
 
-                if (this._templateSwitchKeepValues) {
-                    const keep = this._templateSwitchKeepValues;
+                if (this._pendingTemplateDraft) {
+                    const draft = this._pendingTemplateDraft;
                     const next = { ...(this.placeholderValues || {}) };
-                    Object.keys(keep).forEach(key => {
-                        if (!Object.prototype.hasOwnProperty.call(next, key)) return;
-                        next[key] = keep[key];
+                    Object.keys(draft).forEach(key => {
+                        if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = draft[key];
                     });
                     this.placeholderValues = next;
-                    this._templateSwitchKeepValues = null;
+                    this._pendingTemplateDraft = null;
                 }
 
                 this.applyLastPlaceholderValuesIfNeeded();
@@ -2269,6 +2458,7 @@ const app = Vue.createApp({
                     templateId: this.selectedTemplateId || '',
                     values
                 }));
+                this.persistTemplateDraftFor(this.selectedTemplateId, values);
             } catch (e) {
                 // ignore
             }
@@ -2420,6 +2610,16 @@ const app = Vue.createApp({
             this.promptBlockPresets = Array.isArray(blocks) ? blocks.filter(p => p && p.id && p.name) : [];
             this.promptSnippetPresets = Array.isArray(snippets) ? snippets.filter(s => s && s.id && s.name) : [];
 
+            // localStorage 不可信：只保留站内 revision 预览路径，外链/坏结构直接丢弃
+            this.promptBlockPresets = this.promptBlockPresets.map(p => ({
+                ...p,
+                preview: CatalogClient.normalizePreview(p.preview)
+            }));
+            this.promptSnippetPresets = this.promptSnippetPresets.map(s => ({
+                ...s,
+                preview: CatalogClient.normalizePreview(s.preview)
+            }));
+
             // 最新在前
             this.promptBlockPresets.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
             this.promptSnippetPresets.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
@@ -2494,14 +2694,11 @@ const app = Vue.createApp({
 
         applyBlockPreset(p) {
             if (!p) return;
-
-            if (this.placeholderValues && this.placeholderValues.prompt !== undefined) {
-                this.placeholderValues.prompt = String(p.prompt || '');
-            }
-            if (this.placeholderValues && this.placeholderValues.negative_prompt !== undefined) {
-                this.placeholderValues.negative_prompt = String(p.negative_prompt || '');
-            }
-
+            this.applyPromptPresetContent({
+                positive: p.prompt,
+                negative: p.negative_prompt,
+                label: `预设「${p.name || '未命名'}」`
+            });
             this.appliedBlockPresetId = p.id;
             this.setPromptPresetMessage('已应用预设', 'success');
         },
@@ -2653,23 +2850,8 @@ const app = Vue.createApp({
         insertSnippetToPrompt(s, field) {
             if (!s || !s.text) return;
             const f = field === 'negative_prompt' ? 'negative_prompt' : 'prompt';
-            if (!this.placeholderValues || this.placeholderValues[f] === undefined) return;
-
-            const snippet = String(s.text || '').trim();
-            if (!snippet) return;
-
-            const cur = String(this.placeholderValues[f] || '').trim();
-            let next;
-            if (!cur) {
-                next = snippet;
-            } else if (/[,，]\s*$/.test(cur)) {
-                next = cur + ' ' + snippet;
-            } else {
-                next = cur + ', ' + snippet;
-            }
-
-            this.placeholderValues[f] = next;
-
+            const ok = this.insertSnippetText(String(s.text || ''), f, `片段「${s.name || '未命名'}」`);
+            if (!ok) return;
             const label = f === 'negative_prompt' ? '负向' : '正向';
             this.setPromptPresetMessage(`已插入到${label}提示词`, 'success');
         },
@@ -2684,6 +2866,544 @@ const app = Vue.createApp({
             this.promptSnippetPresets = (this.promptSnippetPresets || []).filter(x => x && x.id !== s.id);
             this.persistPromptPresets();
             this.setPromptPresetMessage('已删除片段', 'success');
+        },
+
+        // ========== 前台视图 / 资源库 ==========
+
+        // 预览图（固定尺寸 / broken 回退）：带参数，必须注册为 methods
+        previewDomKey(item) {
+            if (!item) return '';
+            const preview = item.preview || null;
+            const rev = item.sourceRevision !== undefined && item.sourceRevision !== null
+                ? item.sourceRevision
+                : (item.publishedRevision !== undefined && item.publishedRevision !== null ? item.publishedRevision : '');
+            return `${String(item.id || '')}@${rev}@${preview && preview.url ? preview.url : ''}`;
+        },
+
+        isPreviewBroken(item) {
+            const key = this.previewDomKey(item);
+            return !!(key && this.previewBroken && this.previewBroken[key]);
+        },
+
+        markPreviewBroken(item) {
+            const key = this.previewDomKey(item);
+            if (!key) return;
+            this.previewBroken = { ...(this.previewBroken || {}), [key]: true };
+        },
+
+        switchMainView(view) {
+            this.mainView = view === 'library' ? 'library' : 'generate';
+        },
+
+        openLocalFavorites() {
+            this.openFavoritesPanel();
+        },
+
+        async loadCatalogIfNeeded(force) {
+            if (this.libraryLoading) return;
+            if (!force && (this.catalogStatus === 'ready' || this.catalogStatus === 'offline')) return;
+            this.libraryLoading = true;
+            this.catalogStatus = 'loading';
+            this.catalogError = '';
+            try {
+                const result = await CatalogClient.fetchCatalog({ etag: force ? '' : this.catalogEtag });
+                if (!result.notModified && result.catalog) {
+                    this.catalogItems = result.catalog.items;
+                    this.catalogVersion = result.catalog.catalogVersion;
+                    this.catalogEtag = result.etag || '';
+                    this.catalogSavedAt = Date.now();
+                    this.catalogAliasMap = CatalogClient.updateAliasMap(this.catalogAliasMap, this.catalogItems);
+                    CatalogClient.saveAliasMap(localStorage, this.catalogAliasMap);
+                    CatalogClient.saveCache(localStorage, result.catalog, this.catalogSavedAt);
+                    this.visibleBuiltinTemplates = CatalogClient.visibleBuiltinTemplates(
+                        this.builtinTemplates, this.catalogAliasMap, true
+                    );
+                    this.catalogStatus = 'ready';
+                } else {
+                    this.catalogStatus = this.catalogVersion ? 'ready' : 'idle';
+                }
+            } catch (e) {
+                const cached = CatalogClient.loadCache(localStorage);
+                if (cached) {
+                    this.catalogItems = cached.items;
+                    this.catalogVersion = cached.catalogVersion;
+                    this.catalogSavedAt = cached.savedAt;
+                    this.catalogStatus = 'offline';
+                    this.catalogError = '';
+                    this.visibleBuiltinTemplates = CatalogClient.visibleBuiltinTemplates(
+                        this.builtinTemplates, this.catalogAliasMap, false, cached.items
+                    );
+                } else {
+                    this.catalogStatus = 'error';
+                    this.catalogError = e && e.message ? e.message : '统一库加载失败';
+                }
+                // 任何失败都不影响内置/本地模板继续使用
+            } finally {
+                this.libraryLoading = false;
+            }
+        },
+
+        async loadCatalogDetail(id, publishedRevision) {
+            if (!id) throw new Error('缺少资源 ID');
+            const cached = this.catalogDetails[id];
+            const expected = publishedRevision === undefined || publishedRevision === null ? null : Number(publishedRevision);
+            if (cached && (expected === null || Number(cached.publishedRevision) === expected)) return cached;
+            const diskCached = expected === null ? null : CatalogClient.getCachedDetail(localStorage, id, expected);
+            if (diskCached) {
+                this.catalogDetails = { ...this.catalogDetails, [id]: diskCached };
+                return diskCached;
+            }
+            this.libraryDetailLoadingId = id;
+            try {
+                const detail = await CatalogClient.fetchCatalogDetail(id);
+                this.catalogDetails = { ...this.catalogDetails, [id]: detail };
+                CatalogClient.saveDetailCache(localStorage, detail);
+                return detail;
+            } catch (e) {
+                if (cached && expected !== null && Number(cached.publishedRevision) === expected) return cached;
+                if (diskCached) return diskCached;
+                throw e;
+            } finally {
+                this.libraryDetailLoadingId = '';
+            }
+        },
+
+        async useLibraryItem(item) {
+            if (!item) return;
+            const source = CatalogClient.sourceOf(item);
+            if (source === 'local') return this.useLocalLibraryItem(item);
+            if (item.kind === 'template') return this.useCatalogTemplate(item);
+            if (item.kind === 'preset') return this.useCatalogPreset(item);
+            return this.useCatalogSnippet(item);
+        },
+
+        // 本地资源只读本地记录：local:* 在服务端不存在，绝不请求共享详情
+        useLocalLibraryItem(item) {
+            const id = String(item.id || '');
+            if (item.kind === 'template') {
+                const tpl = (this.userTemplates || []).find(t => t && t.id === id)
+                    || TemplateManager.get(id);
+                if (!tpl || !tpl.workflow) {
+                    this.showUiToast('本地模板不存在或已删除', 'warning');
+                    this.loadUserTemplates();
+                    return;
+                }
+                this.mainView = 'generate';
+                if (this.selectedTemplateId === tpl.id) {
+                    this.applyTemplateToEditor(tpl);
+                } else {
+                    this.selectedTemplateId = tpl.id;
+                }
+                this.showUiToast('已载入本地模板', 'success');
+                return;
+            }
+            if (item.kind === 'preset') {
+                const preset = (this.promptBlockPresets || []).find(p => p && p.id === id);
+                if (!preset) {
+                    this.showUiToast('本地预设不存在或已删除', 'warning');
+                    return;
+                }
+                this.applyPromptPresetContent({
+                    positive: preset.prompt,
+                    negative: preset.negative_prompt,
+                    label: `本地预设「${preset.name || '未命名'}」`
+                });
+                this.mainView = 'generate';
+                this.showUiToast('已替换提示词', 'success');
+                return;
+            }
+            const snippet = (this.promptSnippetPresets || []).find(s => s && s.id === id);
+            if (!snippet) {
+                this.showUiToast('本地片段不存在或已删除', 'warning');
+                return;
+            }
+            const ok = this.insertSnippetToPrompt(
+                snippet,
+                snippet.target === 'negative' ? 'negative_prompt' : 'prompt'
+            );
+            if (ok !== false) this.mainView = 'generate';
+        },
+
+        buildSharedTemplate(detail) {
+            const data = (detail && detail.data) || {};
+            return {
+                id: detail.id,
+                schemaVersion: Number(data.schemaVersion || 2),
+                name: detail.name,
+                description: detail.description,
+                workflow: data.workflow,
+                defaults: data.defaults || {},
+                editor: data.editor || {},
+                isBuiltin: false,
+                source: 'shared',
+                sourceId: detail.id,
+                sourceRevision: detail.publishedRevision
+            };
+        },
+
+        useCatalogTemplate(item) {
+            if (!item || !item.id) return;
+            this.mainView = 'generate';
+            if (this.selectedTemplateId === item.id) return this.onTemplateSelect();
+            this.selectedTemplateId = item.id;
+        },
+
+        async useCatalogPreset(item) {
+            try {
+                const detail = await this.loadCatalogDetail(item.id, item.publishedRevision);
+                const data = detail.data || {};
+                this.applyPromptPresetContent({
+                    positive: data.positive,
+                    negative: data.negative,
+                    label: `统一库预设「${detail.name}」`
+                });
+                this.mainView = 'generate';
+                this.showUiToast('已替换提示词', 'success');
+            } catch (e) {
+                this.catalogError = e && e.message ? e.message : '预设载入失败';
+                this.showUiToast(this.catalogError, 'danger');
+            }
+        },
+
+        async useCatalogSnippet(item) {
+            try {
+                const detail = await this.loadCatalogDetail(item.id, item.publishedRevision);
+                const data = detail.data || {};
+                const target = data.target === 'negative' ? 'negative_prompt' : 'prompt';
+                const ok = this.insertSnippetText(data.text, target, `统一库片段「${detail.name}」`);
+                if (ok) this.mainView = 'generate';
+            } catch (e) {
+                this.catalogError = e && e.message ? e.message : '片段载入失败';
+                this.showUiToast(this.catalogError, 'danger');
+            }
+        },
+
+        async copyLibraryItemToLocal(item) {
+            if (!item || CatalogClient.sourceOf(item) !== 'shared') return;
+            try {
+                const detail = await this.loadCatalogDetail(item.id, item.publishedRevision);
+                if (item.kind === 'template') {
+                    const names = (this.builtinTemplates || []).concat(this.userTemplates || []).map(t => t.name);
+                    const name = CatalogClient.uniqueCopyName(detail.name, names);
+                    const data = detail.data || {};
+                    TemplateManager.add({
+                        schemaVersion: Number(data.schemaVersion || 2),
+                        name,
+                        description: detail.description,
+                        workflow: data.workflow,
+                        defaults: data.defaults || {},
+                        editor: data.editor || {},
+                        source: 'local',
+                        sourceId: detail.id,
+                        sourceRevision: detail.publishedRevision,
+                        preview: CatalogClient.pinPreview(detail.preview || item.preview, detail.id, detail.publishedRevision)
+                    });
+                    this.loadUserTemplates();
+                } else if (item.kind === 'preset') {
+                    const names = (this.promptBlockPresets || []).map(p => p.name);
+                    const name = CatalogClient.uniqueCopyName(detail.name, names);
+                    const data = detail.data || {};
+                    this.promptBlockPresets = [{
+                        id: CatalogClient.newLocalId('preset'),
+                        name,
+                        prompt: String(data.positive || ''),
+                        negative_prompt: String(data.negative || ''),
+                        source: 'local',
+                        sourceId: detail.id,
+                        sourceRevision: detail.publishedRevision,
+                        preview: CatalogClient.pinPreview(detail.preview || item.preview, detail.id, detail.publishedRevision),
+                        createdAt: Date.now(),
+                        updatedAt: Date.now()
+                    }, ...(this.promptBlockPresets || [])];
+                    this.persistPromptPresets();
+                } else {
+                    const names = (this.promptSnippetPresets || []).map(s => s.name);
+                    const name = CatalogClient.uniqueCopyName(detail.name, names);
+                    const data = detail.data || {};
+                    this.promptSnippetPresets = [{
+                        id: CatalogClient.newLocalId('snippet'),
+                        name,
+                        text: String(data.text || ''),
+                        target: data.target === 'negative' ? 'negative' : 'positive',
+                        source: 'local',
+                        sourceId: detail.id,
+                        sourceRevision: detail.publishedRevision,
+                        preview: CatalogClient.pinPreview(detail.preview || item.preview, detail.id, detail.publishedRevision),
+                        createdAt: Date.now(),
+                        updatedAt: Date.now()
+                    }, ...(this.promptSnippetPresets || [])];
+                    this.persistPromptPresets();
+                }
+                this.showUiToast('已复制到本地（不自动跟随后台更新）', 'success');
+            } catch (e) {
+                this.showUiToast(e && e.message ? e.message : '复制失败', 'danger');
+            }
+        },
+
+        // ========== 提示词应用撤销 / 片段插入 ==========
+        applyPromptPresetContent(content) {
+            const values = this.placeholderValues || {};
+            const next = { ...values };
+            const hasPositive = Object.prototype.hasOwnProperty.call(next, 'prompt');
+            const hasNegative = Object.prototype.hasOwnProperty.call(next, 'negative_prompt');
+            if (!hasPositive && !hasNegative) {
+                this.showUiToast('当前模板没有提示词占位符', 'warning');
+                return false;
+            }
+            this.promptUndo = {
+                prompt: hasPositive ? String(values.prompt || '') : undefined,
+                negative_prompt: hasNegative ? String(values.negative_prompt || '') : undefined,
+                label: String((content && content.label) || '预设')
+            };
+            if (hasPositive) next.prompt = String(content && content.positive || '');
+            if (hasNegative) next.negative_prompt = String(content && content.negative || '');
+            this.placeholderValues = next;
+            return true;
+        },
+
+        undoPromptApply() {
+            const undo = this.promptUndo;
+            if (!undo) return;
+            const next = { ...(this.placeholderValues || {}) };
+            if (undo.prompt !== undefined) next.prompt = undo.prompt;
+            if (undo.negative_prompt !== undefined) next.negative_prompt = undo.negative_prompt;
+            this.placeholderValues = next;
+            this.promptUndo = null;
+            this.showUiToast('已撤销上次提示词应用', 'info');
+        },
+
+        recordPromptCaret(el) {
+            if (!el || !el.dataset || !el.dataset.promptField) return;
+            this.lastPromptField = el.dataset.promptField;
+            this._lastPromptCaret = {
+                field: el.dataset.promptField,
+                start: Number.isFinite(el.selectionStart) ? el.selectionStart : 0,
+                end: Number.isFinite(el.selectionEnd) ? el.selectionEnd : 0,
+                el
+            };
+        },
+
+        resolveSnippetField(targetField) {
+            const field = targetField === 'negative_prompt' ? 'negative_prompt' : 'prompt';
+            const record = this._lastPromptCaret;
+            if (record && record.field && this.placeholderValues
+                && Object.prototype.hasOwnProperty.call(this.placeholderValues, record.field)) {
+                return record;
+            }
+            return null;
+        },
+
+        insertSnippetText(text, targetField, label) {
+            const snippet = String(text || '').trim();
+            if (!snippet) return false;
+            const target = targetField === 'negative_prompt' ? 'negative_prompt' : 'prompt';
+            const record = this.resolveSnippetField(target);
+            const field = record ? record.field : target;
+            if (!this.placeholderValues || !Object.prototype.hasOwnProperty.call(this.placeholderValues, field)) {
+                this.showUiToast('当前模板没有可插入的提示词字段', 'warning');
+                return false;
+            }
+
+            const values = { ...(this.placeholderValues || {}) };
+            const before = String(values[field] || '');
+            let start = record ? record.start : before.length;
+            let end = record ? record.end : before.length;
+            start = Math.max(0, Math.min(start, before.length));
+            end = Math.max(start, Math.min(end, before.length));
+
+            let insert = snippet;
+            const leftRaw = before.slice(0, start);
+            const rightRaw = before.slice(end);
+            if (leftRaw && !/[,，\n]\s*$/.test(leftRaw)) insert = ', ' + insert;
+            if (rightRaw && !/^\s*[,，\n]/.test(rightRaw)) insert = insert + ', ';
+            const nextValue = before.slice(0, start) + insert + before.slice(end);
+            const prevPrompt = String(values.prompt !== undefined ? values.prompt : '');
+            const prevNegative = String(values.negative_prompt !== undefined ? values.negative_prompt : '');
+            values[field] = nextValue;
+            this.placeholderValues = values;
+
+            const caret = start + insert.length;
+            this._lastPromptCaret = record ? { ...record, start: caret, end: caret } : null;
+            this.$nextTick(() => {
+                const el = record && record.el && document.contains(record.el) ? record.el : null;
+                if (el) {
+                    el.focus();
+                    try { el.setSelectionRange(caret, caret); } catch (e) { /* ignore */ }
+                }
+            });
+            this.promptUndo = {
+                prompt: Object.prototype.hasOwnProperty.call(values, 'prompt') ? prevPrompt : undefined,
+                negative_prompt: Object.prototype.hasOwnProperty.call(values, 'negative_prompt') ? prevNegative : undefined,
+                label: String(label || '片段')
+            };
+            if (label) this.showUiToast(`已应用${label}`, 'success');
+            return true;
+        },
+
+        // ========== 模板草稿（按模板隔离） ==========
+        templateDraftKey(templateId) {
+            return templateId ? String(templateId) : '__custom__';
+        },
+
+        persistTemplateDraftFor(templateId, values) {
+            if (!values || typeof values !== 'object') return;
+            const map = CatalogClient.loadDraftMap(localStorage);
+            const next = CatalogClient.saveDraftSnapshot(map, this.templateDraftKey(templateId), values);
+            CatalogClient.saveDraftMap(localStorage, next);
+        },
+
+        loadTemplateDraftFor(templateId) {
+            const map = CatalogClient.loadDraftMap(localStorage);
+            // 过滤在新模板 placeholders 解析完成后进行，避免用旧模板字段裁剪草稿
+            return CatalogClient.pickDraftSnapshot(map, this.templateDraftKey(templateId), null);
+        },
+
+        // ========== 本地资源操作（资源库） ==========
+        openRenameLocalItem(item) {
+            if (!item || CatalogClient.sourceOf(item) !== 'local') return;
+            this.renameState = { show: true, id: item.id, kind: item.kind, value: item.name || '' };
+        },
+
+        confirmRenameLocalItem() {
+            const state = this.renameState || {};
+            const name = String(state.value || '').trim();
+            if (!name) {
+                this.showUiToast('名称不能为空', 'warning');
+                return;
+            }
+            if (state.kind === 'template') {
+                const tpl = (this.userTemplates || []).find(t => t.id === state.id);
+                if (!tpl || !CatalogClient.canMutateLocal(tpl)) return;
+                TemplateManager.update(state.id, { name });
+                this.loadUserTemplates();
+            } else if (state.kind === 'preset') {
+                const preset = (this.promptBlockPresets || []).find(p => p.id === state.id);
+                if (!preset || !CatalogClient.canMutateLocal(preset)) return;
+                preset.name = name;
+                preset.updatedAt = Date.now();
+                this.persistPromptPresets();
+            } else if (state.kind === 'snippet') {
+                const snippet = (this.promptSnippetPresets || []).find(s => s.id === state.id);
+                if (!snippet || !CatalogClient.canMutateLocal(snippet)) return;
+                snippet.name = name;
+                snippet.updatedAt = Date.now();
+                this.persistPromptPresets();
+            }
+            this.renameState = { show: false, id: '', kind: '', value: '' };
+            this.showUiToast('已重命名', 'success');
+        },
+
+        async deleteLibraryLocalItem(item) {
+            if (!item || CatalogClient.sourceOf(item) !== 'local') return;
+            const ok = await this.askConfirm(`确定删除本地${this.libraryKindLabel}「${item.name}」吗？`, {
+                title: '删除确认',
+                type: 'danger'
+            });
+            if (!ok) return;
+            if (item.kind === 'template') {
+                const tpl = (this.userTemplates || []).find(t => t.id === item.id);
+                if (!tpl || !CatalogClient.canMutateLocal(tpl)) return;
+                TemplateManager.delete(item.id);
+                this.loadUserTemplates();
+                if (this.selectedTemplateId === item.id) {
+                    this.selectedTemplateId = '';
+                    this.selectedTemplate = null;
+                }
+            } else if (item.kind === 'preset') {
+                this.promptBlockPresets = (this.promptBlockPresets || []).filter(p => p.id !== item.id);
+                this.persistPromptPresets();
+            } else {
+                this.promptSnippetPresets = (this.promptSnippetPresets || []).filter(s => s.id !== item.id);
+                this.persistPromptPresets();
+            }
+            this.showUiToast('已删除本地资源', 'success');
+        },
+
+        exportLocalKind() {
+            const kind = this.libraryKind;
+            const items = kind === 'template'
+                ? (this.userTemplates || [])
+                : (kind === 'preset' ? (this.promptBlockPresets || []) : (this.promptSnippetPresets || []));
+            const payload = CatalogClient.buildLocalExport(kind, items);
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `本地-${kind}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        },
+
+        triggerLocalImport() {
+            if (this.$refs.localImportFile) this.$refs.localImportFile.click();
+        },
+
+        handleLocalImportFile(event) {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                try {
+                    const items = CatalogClient.parseLocalImport(this.libraryKind, e.target.result);
+                    if (!items.length) throw new Error('没有可导入的条目');
+                    this.importLocalItems(items);
+                } catch (err) {
+                    this.showUiToast(err.message || '导入失败', 'danger');
+                }
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        },
+
+        importLocalItems(items) {
+            const kind = this.libraryKind;
+            let imported = 0;
+            items.forEach(item => {
+                if (kind === 'template') {
+                    const names = (this.userTemplates || []).map(t => t.name);
+                    const name = CatalogClient.uniqueCopyName(item.name, names);
+                    if (!item.workflow) return;
+                    TemplateManager.add({
+                        schemaVersion: 2,
+                        name,
+                        description: item.description || '',
+                        workflow: item.workflow,
+                        defaults: item.defaults || {},
+                        editor: item.editor || {},
+                        preview: CatalogClient.normalizePreview(item.preview)
+                    });
+                    imported += 1;
+                } else if (kind === 'preset') {
+                    const names = (this.promptBlockPresets || []).map(p => p.name);
+                    this.promptBlockPresets = [{
+                        id: CatalogClient.newLocalId('preset'),
+                        name: CatalogClient.uniqueCopyName(item.name, names),
+                        prompt: item.prompt,
+                        negative_prompt: item.negative_prompt,
+                        preview: CatalogClient.normalizePreview(item.preview),
+                        createdAt: Date.now(),
+                        updatedAt: Date.now()
+                    }, ...(this.promptBlockPresets || [])];
+                    imported += 1;
+                } else {
+                    const names = (this.promptSnippetPresets || []).map(s => s.name);
+                    this.promptSnippetPresets = [{
+                        id: CatalogClient.newLocalId('snippet'),
+                        name: CatalogClient.uniqueCopyName(item.name, names),
+                        text: item.text,
+                        target: item.target,
+                        preview: CatalogClient.normalizePreview(item.preview),
+                        createdAt: Date.now(),
+                        updatedAt: Date.now()
+                    }, ...(this.promptSnippetPresets || [])];
+                    imported += 1;
+                }
+            });
+            if (kind === 'template') this.loadUserTemplates();
+            else this.persistPromptPresets();
+            this.showUiToast(`已导入 ${imported} 项（不覆盖现有本地资源）`, 'success');
         },
 
         // ========== 模板管理 ==========
@@ -2723,6 +3443,12 @@ const app = Vue.createApp({
             }
             if (!id) return;
 
+            // 统一库 ID 不依赖 runtime：重载后 runtime 为空也必须保留，交由 onTemplateSelect 按需加载详情
+            if (CatalogClient.isSharedId(id)) {
+                this.selectedTemplateId = id;
+                return;
+            }
+
             const tpl = TemplateManager.get(id);
             if (tpl) {
                 this.selectedTemplateId = id;
@@ -2738,30 +3464,105 @@ const app = Vue.createApp({
         },
 
         onTemplateSelect() {
-            if (!this.selectedTemplateId) {
+            const id = this.selectedTemplateId;
+            // 任何选择（含空/本地/内置/已缓存 shared）都先失效旧请求，避免旧响应回写
+            this._templateLoadToken = (this._templateLoadToken || 0) + 1;
+            this.templateDetailLoadingId = '';
+            if (!id) {
+                this._templateLoadToken = (this._templateLoadToken || 0) + 1;
+                this.templateDetailLoadingId = '';
                 this.selectedTemplate = null;
                 this.workflowEditorMeta = WorkflowEditor.normalizeEditor({});
                 this.loraDrafts = [];
                 return;
             }
 
-            const template = TemplateManager.get(this.selectedTemplateId);
-            if (template) {
-                this.selectedTemplate = template;
-                this.workflowEditorMeta = WorkflowEditor.normalizeEditor(template.editor);
-                let workflow = template.workflow;
-                if (typeof workflow === 'string') {
-                    try {
-                        workflow = JSON.parse(workflow);
-                    } catch (e) {
-                        this.errorMessage = '模板 workflow 解析失败: ' + e.message;
-                        return;
-                    }
+            const template = TemplateManager.get(id);
+            const source = template ? CatalogClient.sourceOf(template) : (CatalogClient.isSharedId(id) ? 'shared' : 'local');
+
+            if (source !== 'shared') {
+                if (template) this.applyTemplateToEditor(template);
+                return;
+            }
+
+            // 统一库模板：本会话已加载且版本与当前目录一致才直接用，否则按需拉取详情
+            if (template && template.workflow && typeof template.workflow === 'object') {
+                const meta = (this.catalogItems || []).find(it => it && it.id === id) || null;
+                const expected = meta && meta.publishedRevision !== null && meta.publishedRevision !== undefined
+                    ? Number(meta.publishedRevision)
+                    : null;
+                const actual = template.sourceRevision === undefined || template.sourceRevision === null
+                    ? null
+                    : Number(template.sourceRevision);
+                if (expected === null || actual === expected) {
+                    this.applyTemplateToEditor(template);
+                    return;
                 }
-                this.isWorkflowEditorDirty = false;
-                this.selectedWorkflowNodeId = '';
-                this.loraDrafts = WorkflowEditor.readManagedLoras(workflow);
-                this.workflowJson = JSON.stringify(workflow, null, 2);
+            }
+            return this.loadSharedTemplateIntoEditor(id);
+        },
+
+        applyTemplateToEditor(template) {
+            if (!template) return;
+            let workflow = template.workflow;
+            if (typeof workflow === 'string') {
+                try {
+                    workflow = JSON.parse(workflow);
+                } catch (e) {
+                    this.errorMessage = '模板 workflow 解析失败: ' + e.message;
+                    return;
+                }
+            }
+            // undefined/null/数组都不是可执行 workflow：不解析、不覆盖当前编辑内容
+            if (!workflow || typeof workflow !== 'object' || Array.isArray(workflow)) {
+                this.errorMessage = '模板 workflow 无效：必须是对象';
+                return;
+            }
+            workflow = WorkflowEditor.deepClone(workflow);
+            // 解析/验证全部通过后才写入当前快照
+            this.selectedTemplate = template;
+            this.workflowEditorMeta = WorkflowEditor.normalizeEditor(template.editor);
+            this.isWorkflowEditorDirty = false;
+            this.selectedWorkflowNodeId = '';
+            this.loraDrafts = WorkflowEditor.readManagedLoras(workflow);
+            this.workflowJson = JSON.stringify(workflow, null, 2);
+        },
+
+        async loadSharedTemplateIntoEditor(id) {
+            let meta = (this.catalogItems || []).find(it => it && it.id === id) || null;
+            if (!meta) {
+                // 挂载时目录请求可能仍未返回（或离线）：回退本地目录缓存取回 publishedRevision，
+                // 使 loadCatalogDetail 能精确命中详情缓存；不因缺少 meta 丢弃已选 shared ID
+                const cached = CatalogClient.loadCache(localStorage);
+                meta = (cached && Array.isArray(cached.items) ? cached.items : []).find(it => it && it.id === id) || null;
+            }
+            const expected = meta && meta.publishedRevision !== null && meta.publishedRevision !== undefined
+                ? Number(meta.publishedRevision)
+                : null;
+            const token = (this._templateLoadToken || 0) + 1;
+            this._templateLoadToken = token;
+            this.templateDetailLoadingId = id;
+            try {
+                const detail = await this.loadCatalogDetail(id, expected);
+                // 快速切换模板：旧响应直接丢弃，不覆盖新选择
+                if (this._templateLoadToken !== token || this.selectedTemplateId !== id) return;
+                const data = (detail && detail.data) || {};
+                if (!data.workflow || typeof data.workflow !== 'object' || Array.isArray(data.workflow)) {
+                    throw new Error('统一库模板缺少有效 workflow');
+                }
+                const tpl = this.buildSharedTemplate(detail);
+                TemplateManager.upsertRuntimeTemplate(tpl);
+                this.applyTemplateToEditor(tpl);
+            } catch (e) {
+                if (this._templateLoadToken !== token || this.selectedTemplateId !== id) return;
+                const msg = e && e.message ? e.message : '模板载入失败';
+                this.catalogError = msg;
+                this.showUiToast(msg, 'danger');
+                // 失败保留上一份 workflow 与参数草稿：回退到上一个可用模板
+                const fallback = this.selectedTemplate && this.selectedTemplate.id ? this.selectedTemplate.id : '';
+                if (fallback && fallback !== id) this.selectedTemplateId = fallback;
+            } finally {
+                if (this._templateLoadToken === token) this.templateDetailLoadingId = '';
             }
         },
 
@@ -2801,7 +3602,7 @@ const app = Vue.createApp({
         },
 
         async updateTemplate() {
-            if (!this.selectedTemplate || this.selectedTemplate.isBuiltin) return;
+            if (!this.selectedTemplate || TemplateManager.isReadonly(this.selectedTemplate)) return;
 
             const ok = await this.askConfirm('确定要更新模板吗？', {
                 title: '更新确认',
@@ -2821,7 +3622,7 @@ const app = Vue.createApp({
         },
 
         async deleteTemplate() {
-            if (!this.selectedTemplate || this.selectedTemplate.isBuiltin) return;
+            if (!this.selectedTemplate || TemplateManager.isReadonly(this.selectedTemplate)) return;
 
             const ok = await this.askConfirm('确定要删除此模板吗？', {
                 title: '删除确认',
@@ -3948,6 +4749,7 @@ const app = Vue.createApp({
         },
 
         scrollToResults() {
+            this.mobileResultsOpen = true;
             const el = document.getElementById('results-section');
             if (el && el.scrollIntoView) {
                 el.scrollIntoView({ behavior: 'smooth', block: 'start' });

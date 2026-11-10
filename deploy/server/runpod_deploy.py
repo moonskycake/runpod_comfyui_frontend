@@ -3,7 +3,10 @@
 
 Runs as the unprivileged deploy user (``runpod-deploy``), typically launched by
 the root-owned forced-command gateway. It never executes anything from the
-uploaded bundle; the bundle is data only.
+uploaded bundle; the bundle is data only. Every HTML entry document present is
+checked: ``index.html`` (served at ``/``, relative ``./_rel/<sha>/`` refs) and
+the optional ``admin.html`` (served at ``/admin/``, root-absolute
+``/_rel/<sha>/`` refs).
 
 Pointer model: ``current`` and ``previous`` are ALWAYS symlinks into
 ``releases/``. There is no auto-detection and no fallback: if a pointer is
@@ -12,7 +15,8 @@ missing it is created, if it is not a symlink the run is refused.
 Layout (everything deploy can write lives under --data-root):
 
     <data-root>/
-        releases/<sha40>/index.html, css/, js/, bootstrap/, vue/, tags/, img/, favicon.ico
+        releases/<sha40>/index.html, admin.html (optional), favicon.ico,
+                          css/, js/, bootstrap/, vue/, tags/, img/
         current  -> releases/<sha40>     (symlink, atomic rename)
         previous -> releases/<sha40>
         staging/                          (transient, this run only)
@@ -48,11 +52,26 @@ except ImportError:  # pragma: no cover - Windows can only run validation tests
     import msvcrt
 
 RELEASE_PREFIX = "_rel"
-WHITELIST_FILES = ("index.html", "favicon.ico")
+# Root-level files allowed in a release. index.html is required; admin.html is
+# optional (the /admin/ console) and gets its own reference validation.
+WHITELIST_FILES = ("index.html", "admin.html", "favicon.ico")
 WHITELIST_DIRS = ("css", "js", "bootstrap", "vue", "tags", "img")
+HTML_ENTRIES = ("index.html", "admin.html")
+REQUIRED_HTML = "index.html"
+
+# Never accepted, even below a whitelisted directory: dotfiles (.env, ...),
+# catalog service artefacts (venv/*.py/.service), databases and backups.
+FORBIDDEN_SUFFIXES = (
+    ".py", ".pyo", ".pyc", ".pem", ".key", ".crt", ".service", ".sqlite",
+    ".sqlite3", ".db", ".db-wal", ".db-shm", ".env", ".bak", ".orig",
+    ".swp", ".ini", ".log",
+)
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# Relative refs (index.html) and root-absolute refs (admin.html, nested URL).
 REF_RE = re.compile(r'\./%s/(?P<sha>[0-9a-f]{40})/(?P<path>[^"\s]+)' % RELEASE_PREFIX)
+ABS_REF_RE = re.compile(r'(?<![\w.])/%s/(?P<sha>[0-9a-f]{40})/(?P<path>[^"\s]+)'
+                        % RELEASE_PREFIX)
 
 MAX_INPUT_BYTES = 64 * 1024 * 1024
 MAX_FILES = 20000
@@ -143,6 +162,9 @@ def validate_member(info: tarfile.TarInfo) -> str:
     for part in parts:
         if part in ("", ".", ".."):
             _reject(name)
+        # dotfiles: .env, .htpasswd, .git*, editor/tool leftovers
+        if part.startswith("."):
+            _reject(name)
     if info.issym() or info.islnk():
         _reject(name)
     if info.isdev() or info.isfifo():
@@ -153,12 +175,18 @@ def validate_member(info: tarfile.TarInfo) -> str:
         _reject(name)
     if parts[0] == RELEASE_PREFIX:
         _reject(name)
+    if info.isreg() and name.lower().endswith(FORBIDDEN_SUFFIXES):
+        _reject(name)
     if info.isdir():
         if parts[0] in WHITELIST_DIRS:
             return name
         _reject(name)
     if name in WHITELIST_FILES:
         return name
+    # HTML entry documents live at the site root only: a nested page would be
+    # an unvalidated second entry point (and picks up long-cache semantics).
+    if info.isreg() and name.lower().endswith((".html", ".htm")):
+        _reject(name)
     if parts[0] in WHITELIST_DIRS:
         return name
     _reject(name)
@@ -257,22 +285,49 @@ def tree_digest(root: str) -> str:
     return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
 
 
-def verify_staged(sha: str, staging: str) -> dict:
-    index_path = os.path.join(staging, "index.html")
-    if not os.path.isfile(index_path):
-        raise DeployError("bundle has no index.html")
-    with open(index_path, "r", encoding="utf-8", errors="replace") as fh:
-        index_text = fh.read()
+def _check_html_refs(sha: str, staging: str, entry: str) -> dict:
+    """Validate one entry document's release references.
 
-    refs = REF_RE.findall(index_text)
+    index.html keeps the relative ``./_rel/<sha>/...`` form. admin.html is
+    served at ``/admin/``, so it must use root-absolute ``/_rel/<sha>/...``:
+    a relative reference there would resolve to ``/admin/_rel/...`` and 404
+    even though the file exists in the release.
+    """
+    path = os.path.join(staging, entry)
+    if not os.path.isfile(path):
+        raise DeployError("bundle has no %s" % entry)
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+
+    rel = REF_RE.findall(text)
+    abs_refs = ABS_REF_RE.findall(text)
+    refs = abs_refs if entry == "admin.html" else rel
     if not refs:
-        raise DeployError("index.html has no %s/<sha>/ references" % RELEASE_PREFIX)
+        if entry == "admin.html":
+            raise DeployError(
+                "admin.html has no /%s/<sha>/ references (must be root-absolute)"
+                % RELEASE_PREFIX)
+        raise DeployError("%s has no %s/<sha>/ references" % (entry, RELEASE_PREFIX))
+    if entry == "admin.html" and rel:
+        raise DeployError(
+            "admin.html uses relative ./%s/ references; from /admin/ they 404 "
+            "(use root-absolute /%s/<sha>/...)" % (RELEASE_PREFIX, RELEASE_PREFIX))
     for ref_sha, ref_path in refs:
         if ref_sha != sha:
-            raise DeployError("index.html references foreign release %s" % ref_sha)
+            raise DeployError("%s references foreign release %s" % (entry, ref_sha))
         target = os.path.join(staging, *ref_path.split("/"))
         if not os.path.isfile(target):
-            raise DeployError("index.html references missing file %s" % ref_path)
+            raise DeployError("%s references missing file %s" % (entry, ref_path))
+    return {entry: len(refs)}
+
+
+def verify_staged(sha: str, staging: str) -> dict:
+    counts: dict[str, int] = {}
+    for entry in HTML_ENTRIES:
+        if entry == REQUIRED_HTML:
+            counts.update(_check_html_refs(sha, staging, entry))
+        elif os.path.isfile(os.path.join(staging, entry)):
+            counts.update(_check_html_refs(sha, staging, entry))
 
     manifest_path = os.path.join(staging, "tags", "manifest.json")
     if not os.path.isfile(manifest_path):
@@ -289,7 +344,8 @@ def verify_staged(sha: str, staging: str) -> dict:
             raise DeployError(
                 "tags/manifest.json %s does not match %s content hash" % (key, csv_rel))
 
-    return {"index_refs": len(refs), "digest": tree_digest(staging)}
+    return {"index_refs": counts.get("index.html", 0), "html_refs": counts,
+            "digest": tree_digest(staging)}
 
 
 # --------------------------------------------------------------------------

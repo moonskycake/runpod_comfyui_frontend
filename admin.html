@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>资源管理后台 · 统一库</title>
+  <link rel="icon" href="./favicon.ico">
+  <link rel="stylesheet" href="./bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="./css/style.css">
+  <link rel="stylesheet" href="./css/catalog-admin.css">
+</head>
+<body class="bg-dark ca-body">
+  <div id="catalog-admin-app" v-cloak>
+    <header class="ca-header">
+      <div class="ca-header-main">
+        <a class="ca-back" href="../">← 返回公开站</a>
+        <h1 class="ca-title">资源管理后台</h1>
+        <span class="ca-subtitle">统一库 · 私有管理</span>
+      </div>
+      <div class="ca-header-actions">
+        <span class="ca-session" v-if="isReady && sessionLabel">{{ sessionLabel }}</span>
+        <button class="btn btn-outline-light btn-sm" type="button" v-if="isReady" @click="doLogout">退出登录</button>
+      </div>
+    </header>
+
+    <main class="ca-main">
+      <section class="ca-state" v-if="auth.status === 'checking'" aria-live="polite">
+        <div class="ca-state-card">
+          <div class="ca-spinner" aria-hidden="true"></div>
+          <p class="ca-muted">正在检查管理员会话…</p>
+        </div>
+      </section>
+
+      <section class="ca-login" v-else-if="auth.status === 'anonymous' && !sessionExpired">
+        <div class="ca-login-card">
+          <h2 class="ca-login-title">管理员登录</h2>
+          <p class="ca-muted ca-login-note">
+            登录状态仅保存在后端下发的会话 Cookie 中，密码不会写入 localStorage。
+            此页面的按钮显隐不是权限边界，写操作由接口鉴权。
+          </p>
+          <form @submit.prevent="doLogin" novalidate>
+            <label class="form-label" for="ca-password">管理员密码</label>
+            <input
+              id="ca-password"
+              ref="password"
+              class="form-control"
+              type="password"
+              autocomplete="current-password"
+              v-model="loginForm.password"
+              :aria-invalid="!!loginError"
+              aria-describedby="ca-login-error"
+              required
+            >
+            <p class="ca-error" id="ca-login-error" role="alert" v-if="loginError">{{ loginError }}</p>
+            <button class="btn btn-primary ca-login-submit" type="submit" :disabled="loginBusy">
+              {{ loginBusy ? '登录中…' : '登录' }}
+            </button>
+          </form>
+          <a class="ca-link" href="../">返回公开站</a>
+        </div>
+      </section>
+
+      <section class="ca-shell" v-else>
+        <nav class="ca-kinds" aria-label="资源类型">
+          <button
+            v-for="k in kinds"
+            :key="k.value"
+            type="button"
+            class="ca-kind"
+            :class="{ 'is-active': kind === k.value }"
+            :aria-pressed="kind === k.value"
+            @click="switchKind(k.value)"
+          >
+            <span class="ca-kind-label">{{ k.label }}</span>
+            <span class="ca-kind-count">{{ kindCounts[k.value] }}</span>
+            <span class="ca-kind-hint">{{ k.hint }}</span>
+          </button>
+        </nav>
+
+        <div class="ca-workspace">
+          <div class="ca-mobile-tabs" role="tablist" aria-label="移动端面板">
+            <button type="button" role="tab" :aria-selected="mobilePane === 'list'" :class="{ 'is-active': mobilePane === 'list' }" @click="showMobilePane('list')">列表</button>
+            <button type="button" role="tab" :aria-selected="mobilePane === 'edit'" :class="{ 'is-active': mobilePane === 'edit' }" @click="showMobilePane('edit')">编辑</button>
+            <button type="button" role="tab" :aria-selected="mobilePane === 'preview'" :class="{ 'is-active': mobilePane === 'preview' }" @click="showMobilePane('preview')">预览</button>
+          </div>
+
+          <section class="ca-list" :class="{ 'ca-pane-hidden': mobilePane !== 'list' }" aria-label="资源列表">
+            <div class="ca-list-toolbar">
+              <button class="btn btn-primary btn-sm" type="button" @click="requestNew">＋ 新建{{ currentKindLabel }}</button>
+              <button class="btn btn-outline-light btn-sm" type="button" @click="openImport">导入 JSON</button>
+              <button class="btn btn-outline-secondary btn-sm" type="button" @click="refreshList" :disabled="listState === 'loading'">刷新</button>
+            </div>
+
+            <div class="ca-filters">
+              <label class="visually-hidden" for="ca-search">搜索资源</label>
+              <input id="ca-search" class="form-control form-control-sm" type="search" placeholder="搜索名称 / 描述 / 分类" v-model="filters.query">
+              <div class="ca-filter-row">
+                <select class="form-select form-select-sm" aria-label="按分类筛选" v-model="filters.category">
+                  <option value="">全部分类</option>
+                  <option v-for="category in categories" :key="category" :value="category">{{ category }}</option>
+                </select>
+                <select class="form-select form-select-sm" aria-label="按状态筛选" v-model="filters.status">
+                  <option value="">全部状态</option>
+                  <option value="draft">草稿</option>
+                  <option value="published">已发布</option>
+                  <option value="disabled">已停用</option>
+                </select>
+              </div>
+              <p class="ca-list-count">
+                共 {{ kindItems.length }} 项，当前筛选 {{ filteredItems.length }} 项
+                <span v-if="isDirty" class="ca-unsaved-dot" title="有未保存修改">● 未保存</span>
+              </p>
+            </div>
+
+            <div class="ca-list-state" v-if="listState === 'loading'" aria-live="polite">
+              <div class="ca-skeleton" v-for="n in 4" :key="n"></div>
+            </div>
+            <div class="ca-list-state ca-list-error" v-else-if="listState === 'error'" role="alert">
+              <p>{{ listError || '加载失败' }}</p>
+              <button class="btn btn-outline-light btn-sm" type="button" @click="loadItems">重试</button>
+            </div>
+            <div class="ca-list-state" v-else-if="!filteredItems.length">
+              <p v-if="!kindItems.length" class="ca-muted">该类型还没有资源。点击「新建{{ currentKindLabel }}」或导入 JSON 创建草稿。</p>
+              <p v-else class="ca-muted">没有符合筛选条件的资源。</p>
+            </div>
+
+            <ul class="ca-items" v-else>
+              <li v-for="entry in filteredItems" :key="entry.id">
+                <button
+                  type="button"
+                  class="ca-item"
+                  :class="{ 'is-active': entry.id === selectedId }"
+                  :aria-current="entry.id === selectedId ? 'true' : undefined"
+                  @click="selectItem(entry)"
+                >
+                  <span class="ca-item-top">
+                    <span class="ca-item-name">{{ entry.name || '（未命名）' }}</span>
+                    <span class="ca-badge" :class="'ca-badge-' + statusInfo(entry).tone">{{ statusInfo(entry).label }}</span>
+                  </span>
+                  <span class="ca-item-meta">
+                    <span v-if="entry.category">{{ entry.category }}</span>
+                    <span v-else class="ca-muted">未分类</span>
+                    <span v-if="entry.hasUnpublishedChanges" class="ca-badge ca-badge-warn">有未发布修改</span>
+                  </span>
+                  <span class="ca-item-foot">
+                    <span class="ca-muted">{{ formatDate(entry.updatedAt) }}</span>
+                    <span class="ca-muted ca-mono">#{{ entry.order }}</span>
+                  </span>
+                </button>
+              </li>
+            </ul>
+          </section>
+
+          <section class="ca-editor" :class="{ 'ca-pane-hidden': mobilePane === 'list' }" aria-label="资源编辑">
+            <div class="ca-empty" v-if="!item && !isNew">
+              <h2>选择或新建资源</h2>
+              <p class="ca-muted">从左侧列表选择一项进行编辑；新建与保存只会生成草稿，不会自动公开。</p>
+              <button class="btn btn-primary" type="button" @click="requestNew">＋ 新建{{ currentKindLabel }}</button>
+            </div>
+
+            <template v-else>
+              <div class="ca-editor-head">
+                <div class="ca-editor-title-row">
+                  <h2 class="ca-editor-title">
+                    {{ isNew ? '新建' + currentKindLabel : (form.name || item.name || '（未命名）') }}
+                  </h2>
+                  <span class="ca-badge ca-badge-kind">{{ currentKindLabel }}</span>
+                  <span v-if="item" class="ca-badge" :class="'ca-badge-' + status.tone">{{ status.label }}</span>
+                  <span v-if="item && status.hasUnpublishedChanges" class="ca-badge ca-badge-warn">未发布修改</span>
+                  <span v-if="isDirty" class="ca-badge ca-badge-warn">未保存</span>
+                </div>
+                <p class="ca-editor-meta" v-if="item">
+                  <span class="ca-mono">{{ item.id }}</span>
+                  <span v-if="item.legacyId">旧 ID：{{ item.legacyId }}</span>
+                  <span>更新于 {{ formatDate(item.updatedAt) }}</span>
+                </p>
+                <p class="ca-editor-meta" v-else>保存后生成新的草稿资源。</p>
+              </div>
+
+              <div class="ca-editor-toolbar">
+                <button class="btn btn-primary btn-sm" type="button" @click="saveDraft" :disabled="saving">
+                  {{ saving ? '保存中…' : '保存草稿' }}
+                  <span class="ca-kbd">Ctrl+S</span>
+                </button>
+                <button class="btn btn-outline-light btn-sm" type="button" v-if="!isNew" @click="openPublish">发布…</button>
+                <button class="btn btn-outline-warning btn-sm" type="button" v-if="item && status.canDisable" @click="openDisable">停用…</button>
+                <button class="btn btn-outline-danger btn-sm" type="button" v-if="canDeleteDraft" @click="openDelete">删除草稿…</button>
+                <button class="btn btn-outline-secondary btn-sm" type="button" @click="exportSelected">导出当前</button>
+                <button class="btn btn-outline-secondary btn-sm" type="button" @click="exportAll">导出全部</button>
+              </div>
+
+              <div class="ca-editor-tabs" role="tablist" aria-label="编辑与预览">
+                <button type="button" role="tab" id="ca-tab-form" :aria-selected="editorTab === 'form'" :class="{ 'is-active': editorTab === 'form' }" @click="editorTab = 'form'">表单</button>
+                <button type="button" role="tab" id="ca-tab-preview" :aria-selected="editorTab === 'preview'" :class="{ 'is-active': editorTab === 'preview' }" @click="editorTab = 'preview'">预览</button>
+              </div>
+
+              <div class="ca-alert ca-alert-error" role="alert" v-if="saveError">
+                <p>{{ saveError }}</p>
+                <div class="ca-alert-actions" v-if="conflict && conflict.current">
+                  <button class="btn btn-outline-light btn-sm" type="button" @click="reloadServerVersion">丢弃本地修改，加载服务器版本</button>
+                  <button class="btn btn-warning btn-sm" type="button" @click="overwriteWithLocal">以本地表单覆盖（使用最新修订号）</button>
+                </div>
+              </div>
+              <div class="ca-alert ca-alert-ok" role="status" v-if="saveNotice">{{ saveNotice }}</div>
+
+              <form class="ca-form" v-show="editorTab === 'form'" @submit.prevent="saveDraft" novalidate>
+                <div class="ca-field ca-field-wide">
+                  <label class="form-label" for="ca-name">名称 <span class="ca-required">*</span></label>
+                  <input
+                    id="ca-name"
+                    ref="nameInput"
+                    class="form-control"
+                    type="text"
+                    maxlength="120"
+                    v-model="form.name"
+                    :aria-invalid="!!formErrors.name"
+                    aria-describedby="ca-name-error"
+                  >
+                  <p class="ca-field-error" id="ca-name-error" role="alert" v-if="formErrors.name">{{ formErrors.name }}</p>
+                </div>
+                <div class="ca-field ca-field-wide">
+                  <label class="form-label" for="ca-description">描述</label>
+                  <textarea id="ca-description" class="form-control" rows="2" maxlength="2000" v-model="form.description"></textarea>
+                  <p class="ca-field-error" role="alert" v-if="formErrors.description">{{ formErrors.description }}</p>
+                </div>
+                <div class="ca-field">
+                  <label class="form-label" for="ca-category">分类</label>
+                  <input id="ca-category" class="form-control" type="text" maxlength="80" v-model="form.category" list="ca-category-options">
+                  <datalist id="ca-category-options">
+                    <option v-for="category in categories" :key="category" :value="category"></option>
+                  </datalist>
+                  <p class="ca-field-error" role="alert" v-if="formErrors.category">{{ formErrors.category }}</p>
+                </div>
+                <div class="ca-field">
+                  <label class="form-label" for="ca-order">排序</label>
+                  <input id="ca-order" class="form-control" type="number" step="1" v-model="form.order" :aria-invalid="!!formErrors.order">
+                  <p class="ca-field-error" role="alert" v-if="formErrors.order">{{ formErrors.order }}</p>
+                </div>
+
+                <template v-if="kind === 'template'">
+                  <div class="ca-field ca-field-wide">
+                    <label class="form-label" for="ca-schema">schemaVersion</label>
+                    <input id="ca-schema" class="form-control ca-input-narrow" type="number" min="1" step="1" v-model="form.schemaVersion" :aria-invalid="!!formErrors.schemaVersion">
+                    <p class="ca-field-error" role="alert" v-if="formErrors.schemaVersion">{{ formErrors.schemaVersion }}</p>
+                  </div>
+                  <div class="ca-field ca-field-wide">
+                    <label class="form-label" for="ca-workflow">Workflow JSON</label>
+                    <textarea id="ca-workflow" ref="field-workflow" class="form-control ca-json" rows="12" spellcheck="false" v-model="form.workflowText" :aria-invalid="!!formErrors.workflow"></textarea>
+                    <p class="ca-field-error" role="alert" v-if="formErrors.workflow">{{ formErrors.workflow }}</p>
+                  </div>
+                  <div class="ca-field ca-field-wide">
+                    <label class="form-label" for="ca-defaults">Defaults JSON</label>
+                    <textarea id="ca-defaults" ref="field-defaults" class="form-control ca-json" rows="8" spellcheck="false" v-model="form.defaultsText" :aria-invalid="!!formErrors.defaults"></textarea>
+                    <p class="ca-field-error" role="alert" v-if="formErrors.defaults">{{ formErrors.defaults }}</p>
+                  </div>
+                  <div class="ca-field ca-field-wide">
+                    <label class="form-label" for="ca-editor-json">Editor JSON</label>
+                    <textarea id="ca-editor-json" ref="field-editor" class="form-control ca-json" rows="8" spellcheck="false" v-model="form.editorText" :aria-invalid="!!formErrors.editor"></textarea>
+                    <p class="ca-field-error" role="alert" v-if="formErrors.editor">{{ formErrors.editor }}</p>
+                  </div>
+                </template>
+
+                <template v-else-if="kind === 'preset'">
+                  <div class="ca-field ca-field-wide">
+                    <label class="form-label" for="ca-positive">正向提示词</label>
+                    <textarea id="ca-positive" ref="field-positive" class="form-control ca-json" rows="8" v-model="form.positive" :aria-invalid="!!formErrors.positive"></textarea>
+                    <p class="ca-field-error" role="alert" v-if="formErrors.positive">{{ formErrors.positive }}</p>
+                  </div>
+                  <div class="ca-field ca-field-wide">
+                    <label class="form-label" for="ca-negative">负向提示词</label>
+                    <textarea id="ca-negative" ref="field-negative" class="form-control ca-json" rows="6" v-model="form.negative"></textarea>
+                    <p class="ca-field-error" role="alert" v-if="formErrors.negative">{{ formErrors.negative }}</p>
+                  </div>
+                </template>
+
+                <template v-else-if="kind === 'snippet'">
+                  <div class="ca-field">
+                    <label class="form-label" for="ca-target">插入目标</label>
+                    <select id="ca-target" ref="field-target" class="form-select" v-model="form.target" :aria-invalid="!!formErrors.target">
+                      <option value="positive">正向提示词</option>
+                      <option value="negative">负向提示词</option>
+                    </select>
+                    <p class="ca-field-error" role="alert" v-if="formErrors.target">{{ formErrors.target }}</p>
+                  </div>
+                  <div class="ca-field ca-field-wide">
+                    <label class="form-label" for="ca-snippet-text">片段文本</label>
+                    <textarea id="ca-snippet-text" ref="field-text" class="form-control ca-json" rows="6" v-model="form.text" :aria-invalid="!!formErrors.text"></textarea>
+                    <p class="ca-field-error" role="alert" v-if="formErrors.text">{{ formErrors.text }}</p>
+                  </div>
+                </template>
+
+                <div class="ca-field ca-field-wide ca-preview-field" v-if="kind === 'preset' || kind === 'snippet'">
+                  <span class="form-label">预览图</span>
+                  <p class="ca-muted ca-small">
+                    仅预设与片段支持预览图，模板不使用。上传后自动压缩为 WebP（长边 ≤ 480px，≤ 64 KiB），
+                    不保留原图与 EXIF/ICC；先保存草稿才能上传或移除，草稿图不会自动公开。
+                  </p>
+                  <div class="ca-preview-row">
+                    <div class="ca-preview-thumb" v-if="item && item.preview && adminPreviewSrc && !previewBroken">
+                      <img :src="adminPreviewSrc" :alt="(form.name || '资源') + ' 预览图'" loading="lazy" decoding="async" @error="previewBroken = true">
+                    </div>
+                    <div class="ca-preview-thumb ca-preview-thumb-empty" v-else>
+                      <span v-if="previewBroken">图片加载失败</span>
+                      <span v-else>暂无预览图</span>
+                    </div>
+                    <div class="ca-preview-actions">
+                      <p class="ca-preview-meta" v-if="item && item.preview">{{ previewMetaLabel(item.preview) }}</p>
+                      <p class="ca-muted ca-small" v-if="isNew">保存草稿后即可上传预览图。</p>
+                      <p class="ca-muted ca-small" v-else-if="isDirty">有未保存修改，请先保存草稿再操作预览图。</p>
+                      <input ref="previewFile" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" @change="onPreviewFileChange">
+                      <div class="ca-preview-buttons">
+                        <button class="btn btn-outline-light btn-sm" type="button" @click="triggerPreviewPick" :disabled="previewBusy">
+                          {{ previewBusy ? '处理中…' : (item && item.preview ? '替换图片' : '上传图片') }}
+                        </button>
+                        <button class="btn btn-outline-danger btn-sm" type="button" v-if="item && item.preview" @click="removePreview" :disabled="previewBusy">移除图片</button>
+                      </div>
+                      <p class="ca-field-error" role="alert" v-if="previewError">{{ previewError }}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ca-form-foot ca-field-wide">
+                  <button class="btn btn-primary" type="submit" :disabled="saving">{{ saving ? '保存中…' : '保存草稿' }}</button>
+                  <span class="ca-muted">保存不会公开；发布需在工具栏点击「发布…」并二次确认。</span>
+                </div>
+              </form>
+
+              <div class="ca-preview" v-show="editorTab === 'preview'">
+                <h3 class="ca-preview-title">资源数据预览</h3>
+                <p class="ca-muted">以下内容将作为草稿数据提交；JSON 解析失败时会在此显示错误。</p>
+                <pre class="ca-pre" tabindex="0">{{ previewText }}</pre>
+              </div>
+            </template>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <div class="ca-dialog-backdrop" v-if="publishDialog.open" @click.self="publishDialog.open = false">
+      <div class="ca-dialog" role="dialog" aria-modal="true" aria-labelledby="ca-publish-title">
+        <h2 id="ca-publish-title">发布 {{ form.name || '当前资源' }}？</h2>
+        <p>发布后，公开资源库会将该内容作为新版本展示。发布操作会推进目录版本，并立即对访客可见。</p>
+        <div class="ca-dialog-warning">
+          <strong>发布前请确认：</strong>
+          <ul>
+            <li>workflow / defaults / editor 中不含 API Key、Token、密码或其他私密配置。</li>
+            <li>确认内容可公开；发布后旧版本快照仍保留，但不能撤回已被下载的副本。</li>
+          </ul>
+        </div>
+        <label class="ca-check">
+          <input ref="publishAck" type="checkbox" v-model="publishDialog.acknowledge">
+          我确认以上内容不含敏感信息，可以公开
+        </label>
+        <p class="ca-error" role="alert" v-if="publishDialog.error">{{ publishDialog.error }}</p>
+        <div class="ca-dialog-actions">
+          <button class="btn btn-outline-light" type="button" @click="publishDialog.open = false">取消</button>
+          <button class="btn btn-primary" type="button" :disabled="publishDialog.busy || !publishDialog.acknowledge" @click="confirmPublish">{{ publishDialog.busy ? '发布中…' : '确认发布' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ca-dialog-backdrop" v-if="disableDialog.open" @click.self="disableDialog.open = false">
+      <div class="ca-dialog" role="dialog" aria-modal="true" aria-labelledby="ca-disable-title">
+        <h2 id="ca-disable-title">停用 {{ form.name || '当前资源' }}？</h2>
+        <p>停用后，公开目录将不再展示该资源。历史发布快照与访客已保存的本地副本不受影响，也不会远程删除任何人的数据。</p>
+        <p class="ca-error" role="alert" v-if="disableDialog.error">{{ disableDialog.error }}</p>
+        <div class="ca-dialog-actions">
+          <button class="btn btn-outline-light" type="button" @click="disableDialog.open = false">取消</button>
+          <button class="btn btn-warning" type="button" :disabled="disableDialog.busy" @click="confirmDisable">{{ disableDialog.busy ? '处理中…' : '确认停用' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ca-dialog-backdrop" v-if="deleteDialog.open" @click.self="deleteDialog.open = false">
+      <div class="ca-dialog" role="dialog" aria-modal="true" aria-labelledby="ca-delete-title">
+        <h2 id="ca-delete-title">删除草稿 {{ form.name || '当前资源' }}？</h2>
+        <p>仅从未发布过的草稿可以删除，且不可恢复。已发布的资源请使用「停用」。</p>
+        <p class="ca-error" role="alert" v-if="deleteDialog.error">{{ deleteDialog.error }}</p>
+        <div class="ca-dialog-actions">
+          <button class="btn btn-outline-light" type="button" @click="deleteDialog.open = false">取消</button>
+          <button class="btn btn-danger" type="button" :disabled="deleteDialog.busy" @click="confirmDelete">{{ deleteDialog.busy ? '删除中…' : '确认删除' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ca-dialog-backdrop" v-if="discardDialog.open" @click.self="discardDialog.open = false">
+      <div class="ca-dialog" role="dialog" aria-modal="true" aria-labelledby="ca-discard-title">
+        <h2 id="ca-discard-title">放弃未保存的修改？</h2>
+        <p>当前编辑器有未保存内容，继续操作会丢失这些修改。</p>
+        <div class="ca-dialog-actions">
+          <button class="btn btn-outline-light" type="button" @click="discardDialog.open = false">继续编辑</button>
+          <button class="btn btn-warning" type="button" @click="confirmDiscard">放弃修改并继续</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ca-dialog-backdrop" v-if="importDialog.open" @click.self="importDialog.open = false">
+      <div class="ca-dialog ca-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="ca-import-title">
+        <h2 id="ca-import-title">导入资源 JSON</h2>
+        <p class="ca-muted">支持 <code>{items:[...]}</code> 或导出文件中的单条/多条资源记录。导入结果一律为草稿，不会自动发布。单次最多 100 项。</p>
+        <div class="ca-field">
+          <label class="form-label" for="ca-import-file">选择 JSON 文件</label>
+          <input id="ca-import-file" class="form-control" type="file" accept="application/json,.json" @change="readImportFile">
+          <p class="ca-muted ca-small" v-if="importDialog.fileName">已读取：{{ importDialog.fileName }}</p>
+        </div>
+        <div class="ca-field">
+          <label class="form-label" for="ca-import-text">或粘贴 JSON</label>
+          <textarea id="ca-import-text" ref="importText" class="form-control ca-json" rows="10" spellcheck="false" v-model="importDialog.text"></textarea>
+        </div>
+        <p class="ca-preview-count" v-if="importPreview && importPreview.ok">可导入 {{ importPreview.items.length }} 项：{{ importKindSummary }}</p>
+        <p class="ca-error ca-pre-wrap" role="alert" v-if="importPreview && !importPreview.ok">{{ importPreview.error }}</p>
+        <p class="ca-error ca-pre-wrap" role="alert" v-if="importDialog.error">{{ importDialog.error }}</p>
+        <p class="ca-alert ca-alert-ok" role="status" v-if="importDialog.result">{{ importDialog.result }}</p>
+        <div class="ca-dialog-actions">
+          <button class="btn btn-outline-light" type="button" @click="importDialog.open = false">关闭</button>
+          <button class="btn btn-primary" type="button" :disabled="importDialog.busy || !importDialog.text.trim()" @click="submitImport">{{ importDialog.busy ? '导入中…' : '导入为草稿' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ca-dialog-backdrop" v-if="sessionExpired" role="presentation">
+      <div class="ca-dialog" role="dialog" aria-modal="true" aria-labelledby="ca-session-title">
+        <h2 id="ca-session-title">登录已过期</h2>
+        <p>请重新登录后继续。编辑器中的未保存内容会保留，重新登录后可直接再次保存。</p>
+        <form @submit.prevent="relogin" novalidate>
+          <label class="form-label" for="ca-session-password">管理员密码</label>
+          <input
+            id="ca-session-password"
+            ref="sessionPassword"
+            class="form-control"
+            type="password"
+            autocomplete="current-password"
+            v-model="loginForm.password"
+            required
+          >
+          <p class="ca-error" role="alert" v-if="loginError">{{ loginError }}</p>
+          <div class="ca-dialog-actions">
+            <button class="btn btn-primary" type="submit" :disabled="loginBusy">{{ loginBusy ? '登录中…' : '重新登录' }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="ca-toast" :class="'ca-toast-' + toastTone" role="status" aria-live="polite" v-if="toast">{{ toast }}</div>
+  </div>
+
+  <script src="./vue/vue.global.prod.js"></script>
+  <script src="./js/catalog-admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+# /etc/systemd/system/runpod-catalog.service
+#
+# Matches catalog_service/config.py and catalog_service/__main__.py:
+# environment variables are CATALOG_PUBLIC_ORIGIN / CATALOG_DB_PATH /
+# CATALOG_ADMIN_PASSWORD_HASH / CATALOG_COOKIE_SECURE (plus optional
+# CATALOG_HOST / CATALOG_PORT=8787). Install steps: deploy/catalog/README.md.
+
+[Unit]
+Description=runpod.hyxer.top catalog API (FastAPI, SQLite)
+Documentation=file:///opt/runpod-catalog/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=runpod-catalog
+Group=runpod-catalog
+WorkingDirectory=/opt/runpod-catalog/app/current
+EnvironmentFile=/etc/runpod-catalog/catalog.env
+# App factory from catalog_service/app.py. --proxy-headers plus
+# --forwarded-allow-ips=127.0.0.1 is the trust boundary: only the local Nginx
+# may set X-Forwarded-For, so per-IP login limiting sees the real client.
+# Never bind 0.0.0.0; the port matches the Nginx ^~ /api/ upstream.
+ExecStart=/opt/runpod-catalog/venv/bin/python -m uvicorn catalog_service.app:build_from_env \
+    --factory --host 127.0.0.1 --port 8787 \
+    --proxy-headers --forwarded-allow-ips=127.0.0.1 \
+    --no-server-header --log-level warning
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+# hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ReadWritePaths=/var/lib/runpod-catalog
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
