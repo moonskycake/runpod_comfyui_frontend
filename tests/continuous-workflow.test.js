@@ -44,15 +44,16 @@ function generationFixture(ctx, history = []) {
 }
 const cases = [];
 function test(name, fn) { cases.push([name, fn]); }
-test('开启生成后跳到结果时自动切换到最新任务', async () => {
+test('两个行为都开启时生成后选择新任务并跳到结果区', async () => {
   const { ctx } = load();
   generationFixture(ctx, [{ id: 'old', status: 'COMPLETED', images: [{}, {}] }]);
   ctx.selectedHistoryId = 'old';
   ctx.selectedHistoryImageIndex = 1;
   ctx.resultsTab = 'gallery';
   ctx.getEffectiveAutoScrollToResults = () => true;
+  ctx.getEffectiveAutoSelectLatestResult = () => true;
   let scrolled = 0;
-  ctx.scrollToResults = () => scrolled++;
+  ctx.scrollToResults = () => { scrolled++; ctx.mainView = 'generate'; };
   await ctx.generate();
   assert.strictEqual(ctx.requestHistory[0].id, 'new');
   assert.strictEqual(ctx.selectedHistoryId, 'new');
@@ -60,13 +61,44 @@ test('开启生成后跳到结果时自动切换到最新任务', async () => {
   assert.strictEqual(ctx.resultsTab, 'history');
   assert.strictEqual(scrolled, 1);
 });
-test('关闭生成后跳到结果时保留旧图上下文且不提示提交Toast', async () => {
+test('只跳到结果区时不改变旧图选择', async () => {
+  const { ctx } = load();
+  generationFixture(ctx, [{ id: 'old', status: 'COMPLETED', images: [{}, {}] }]);
+  ctx.selectedHistoryId = 'old';
+  ctx.selectedHistoryImageIndex = 1;
+  ctx.resultsTab = 'gallery';
+  ctx.getEffectiveAutoScrollToResults = () => true;
+  ctx.getEffectiveAutoSelectLatestResult = () => false;
+  let scrolled = 0;
+  ctx.scrollToResults = () => scrolled++;
+  await ctx.generate();
+  assert.strictEqual(ctx.selectedHistoryId, 'old');
+  assert.strictEqual(ctx.selectedHistoryImageIndex, 1);
+  assert.strictEqual(ctx.resultsTab, 'gallery');
+  assert.strictEqual(scrolled, 1);
+});
+test('只选择最新任务时不自动跳到结果区', async () => {
   const { ctx } = load();
   generationFixture(ctx, [{ id: 'old', status: 'COMPLETED', images: [{}, {}] }]);
   ctx.selectedHistoryId = 'old';
   ctx.selectedHistoryImageIndex = 1;
   ctx.resultsTab = 'gallery';
   ctx.getEffectiveAutoScrollToResults = () => false;
+  ctx.getEffectiveAutoSelectLatestResult = () => true;
+  ctx.scrollToResults = () => { throw new Error('不应跳转'); };
+  await ctx.generate();
+  assert.strictEqual(ctx.selectedHistoryId, 'new');
+  assert.strictEqual(ctx.selectedHistoryImageIndex, 0);
+  assert.strictEqual(ctx.resultsTab, 'history');
+});
+test('关闭两个行为时保留旧图上下文且不提示提交Toast', async () => {
+  const { ctx } = load();
+  generationFixture(ctx, [{ id: 'old', status: 'COMPLETED', images: [{}, {}] }]);
+  ctx.selectedHistoryId = 'old';
+  ctx.selectedHistoryImageIndex = 1;
+  ctx.resultsTab = 'gallery';
+  ctx.getEffectiveAutoScrollToResults = () => false;
+  ctx.getEffectiveAutoSelectLatestResult = () => false;
   let scrolled = 0;
   ctx.scrollToResults = () => scrolled++;
   const notices = [];

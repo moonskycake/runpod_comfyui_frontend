@@ -5385,8 +5385,12 @@ const app = Vue.createApp({
 
         getEffectiveAutoScrollToResults() {
             const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
-            // 默认开启：仅在设置中显式关闭时不滚动
             return !(base && base.autoScrollToResults === false);
+        },
+
+        getEffectiveAutoSelectLatestResult() {
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            return !(base && base.autoSelectLatestResult === false);
         },
 
         getClientConfigSnapshot() {
@@ -5830,9 +5834,8 @@ const app = Vue.createApp({
                 this.updateHistoryEntry(historyEntry.id, { status: 'IN_QUEUE' });
             }
 
-            // 开启后即使正在查看旧图，也切换到刚提交的最新任务。
-            if (this.getEffectiveAutoScrollToResults()) {
-                this.mainView = 'generate';
+            // 两个行为独立：一个改变当前选中任务，一个只负责跳到结果区域。
+            if (this.getEffectiveAutoSelectLatestResult()) {
                 this.selectedHistoryId = historyEntry.id;
                 this.selectedHistoryImageIndex = 0;
                 this.selectedGalleryIndex = 0;
@@ -6050,6 +6053,7 @@ const app = Vue.createApp({
         },
 
         scrollToResults() {
+            this.mainView = 'generate';
             this.rightPanelTab = 'results';
             this.mobileResultsOpen = true;
             this.$nextTick(() => {
@@ -6186,7 +6190,8 @@ const app = Vue.createApp({
                 allowQueue,
                 maxConcurrent,
                 maxQueue,
-                autoScrollToResults: !!this.settingsForm.autoScrollToResults
+                autoScrollToResults: !!this.settingsForm.autoScrollToResults,
+                autoSelectLatestResult: !!this.settingsForm.autoSelectLatestResult
             });
 
             RunpodClient.setConfig({

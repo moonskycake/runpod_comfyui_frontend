@@ -24,8 +24,10 @@ function createDefaultSettingsConfig() {
     maxConcurrent: 1,
     // 排队上限（allowQueue=false 时等价为 0）
     maxQueue: 5,
-    // 生成后是否自动滚动到结果区
-    autoScrollToResults: true
+    // 生成后是否自动跳到结果区
+    autoScrollToResults: true,
+    // 生成后是否自动选择最新任务
+    autoSelectLatestResult: true
   };
 }
 
@@ -48,7 +50,8 @@ const Settings = {
     ALLOW_QUEUE: 'runpod_allow_queue',
     MAX_CONCURRENT: 'runpod_max_concurrent',
     MAX_QUEUE: 'runpod_max_queue',
-    AUTO_SCROLL_TO_RESULTS: 'runpod_auto_scroll_results'
+    AUTO_SCROLL_TO_RESULTS: 'runpod_auto_scroll_results',
+    AUTO_SELECT_LATEST_RESULT: 'runpod_auto_select_latest_result'
   },
 
   /**
@@ -93,6 +96,11 @@ const Settings = {
     const autoScrollToResults = autoScrollToResultsRaw === null
       ? this.config.autoScrollToResults
       : autoScrollToResultsRaw === 'true';
+    const autoSelectLatestResultRaw = localStorage.getItem(this.KEYS.AUTO_SELECT_LATEST_RESULT);
+    // 兼容旧版本：旧开关关闭时，两项都关闭；未设置时保持默认开启。
+    const autoSelectLatestResult = autoSelectLatestResultRaw === null
+      ? (autoScrollToResultsRaw === null ? this.config.autoSelectLatestResult : autoScrollToResults)
+      : autoSelectLatestResultRaw === 'true';
     
     let apiKey = '';
     if (rememberApiKey) {
@@ -113,7 +121,8 @@ const Settings = {
       allowQueue,
       maxConcurrent,
       maxQueue,
-      autoScrollToResults
+      autoScrollToResults,
+      autoSelectLatestResult
     };
 
     return this.config;
@@ -146,6 +155,7 @@ const Settings = {
     localStorage.setItem(this.KEYS.MAX_CONCURRENT, String(Number(this.config.maxConcurrent || 1)));
     localStorage.setItem(this.KEYS.MAX_QUEUE, String(Number(this.config.maxQueue || 0)));
     localStorage.setItem(this.KEYS.AUTO_SCROLL_TO_RESULTS, String(!!this.config.autoScrollToResults));
+    localStorage.setItem(this.KEYS.AUTO_SELECT_LATEST_RESULT, String(!!this.config.autoSelectLatestResult));
 
     // apiKey 仅在用户勾选"记住"时保存
     if (this.config.rememberApiKey) {

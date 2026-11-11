@@ -1520,10 +1520,21 @@
                             <input class="form-check-input" type="checkbox" id="autoScrollToResults"
                                    v-model="settingsForm.autoScrollToResults">
                             <label class="form-check-label text-light" for="autoScrollToResults">
-                                生成后自动查看最新结果
+                                生成后自动跳到最新结果区
                             </label>
                             <div class="form-text text-muted">
-                                开启后生成会选中新任务并跳到结果区；关闭后继续保持当前旧图或图库上下文。
+                                只切换到结果区域，不改变当前正在查看的任务或图片。
+                            </div>
+                        </div>
+
+                        <div class="mb-3 form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="autoSelectLatestResult"
+                                   v-model="settingsForm.autoSelectLatestResult">
+                            <label class="form-check-label text-light" for="autoSelectLatestResult">
+                                生成后自动选择最新结果
+                            </label>
+                            <div class="form-text text-muted">
+                                只把当前选中任务切换为新任务；可与上面的跳转设置独立组合。
                             </div>
                         </div>
 
