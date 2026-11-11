@@ -296,7 +296,36 @@ async function runComponentCases() {
     await typeValue(inst, '1girl, @wl, 8k', 10);
     checkEq(inst.menuItems[0].tag, 'wlop', '光标在 @wl 末尾时首项为画师 wlop');
     inst.applySelection(inst.menuItems[0]);
-    checkEq(inst.el.value, '1girl, wlop, 8k', 'token 后已有逗号时原地替换、不重复补逗号');
+    checkEq(inst.el.value, '1girl, wlop, 8k', 'token 后已有逗号和空格时不重复插入');
+    checkEq(inst.el.selectionStart, 13, '鼠标选择后光标移动到现有分隔符之后');
+  }
+  {
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl,8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop, 8k', '句子中间逗号后缺空格时自动补空格');
+    checkEq(inst.el.selectionStart, 13, '补空格后光标落在下一个词之前');
+  }
+  {
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl,8k', 10);
+    let prevented = false;
+    inst.onKeydown({ key: 'Tab', preventDefault() { prevented = true; } });
+    checkTrue(prevented, 'Tab 接受句中候选');
+    checkEq(inst.el.value, '1girl, wlop, 8k', 'Tab 选择句中候选同样补空格');
+  }
+  {
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    inst.autoSpaceAfterAutocomplete = false;
+    await typeValue(inst, '1girl, @wl,8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop,8k', '关闭开关时保留句中原分隔符');
   }
 
   // ---- 换行前补全：补逗号，且保留原换行与后续行 ----

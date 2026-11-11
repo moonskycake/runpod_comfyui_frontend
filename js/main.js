@@ -836,19 +836,28 @@ const PromptTextareaComponent = {
             }
 
             const after = value.slice(tokenEnd);
-            // 候选后的分隔符可关闭；默认末尾补逗号和空格
-            if (this.autoSpaceAfterAutocomplete && !after) {
-                const trimmed = (value.slice(0, token.start) + replacement).trimEnd();
-                if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) {
+            if (this.autoSpaceAfterAutocomplete && after[0] === ',') {
+                const afterComma = after.slice(1);
+                const existingSpace = afterComma.match(/^[ \t]*/)[0];
+                if (/^\r?\n/.test(afterComma)) {
+                    replacement += ',';
+                    tokenEnd += 1;
+                } else {
+                    // 消费已有逗号和空格，让光标落到分隔符之后。
                     replacement += ', ';
+                    tokenEnd += 1 + (existingSpace ? 1 : 0);
                 }
             } else if (this.autoSpaceAfterAutocomplete && /^\r?\n/.test(after)) {
                 const prefix = (value.slice(0, token.start) + replacement).trimEnd();
-                if (prefix && !prefix.endsWith(',')) {
-                    replacement += ',';
-                }
-            } else if (this.autoSpaceAfterAutocomplete && after && !/^[,\s]/.test(after)) {
-                replacement += ' ';
+                if (prefix && !prefix.endsWith(',')) replacement += ',';
+            } else if (this.autoSpaceAfterAutocomplete && !after) {
+                const trimmed = (value.slice(0, token.start) + replacement).trimEnd();
+                if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) replacement += ', ';
+            } else if (this.autoSpaceAfterAutocomplete && /^[ \t]+/.test(after)) {
+                // 复用已有空格并把光标移到它之后。
+                const existingSpace = after.match(/^[ \t]+/)[0];
+                replacement += existingSpace;
+                tokenEnd += existingSpace.length;
             }
 
             this.replaceRange(el, token.start, tokenEnd, replacement);
