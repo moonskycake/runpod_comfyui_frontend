@@ -1119,6 +1119,7 @@ const app = Vue.createApp({
             selectedHistoryId: '',
             selectedHistoryImageIndex: 0,
             selectedGalleryIndex: 0,
+            galleryImageFit: 'cover',
             // 负向提示词默认折叠，摘要始终可见；编辑正/负时自动展开
             negativePromptExpanded: false,
             // 图库/收藏按图片 id 锚定：新图插到前面时数值索引会漂移
@@ -1167,6 +1168,8 @@ const app = Vue.createApp({
             previewMode: 'history', // 'history' | 'gallery' | 'favorites'
             previewHistoryId: '',
             previewIndex: 0,
+            // 只保留正在预览的一张图，防止自动历史裁剪打断查看。关闭或翻页后释放。
+            previewRetainedImage: null,
             previewTransitionName: 'rp-slide-next',
             showPreviewParams: false,
             previewDragX: 0,
@@ -1717,8 +1720,9 @@ const app = Vue.createApp({
         selectedGalleryImage() {
             const images = this.galleryImages;
             if (images.length === 0) return null;
+            const anchored = images.find(img => img.id === this.selectedGalleryImageId);
             const idx = Math.max(0, Math.min(this.selectedGalleryIndex, images.length - 1));
-            return images[idx];
+            return anchored || images[idx];
         },
 
         detailRecord() {
@@ -1740,7 +1744,13 @@ const app = Vue.createApp({
                 return this.favoriteImages;
             }
             if (this.previewMode === 'gallery') {
-                return this.galleryImages;
+                const images = this.galleryImages;
+                const retained = this.previewRetainedImage;
+                if (!this.showImageModal || !retained || images.some(img => img.id === retained.id)) return images;
+                // 自动裁剪不等于用户删除：当前图片仍可查看、下载或收藏。
+                const next = images.slice();
+                next.splice(this.clampInt(this.previewIndex, 0, next.length), 0, retained);
+                return next;
             }
 
             const historyId = this.previewHistoryId || (this.selectedHistoryRecord ? this.selectedHistoryRecord.id : '');
@@ -1748,11 +1758,15 @@ const app = Vue.createApp({
             return record && Array.isArray(record.images) ? record.images : [];
         },
 
-        previewImage() {
+        previewCurrentIndex() {
             const images = this.previewImages;
-            if (images.length === 0) return null;
-            const idx = Math.max(0, Math.min(this.previewIndex, images.length - 1));
-            return images[idx];
+            const anchored = this.previewAnchorImageId
+                ? images.findIndex(img => img.id === this.previewAnchorImageId) : -1;
+            return anchored !== -1 ? anchored : this.clampInt(this.previewIndex, 0, Math.max(0, images.length - 1));
+        },
+
+        previewImage() {
+            return this.previewImages[this.previewCurrentIndex] || null;
         },
 
         previewParamValues() {
@@ -1782,7 +1796,7 @@ const app = Vue.createApp({
                 const requestId = img.requestId;
                 if (!requestId) return null;
                 const rec = this.requestHistory.find(r => r.id === requestId);
-                return normalize(rec && rec.placeholderValues);
+                return normalize(rec && rec.placeholderValues) || normalize(img.previewPlaceholderValues);
             }
 
             const historyId = this.previewHistoryId || (this.selectedHistoryRecord ? this.selectedHistoryRecord.id : '');
@@ -1791,18 +1805,18 @@ const app = Vue.createApp({
         },
 
         previewCanPrev() {
-            return this.previewImages.length > 0 && this.previewIndex > 0;
+            return this.previewImages.length > 0 && this.previewCurrentIndex > 0;
         },
 
         previewCanNext() {
             const images = this.previewImages;
-            return images.length > 0 && this.previewIndex < images.length - 1;
+            return images.length > 0 && this.previewCurrentIndex < images.length - 1;
         },
 
         previewIndicatorText() {
             const total = this.previewImages.length;
             if (!total) return '';
-            const idx = Math.max(0, Math.min(this.previewIndex, total - 1));
+            const idx = this.previewCurrentIndex;
             return `${idx + 1} / ${total}`;
         },
 
@@ -1929,6 +1943,7 @@ const app = Vue.createApp({
         this.loadWorkflowCollapsedState();
         this.loadSeedRandomEachRunState();
         this.loadPromptInsertOptions();
+        this.loadGalleryImageFit();
     },
 
     mounted() {
@@ -6497,6 +6512,23 @@ const app = Vue.createApp({
             this.selectedHistoryImageIndex += 1;
         },
 
+        loadGalleryImageFit() {
+            try {
+                this.galleryImageFit = localStorage.getItem('runpod_gallery_image_fit') === 'contain' ? 'contain' : 'cover';
+            } catch (e) {
+                this.galleryImageFit = 'cover';
+            }
+        },
+
+        setGalleryImageFit(fit) {
+            this.galleryImageFit = fit === 'contain' ? 'contain' : 'cover';
+            try {
+                localStorage.setItem('runpod_gallery_image_fit', this.galleryImageFit);
+            } catch (e) {
+                // 存储不可用时仍在当前会话生效。
+            }
+        },
+
         selectGalleryImage(index) {
             this.resultsTab = 'gallery';
             this.selectedGalleryIndex = index;
@@ -6513,11 +6545,14 @@ const app = Vue.createApp({
             }
             if (this.showImageModal && this.previewMode === 'gallery') {
                 const anchor = this.previewAnchorImageId || this.selectedGalleryImageId;
-                const idx = anchor ? gallery.findIndex(img => img && img.id === anchor) : -1;
+                const idx = anchor ? this.previewImages.findIndex(img => img && img.id === anchor) : -1;
                 if (idx !== -1) {
                     this.previewIndex = idx;
-                    this.selectedGalleryIndex = idx;
-                    this.selectedGalleryImageId = anchor;
+                    const galleryIndex = gallery.findIndex(img => img && img.id === anchor);
+                    if (galleryIndex !== -1) {
+                        this.selectedGalleryIndex = galleryIndex;
+                        this.selectedGalleryImageId = anchor;
+                    }
                 }
             }
             const favorites = this.favoriteImages || [];
@@ -6638,11 +6673,10 @@ const app = Vue.createApp({
 
             const record = this.findRecordForImage(image);
             const now = Date.now();
+            const savedValues = image.favoritePlaceholderValues || image.previewPlaceholderValues;
             const valuesSource = record && record.placeholderValues && typeof record.placeholderValues === 'object'
                 ? record.placeholderValues
-                : (image && image.favoritePlaceholderValues && typeof image.favoritePlaceholderValues === 'object'
-                    ? image.favoritePlaceholderValues
-                    : {});
+                : (savedValues && typeof savedValues === 'object' ? savedValues : {});
             const fav = {
                 id,
                 addedAt: now,
@@ -6692,6 +6726,14 @@ const app = Vue.createApp({
             if (!ok) return;
 
             const id = image.id;
+            // 主动删除才释放保留图；记录删除前位置，优先显示下一张，末尾退到上一张。
+            if (this.showImageModal && this.previewImage && this.previewImage.id === id) {
+                this.previewIndex = this.previewCurrentIndex;
+                this.previewAnchorImageId = '';
+            }
+            if (this.previewRetainedImage && this.previewRetainedImage.id === id) {
+                this.previewRetainedImage = null;
+            }
 
             // 从收藏移除
             this.removeFavoriteById(id);
@@ -6750,8 +6792,7 @@ const app = Vue.createApp({
                 this.closeImageModal();
                 return;
             }
-            if (this.previewIndex < 0) this.previewIndex = 0;
-            if (this.previewIndex >= total) this.previewIndex = total - 1;
+            this.previewIndex = this.previewCurrentIndex;
             this.syncSelectionFromPreview();
         },
 
@@ -7015,6 +7056,8 @@ const app = Vue.createApp({
         openPreviewFromHistory(historyId, index) {
             this.previewMode = 'history';
             this.previewHistoryId = historyId;
+            this.previewAnchorImageId = '';
+            this.previewRetainedImage = null;
             this.previewIndex = index;
             this.showPreviewParams = false;
             this.previewDragX = 0;
@@ -7028,12 +7071,17 @@ const app = Vue.createApp({
         },
 
         openPreviewFromGallery(index) {
+            const gallery = this.galleryImages;
+            if (!gallery.length) return;
+            index = this.clampInt(index, 0, gallery.length - 1);
+            this.previewRetainedImage = null;
             this.previewMode = 'gallery';
             this.previewHistoryId = '';
             this.previewIndex = index;
             const img = (this.galleryImages || [])[index];
             this.previewAnchorImageId = img && img.id ? img.id : '';
             this.selectedGalleryImageId = this.previewAnchorImageId;
+            this.retainGalleryPreviewImage(img);
             this.showPreviewParams = false;
             this.previewDragX = 0;
             this.previewIsDragging = false;
@@ -7050,6 +7098,7 @@ const app = Vue.createApp({
 
             const idx = Math.max(0, Math.min(index, total - 1));
             this.previewMode = 'favorites';
+            this.previewRetainedImage = null;
             this.previewHistoryId = '';
             this.previewIndex = idx;
             this.selectedFavoriteIndex = idx;
@@ -7071,6 +7120,7 @@ const app = Vue.createApp({
             this.previewIndex = 0;
             this.previewHistoryId = '';
             this.previewAnchorImageId = '';
+            this.previewRetainedImage = null;
             this.showPreviewParams = false;
             this.previewDragX = 0;
             this.previewIsDragging = false;
@@ -7083,7 +7133,11 @@ const app = Vue.createApp({
             this.previewDragX = 0;
             this.previewIsDragging = false;
             this.previewIsSwiping = false;
-            this.previewIndex -= 1;
+            const target = this.previewImages[this.previewCurrentIndex - 1];
+            this.previewIndex = this.previewCurrentIndex - 1;
+            this.previewAnchorImageId = target.id;
+            if (this.previewMode === 'gallery') this.retainGalleryPreviewImage(target);
+            this.previewIndex = this.previewCurrentIndex;
             this.syncSelectionFromPreview();
         },
 
@@ -7093,8 +7147,24 @@ const app = Vue.createApp({
             this.previewDragX = 0;
             this.previewIsDragging = false;
             this.previewIsSwiping = false;
-            this.previewIndex += 1;
+            const target = this.previewImages[this.previewCurrentIndex + 1];
+            this.previewIndex = this.previewCurrentIndex + 1;
+            this.previewAnchorImageId = target.id;
+            if (this.previewMode === 'gallery') this.retainGalleryPreviewImage(target);
+            this.previewIndex = this.previewCurrentIndex;
             this.syncSelectionFromPreview();
+        },
+
+        retainGalleryPreviewImage(img) {
+            if (!img) {
+                this.previewRetainedImage = null;
+                return;
+            }
+            const record = this.requestHistory.find(r => r.id === img.requestId);
+            this.previewRetainedImage = {
+                ...img,
+                previewPlaceholderValues: deepCloneJson((record && record.placeholderValues) || img.previewPlaceholderValues || {})
+            };
         },
 
         syncSelectionFromPreview() {
@@ -7106,10 +7176,14 @@ const app = Vue.createApp({
                 return;
             }
             if (this.previewMode === 'gallery') {
-                this.selectedGalleryIndex = this.previewIndex;
-                const img = (this.galleryImages || [])[this.previewIndex];
-                this.selectedGalleryImageId = img && img.id ? img.id : '';
-                this.previewAnchorImageId = this.selectedGalleryImageId;
+                const img = this.previewImage;
+                this.previewAnchorImageId = img && img.id ? img.id : '';
+                this.retainGalleryPreviewImage(img);
+                const idx = (this.galleryImages || []).findIndex(item => img && item.id === img.id);
+                if (idx !== -1) {
+                    this.selectedGalleryIndex = idx;
+                    this.selectedGalleryImageId = img.id;
+                }
                 return;
             }
 

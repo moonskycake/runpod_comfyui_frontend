@@ -1263,12 +1263,21 @@
                                 </div>
                         <!-- 图库 -->
                         <div v-show="resultsTab === 'gallery'">
+                            <div class="d-flex justify-content-end align-items-center gap-2 flex-wrap mb-3">
+                                <span class="small text-muted">缩略图显示</span>
+                                <div class="btn-group btn-group-sm" role="group" aria-label="图库图片显示方式">
+                                    <button type="button" class="btn btn-outline-light" :class="{ active: galleryImageFit === 'cover' }"
+                                            :aria-pressed="galleryImageFit === 'cover'" @click="setGalleryImageFit('cover')" title="裁剪图片以填满缩略图">填满</button>
+                                    <button type="button" class="btn btn-outline-light" :class="{ active: galleryImageFit === 'contain' }"
+                                            :aria-pressed="galleryImageFit === 'contain'" @click="setGalleryImageFit('contain')" title="按最长边适应缩略图，保留完整画面">完整显示</button>
+                                </div>
+                            </div>
                             <div v-if="galleryImages.length === 0" class="text-muted text-center py-5">图库暂无图片</div>
                             <template v-else>
                                 <div class="row g-2">
                                     <div v-for="(img, idx) in galleryImages" :key="img.id" class="col-6 col-md-4 col-xl-3">
                                         <div class="rp-thumb border border-secondary rounded overflow-hidden position-relative" @click="openPreviewFromGallery(idx)">
-                                            <img :src="img.imageUrl" class="w-100" style="height: 150px; object-fit: cover;">
+                                            <img :src="img.imageUrl" class="rp-gallery-image" :style="{ objectFit: galleryImageFit }" :alt="img.filename || '生成图片'">
                                             <span class="badge bg-dark position-absolute top-0 start-0 m-2">{{ idx + 1 }}</span>
                                         </div>
                                     </div>

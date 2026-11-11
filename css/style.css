@@ -643,6 +643,13 @@ input[type="range"].rp-range::-moz-range-thumb {
     background-color: #111;
 }
 
+.rp-gallery-image {
+    display: block;
+    width: 100%;
+    height: 150px;
+    background: #111;
+}
+
 .rp-thumb:hover {
     outline: 2px solid rgba(var(--rp-accent-rgb), 0.35);
     outline-offset: 0;

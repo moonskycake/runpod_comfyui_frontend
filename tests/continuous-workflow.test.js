@@ -25,6 +25,7 @@ function load() {
   ctx.$nextTick = fn => { if (fn) fn(); return Promise.resolve(); };
   ctx.$refs = {};
   ctx._testDocument = sandbox.document;
+  ctx._testStorage = sandbox.localStorage;
   return { ctx, options, components };
 }
 function generationFixture(ctx, history = []) {
@@ -205,6 +206,139 @@ test('新图插入图库头部后按图片 id 重定位，不切换到别的图'
   assert.strictEqual(ctx.selectedGalleryImageId, 'b1');
   assert.strictEqual(ctx.selectedGalleryIndex, 1);
   assert.strictEqual(ctx.previewIndex, 1);
+});
+function galleryFixture(ctx, count = 5) {
+  ctx.requestHistory = [{ id: 'old', placeholderValues: { prompt: 'old prompt' }, images:
+    Array.from({ length: count }, (_, i) => ({ id: `img-${i}`, imageUrl: `url-${i}` })) }];
+  ctx.queuePersistHistory = () => {};
+  ctx.persistHistoryNow = async () => {};
+}
+test('图库更新后即使尚未同步索引，大图和翻页仍按图片ID定位', () => {
+  const { ctx } = load();
+  galleryFixture(ctx);
+  ctx.openPreviewFromGallery(3);
+  ctx.requestHistory.unshift({ id: 'new', images: [{ id: 'new-0' }, { id: 'new-1' }] });
+  assert.strictEqual(ctx.previewImage.id, 'img-3');
+  assert.strictEqual(ctx.previewIndicatorText, '6 / 7');
+  ctx.previewNext();
+  assert.strictEqual(ctx.previewImage.id, 'img-4');
+  assert.strictEqual(ctx.previewCanNext, false);
+  ctx.previewNext();
+  assert.strictEqual(ctx.previewImage.id, 'img-4');
+  ctx.previewPrev();
+  assert.strictEqual(ctx.previewImage.id, 'img-3');
+});
+test('末尾预览图被自动裁剪时保持图片和参数，关闭后释放保留图', () => {
+  const { ctx } = load();
+  galleryFixture(ctx);
+  ctx.openPreviewFromGallery(4);
+  ctx.applyPrunedRecordsToMemory([{ id: 'old', images: [{ id: 'img-0' }, { id: 'img-1' }] }]);
+  assert.strictEqual(ctx.previewImage.id, 'img-4');
+  assert.strictEqual(ctx.previewParamValues.prompt, 'old prompt');
+  assert.strictEqual(ctx.previewIndicatorText, '3 / 3');
+  assert.strictEqual(ctx.previewCanNext, false);
+  ctx.previewPrev();
+  assert.strictEqual(ctx.previewImage.id, 'img-1');
+  assert.strictEqual(ctx.previewImages.length, 2);
+  ctx.closeImageModal();
+  assert.strictEqual(ctx.previewRetainedImage, null);
+});
+test('整条历史被裁剪时仍可查看当前图和参数，重新打开使用当前图库', () => {
+  const { ctx } = load();
+  galleryFixture(ctx, 1);
+  ctx.openPreviewFromGallery(0);
+  ctx.applyPrunedRecordsToMemory([]);
+  ctx.ensureResultsSelection();
+  assert.strictEqual(ctx.previewImage.id, 'img-0');
+  assert.strictEqual(ctx.previewParamValues.prompt, 'old prompt');
+  assert.strictEqual(ctx.previewIndicatorText, '1 / 1');
+  ctx.closeImageModal();
+  ctx.openPreviewFromGallery(0);
+  assert.strictEqual(ctx.showImageModal, false);
+});
+test('图库删除当前图选相邻图，删除末图选前一张，删空关闭预览', async () => {
+  const { ctx } = load();
+  galleryFixture(ctx, 3);
+  ctx.askConfirm = async () => true;
+  ctx.openPreviewFromGallery(1);
+  await ctx.deleteImage(ctx.previewImage);
+  assert.strictEqual(ctx.previewImage.id, 'img-2');
+  assert.strictEqual(ctx.previewIndicatorText, '2 / 2');
+  await ctx.deleteImage(ctx.previewImage);
+  assert.strictEqual(ctx.previewImage.id, 'img-0');
+  assert.strictEqual(ctx.previewCanNext, false);
+  await ctx.deleteImage(ctx.previewImage);
+  assert.strictEqual(ctx.showImageModal, false);
+  assert.strictEqual(ctx.previewRetainedImage, null);
+});
+test('删除前面的图保留当前ID，取消删除及生成提交均不切大图', async () => {
+  const { ctx } = load();
+  galleryFixture(ctx);
+  ctx.openPreviewFromGallery(4);
+  ctx.askConfirm = async () => true;
+  await ctx.deleteImage(ctx.galleryImages[0]);
+  assert.strictEqual(ctx.previewImage.id, 'img-4');
+  assert.strictEqual(ctx.previewIndicatorText, '4 / 4');
+  ctx.askConfirm = async () => false;
+  await ctx.deleteImage(ctx.previewImage);
+  assert.strictEqual(ctx.previewImage.id, 'img-4');
+  generationFixture(ctx, ctx.requestHistory);
+  ctx.getEffectiveAutoSelectLatestResult = () => true;
+  ctx.getEffectiveAutoScrollToResults = () => false;
+  await ctx.generate();
+  assert.strictEqual(ctx.previewImage.id, 'img-4');
+});
+test('自动裁剪后可收藏保留图及其参数，主动删除保留图不会复活', async () => {
+  const { ctx } = load();
+  galleryFixture(ctx, 2);
+  ctx.openPreviewFromGallery(1);
+  ctx.applyPrunedRecordsToMemory([{ id: 'old', images: [{ id: 'img-0' }] }]);
+  ctx.toggleFavorite(ctx.previewImage);
+  assert.strictEqual(ctx.favorites[0].placeholderValues.prompt, 'old prompt');
+  ctx.askConfirm = async () => true;
+  await ctx.deleteImage(ctx.previewImage);
+  assert.strictEqual(ctx.previewImage.id, 'img-0');
+  assert.strictEqual(ctx.previewRetainedImage.id, 'img-0');
+  assert.strictEqual(ctx.favorites.length, 0);
+  ctx.reanchorImageSelections();
+  assert.strictEqual(ctx.previewImages.length, 1);
+});
+test('收藏重排及历史预览不受图库保留图污染', () => {
+  const { ctx } = load();
+  galleryFixture(ctx, 3);
+  ctx.openPreviewFromGallery(2);
+  ctx.openPreviewFromHistory('old', 1);
+  assert.strictEqual(ctx.previewImage.id, 'img-1');
+  assert.strictEqual(ctx.previewRetainedImage, null);
+  ctx.previewNext();
+  assert.strictEqual(ctx.previewImage.id, 'img-2');
+  ctx.favorites = [{ id: 'img-1', addedAt: 2 }, { id: 'img-0', addedAt: 1 }];
+  ctx.openPreviewFromFavorites(1);
+  ctx.favorites.unshift({ id: 'img-2', addedAt: 3 });
+  assert.strictEqual(ctx.previewImage.id, 'img-0');
+  assert.strictEqual(ctx.previewIndicatorText, '3 / 3');
+  ctx.previewPrev();
+  assert.strictEqual(ctx.previewImage.id, 'img-1');
+  assert.strictEqual(ctx.previewRetainedImage, null);
+});
+test('图库显示方式独立记忆，损坏值及存储不可用时安全回退', () => {
+  const { ctx } = load();
+  let stored = null;
+  ctx._testStorage.getItem = () => stored;
+  ctx._testStorage.setItem = (key, value) => { stored = value; };
+  ctx.loadGalleryImageFit();
+  assert.strictEqual(ctx.galleryImageFit, 'cover');
+  ctx.setGalleryImageFit('contain');
+  assert.strictEqual(stored, 'contain');
+  ctx.galleryImageFit = 'cover';
+  ctx.loadGalleryImageFit();
+  assert.strictEqual(ctx.galleryImageFit, 'contain');
+  stored = 'invalid';
+  ctx.loadGalleryImageFit();
+  assert.strictEqual(ctx.galleryImageFit, 'cover');
+  ctx._testStorage.setItem = () => { throw new Error('quota'); };
+  ctx.setGalleryImageFit('contain');
+  assert.strictEqual(ctx.galleryImageFit, 'contain');
 });
 test('生成禁用原因覆盖未配置与队列满，按钮文案区分加入队列', () => {
   const { ctx } = load();
