@@ -266,7 +266,7 @@
                                     </optgroup>
                                     <optgroup label="统一库模板" v-if="catalogTemplateItems.length > 0">
                                         <option v-for="t in catalogTemplateItems" :key="t.id" :value="t.id">
-                                            {{ t.name }}{{ t.publishedRevision === null ? '' : ' · v' + t.publishedRevision }}
+                                            {{ t.name }}
                                         </option>
                                     </optgroup>
                                     <optgroup label="我的模板" v-if="userTemplates.length > 0">

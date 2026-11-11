@@ -843,9 +843,9 @@ const PromptTextareaComponent = {
                     replacement += ',';
                     tokenEnd += 1;
                 } else {
-                    // 消费已有逗号和空格，让光标落到分隔符之后。
+                    // 统一已有分隔符：保留逗号，只保留一个空格，并把光标放到空格后。
                     replacement += ', ';
-                    tokenEnd += 1 + (existingSpace ? 1 : 0);
+                    tokenEnd += 1 + existingSpace.length;
                 }
             } else if (this.autoSpaceAfterAutocomplete && /^\r?\n/.test(after)) {
                 const prefix = (value.slice(0, token.start) + replacement).trimEnd();
@@ -854,10 +854,12 @@ const PromptTextareaComponent = {
                 const trimmed = (value.slice(0, token.start) + replacement).trimEnd();
                 if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) replacement += ', ';
             } else if (this.autoSpaceAfterAutocomplete && /^[ \t]+/.test(after)) {
-                // 复用已有空格并把光标移到它之后。
-                const existingSpace = after.match(/^[ \t]+/)[0];
-                replacement += existingSpace;
-                tokenEnd += existingSpace.length;
+                const existingSpace = after.match(/^[ \t]*/)[0];
+                const afterSpace = after.slice(existingSpace.length);
+                if (!/^\r?\n/.test(afterSpace)) {
+                    replacement += ', ';
+                    tokenEnd += existingSpace.length;
+                }
             }
 
             this.replaceRange(el, token.start, tokenEnd, replacement);

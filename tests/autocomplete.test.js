@@ -303,6 +303,15 @@ async function runComponentCases() {
     const env = buildEnv();
     await env.window.TagIndex.ensureLoaded();
     const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl,   8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop, 8k', '句中多个空格会规范为一个空格');
+    checkEq(inst.el.selectionStart, 13, '规范分隔符后光标位置正确');
+  }
+  {
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
     await typeValue(inst, '1girl, @wl,8k', 10);
     inst.applySelection(inst.menuItems[0]);
     checkEq(inst.el.value, '1girl, wlop, 8k', '句子中间逗号后缺空格时自动补空格');
