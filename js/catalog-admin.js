@@ -500,6 +500,12 @@
     return { ok: response.ok, status: response.status, payload: payload };
   }
 
+  function editorApi() {
+    if (typeof CatalogImageEditor !== 'undefined' && CatalogImageEditor) return CatalogImageEditor;
+    if (global && global.CatalogImageEditor) return global.CatalogImageEditor;
+    return null;
+  }
+
   var CatalogAdmin = {
     KINDS: KINDS,
     KIND_VALUES: KIND_VALUES,
@@ -570,15 +576,23 @@
         saveError: '',
         saveNotice: '',
         noticeTone: 'ok',
-        previewBusy: false,
-        previewError: '',
+        savePhase: '',
         previewBroken: false,
+        pictureLocal: null,
+        pictureGeom: { mode: 'cover', zoom: 1, offsetX: 0, offsetY: 0 },
+        pictureAction: '',
+        pictureLoading: false,
+        pictureExporting: false,
+        pictureError: '',
+        pictureNotice: '',
+        pictureDragActive: false,
+        pictureAreaActive: false,
         conflict: null,
         editorTab: 'form',
         publishDialog: { open: false, acknowledge: false, busy: false, error: '' },
         disableDialog: { open: false, busy: false, error: '' },
         deleteDialog: { open: false, busy: false, error: '' },
-        discardDialog: { open: false, pending: null },
+        discardDialog: { open: false, pending: null, message: '' },
         importDialog: { open: false, text: '', fileName: '', busy: false, error: '', result: '' },
         toast: '',
         toastTone: 'ok'
@@ -615,8 +629,28 @@
       },
       currentKindLabel: function () { return kindLabel(this.kind); },
       status: function () { return CatalogAdmin.statusInfo(this.item); },
-      isDirty: function () {
+      isTextDirty: function () {
         return this.snapshot !== '' && JSON.stringify(this.form) !== this.snapshot;
+      },
+      pendingPicture: function () {
+        if (this.pictureAction === 'clear') return { action: 'clear' };
+        if (this.pictureAction === 'set' && this.pictureLocal) return { action: 'set' };
+        return null;
+      },
+      hasPendingPicture: function () { return !!this.pendingPicture; },
+      isDirty: function () { return this.isTextDirty || this.hasPendingPicture; },
+      pictureHasLocal: function () { return !!this.pictureLocal && this.pictureAction !== 'clear'; },
+      pictureHasPreview: function () {
+        return this.hasPendingPicture || (!this.previewBroken && !!this.adminPreviewSrc);
+      },
+      pictureBusy: function () { return this.pictureLoading || this.pictureExporting; },
+      saveBusy: function () { return this.saving || this.pictureBusy; },
+      pictureZoomLabel: function () {
+        return Math.round(Number(this.pictureGeom.zoom || 1) * 100) + '%';
+      },
+      pictureStageLabel: function () {
+        var mode = this.pictureGeom.mode === 'contain' ? '完整显示' : '裁剪填满';
+        return '本地图片构图预览，' + mode + '，缩放 ' + this.pictureZoomLabel;
       },
       canDeleteDraft: function () {
         return !this.isNew && this.item && this.item.publishedRevision == null;
@@ -655,6 +689,9 @@
     },
     watch: {
       'filters.query': function () { this.mobilePane = 'list'; },
+      kind: function (kind) {
+        if (kind !== 'preset' && kind !== 'snippet') this.resetPictureState();
+      },
       mobilePane: function (pane) {
         if (pane === 'preview') this.editorTab = 'preview';
         else if (pane === 'edit') this.editorTab = 'form';
@@ -663,8 +700,15 @@
     mounted: function () {
       var self = this;
       this.snapshot = JSON.stringify(this.form);
+      this._saveLock = { busy: false };
+      this._sequence = 0;
+      this._saveToken = 0;
+      this._pictureToken = 0;
       this.checkSession();
       document.addEventListener('keydown', this.onKeydown);
+      document.addEventListener('paste', this.onDocumentPaste);
+      document.addEventListener('click', this.onDocumentRegionChange, true);
+      document.addEventListener('focusin', this.onDocumentRegionChange, true);
       this._beforeUnload = function (event) {
         if (!self.isDirty) return undefined;
         event.preventDefault();
@@ -675,7 +719,11 @@
     },
     beforeUnmount: function () {
       document.removeEventListener('keydown', this.onKeydown);
+      document.removeEventListener('paste', this.onDocumentPaste);
+      document.removeEventListener('click', this.onDocumentRegionChange, true);
+      document.removeEventListener('focusin', this.onDocumentRegionChange, true);
       window.removeEventListener('beforeunload', this._beforeUnload);
+      this.releaseLocalPicture();
     },
     methods: {
       kindLabel: function (kind) { return kindLabel(kind); },
@@ -773,6 +821,7 @@
         this.submitLogin(this.$refs.sessionPassword);
       },
       doLogout: async function () {
+        this.resetPictureState();
         var res = await CatalogAdmin.api('POST', '/api/admin/logout', { csrf: this.auth.csrfToken });
         this.auth.status = 'anonymous';
         this.auth.csrfToken = '';
@@ -790,25 +839,34 @@
         this.closeDialogs();
         if (!res.ok) this.loginError = CatalogAdmin.formatApiError(res.payload, res.status);
       },
-      loadItems: async function () {
+      loadItems: async function (options) {
+        var opts = options || {};
         if (!this.isReady) return;
-        this.listState = 'loading';
-        this.listError = '';
-        var res = await CatalogAdmin.api('GET', '/api/admin/items');
-        if (res.status === 401) {
-          this.listState = 'error';
-          this.listError = '登录已过期，请重新登录';
-          this.handleUnauthorized();
-          return;
+        if (!opts.quiet) {
+          this.listState = 'loading';
+          this.listError = '';
         }
-        if (!res.ok) {
-          this.listState = 'error';
-          this.listError = CatalogAdmin.formatApiError(res.payload, res.status);
-          return;
+        try {
+          var res = await CatalogAdmin.api('GET', '/api/admin/items');
+          if (res.status === 401) {
+            this.listError = '登录已过期，请重新登录';
+            if (!opts.quiet) this.listState = 'error';
+            this.handleUnauthorized();
+            return;
+          }
+          if (!res.ok) {
+            this.listError = CatalogAdmin.formatApiError(res.payload, res.status);
+            if (!opts.quiet) this.listState = 'error';
+            return;
+          }
+          var items = res.payload && Array.isArray(res.payload.items) ? res.payload.items : [];
+          this.items = items;
+          this.listError = '';
+          this.listState = items.length ? 'ready' : 'empty';
+        } catch (err) {
+          this.listError = '网络异常，列表刷新失败：' + (err && err.message ? err.message : '请求失败');
+          if (!opts.quiet) this.listState = 'error';
         }
-        var items = res.payload && Array.isArray(res.payload.items) ? res.payload.items : [];
-        this.items = items;
-        this.listState = items.length ? 'ready' : 'empty';
       },
       initialSelect: function () {
         if (this.item || this.isNew || this.selectedId) return;
@@ -817,17 +875,26 @@
         else this.startNew();
       },
       guardDiscard: function (pending) {
+        var lock = this.resourceLockReason();
+        if (lock) {
+          this.saveNotice = lock;
+          this.showToast(lock, 'warn');
+          return;
+        }
         if (!this.isDirty) {
           this.runPending(pending);
           return;
         }
         this.discardDialog.open = true;
         this.discardDialog.pending = pending;
+        this.discardDialog.message = '';
       },
       confirmDiscard: function () {
         var pending = this.discardDialog.pending;
         this.discardDialog.open = false;
         this.discardDialog.pending = null;
+        this.discardDialog.message = '';
+        this.resetPictureState();
         this.snapshot = JSON.stringify(this.form);
         this.runPending(pending);
       },
@@ -836,9 +903,17 @@
         if (pending.type === 'select') this.openItem(pending.id);
         else if (pending.type === 'new') this.startNewNow();
         else if (pending.type === 'kind') this.applyKind(pending.kind);
+        else if (pending.type === 'reload-server') this.loadServerVersionNow();
       },
       applyKind: function (kind) {
         if (kind === this.kind) return;
+        var lock = this.resourceLockReason();
+        if (lock) {
+          this.saveNotice = lock;
+          return;
+        }
+        this.resetPictureState();
+        this._openSeq = (this._openSeq || 0) + 1;
         this.kind = kind;
         this.filters.category = '';
         this.filters.status = '';
@@ -856,24 +931,45 @@
         }
         this.guardDiscard({ type: 'select', id: item.id });
       },
-      openItem: async function (id) {
-        this.busyItemId = id;
-        var res = await CatalogAdmin.api('GET', '/api/admin/items/' + encodeURIComponent(id));
-        this.busyItemId = '';
-        if (res.status === 401) {
-          this.handleUnauthorized();
+      openItem: async function (id, options) {
+        var opts = options || {};
+        var lock = this.resourceLockReason();
+        if (lock && !opts.force) {
+          this.saveNotice = lock;
           return;
         }
-        if (!res.ok || !res.payload) {
-          this.saveError = CatalogAdmin.formatApiError(res.payload, res.status);
+        var seq = (this._openSeq || 0) + 1;
+        this._openSeq = seq;
+        this.busyItemId = id;
+        var isCurrentRequest = function (self) {
+          return self._openSeq === seq && self.busyItemId === id;
+        };
+        try {
+          var res = await CatalogAdmin.api('GET', '/api/admin/items/' + encodeURIComponent(id));
+          if (!isCurrentRequest(this)) return;   // 已切到别的资源：丢弃迟到回包
+          if (res.status === 401) {
+            this.handleUnauthorized();
+            return;
+          }
+          if (!res.ok || !res.payload) {
+            this.saveError = CatalogAdmin.formatApiError(res.payload, res.status);
+            this.listError = this.saveError;
+            this.listState = 'error';
+            return;
+          }
+          this.applyItem(res.payload);
+          this.mobilePane = 'edit';
+        } catch (err) {
+          if (!isCurrentRequest(this)) return;
+          this.saveError = '网络异常，未能加载该资源：' + (err && err.message ? err.message : '请求失败');
           this.listError = this.saveError;
           this.listState = 'error';
-          return;
+        } finally {
+          if (this._openSeq === seq && this.busyItemId === id) this.busyItemId = '';
         }
-        this.applyItem(res.payload);
-        this.mobilePane = 'edit';
       },
       applyItem: function (item) {
+        this.resetPictureState();
         this.item = item;
         this.isNew = false;
         this.selectedId = item.id;
@@ -885,7 +981,6 @@
         this.saveError = '';
         this.saveNotice = '';
         this.conflict = null;
-        this.previewError = '';
         this.previewBroken = false;
         this.editorTab = 'form';
         var self = this;
@@ -904,6 +999,14 @@
         this.startNewNow();
       },
       startNewNow: function () {
+        var lock = this.resourceLockReason();
+        if (lock) {
+          this.saveNotice = lock;
+          this.showToast(lock, 'warn');
+          return;
+        }
+        this.resetPictureState();
+        this._openSeq = (this._openSeq || 0) + 1;
         this.item = null;
         this.isNew = true;
         this.selectedId = '';
@@ -914,7 +1017,6 @@
         this.saveError = '';
         this.saveNotice = '';
         this.conflict = null;
-        this.previewError = '';
         this.previewBroken = false;
         this.editorTab = 'form';
         this.mobilePane = 'edit';
@@ -939,8 +1041,14 @@
       },
       saveDraft: async function () {
         if (this.saving || !this.isReady || this.sessionExpired) return;
-        if (this.isNew && !this.item) {
-          // 新建时必须先有表单内容；空表单也能保存，但要求名称
+        if (this.pictureBusy) {
+          this.saveNotice = '图片处理中，请稍候再保存';
+          return;
+        }
+        var editor = editorApi();
+        if (!editor) {
+          this.saveError = '图片编辑模块未加载，请刷新页面后重试';
+          return;
         }
         var built = CatalogAdmin.buildPayload(this.kind, this.form);
         if (!built.ok) {
@@ -949,68 +1057,110 @@
           this.focusFirstError(built.errors);
           return;
         }
-        this.formErrors = {};
-        this.saving = true;
-        this.saveError = '';
-        this.saveNotice = '';
-        this.conflict = null;
-        var res;
-        if (this.isNew) {
-          res = await CatalogAdmin.api('POST', '/api/admin/items', { body: built.payload, csrf: this.auth.csrfToken });
-          if (res.status === 401) {
-            this.saving = false;
-            this.handleUnauthorized();
-            return;
+        var plan = editor.planSaveChain({
+          kind: this.kind,
+          isNew: this.isNew,
+          hasItem: !!this.item,
+          textDirty: this.isTextDirty,
+          pendingPicture: this.pendingPicture
+        });
+        if (!plan.ok) {
+          if (plan.blocked === 'nothing') {
+            this.saveNotice = '没有需要保存的修改';
+            this.saveError = '';
+          } else if (plan.blocked === 'unsupported-kind') {
+            this.saveError = '模板不支持预览图，请取消本地图片后再保存';
           }
-          if (res.ok && res.payload) {
-            var wasTemplate = this.kind;
-            this.applyItem(res.payload);
-            this.kind = wasTemplate;
-            await this.refreshList();
-            this.saveNotice = '已保存为草稿（未公开）';
-            this.showToast('草稿已保存');
-          } else if (res.status === 409 && res.payload && res.payload.current) {
-            this.conflict = { current: res.payload.current, detail: CatalogAdmin.formatApiError(res.payload, res.status) };
-            this.saveError = CatalogAdmin.formatApiError(res.payload, res.status);
-          } else {
-            this.saveError = CatalogAdmin.formatApiError(res.payload, res.status);
-          }
-        } else if (this.item) {
-          var patchPayload = CatalogAdmin.buildPayload(this.kind, this.form, { includeKind: false }).payload;
-          patchPayload.baseRev = this.baseRev;
-          res = await CatalogAdmin.api('PATCH', '/api/admin/items/' + encodeURIComponent(this.item.id), {
-            body: patchPayload,
-            csrf: this.auth.csrfToken
-          });
-          if (res.status === 401) {
-            this.saving = false;
-            this.handleUnauthorized();
-            return;
-          }
-          if (res.ok && res.payload) {
-            var wasKind = this.kind;
-            this.applyItem(res.payload);
-            this.kind = wasKind;
-            await this.refreshList();
-            this.saveNotice = res.payload.publishedRevision != null && res.payload.hasUnpublishedChanges
-              ? '草稿已保存；公开版本仍为 v' + res.payload.publishedRevision + '，显式发布后才切换'
-              : '草稿已保存（未公开）';
-            this.showToast('草稿已保存');
-          } else if (res.status === 409 && res.payload && res.payload.current) {
-            this.conflict = { current: res.payload.current, detail: CatalogAdmin.formatApiError(res.payload, res.status) };
-            this.saveError = CatalogAdmin.formatApiError(res.payload, res.status);
-          } else {
-            this.saveError = CatalogAdmin.formatApiError(res.payload, res.status);
-          }
+          return;
         }
-        this.saving = false;
+        var self = this;
+        var saved = await editor.runExclusive(this._saveLock || (this._saveLock = { busy: false }), async function () {
+          var token = self.beginOperation();
+          var sentFormJson = JSON.stringify(self.form);
+          self.saving = true;
+          self.savePhase = plan.steps.indexOf('saveText') >= 0 ? '保存文本草稿…' : '上传图片…';
+          self.saveError = '';
+          self.saveNotice = '';
+          self.conflict = null;
+          try {
+            var result = await editor.runSaveChain(plan, {
+              isStale: function () { return !self.isCurrentOperation(token); },
+              saveText: function () { return self.saveTextStep(token, sentFormJson); },
+              uploadPicture: function () { return self.uploadPictureStep(token); },
+              clearPicture: function () { return self.clearPictureStep(token); }
+            });
+            self.reportSaveResult(result, plan);
+            if (result.ok) await self.refreshListQuiet();
+            return result;
+          } finally {
+            if (self.isCurrentOperation(token)) {
+              self.saving = false;
+              self.savePhase = '';
+            }
+          }
+        });
+        if (saved && saved.skipped) {
+          this.saveNotice = '正在保存，请稍候';
+        }
       },
-      reloadServerVersion: async function () {
+      reportSaveResult: function (result, plan) {
+        if (!result || result.stale) {
+          if (result && result.stale) this.saveNotice = '资源已切换或操作已过期，本次结果被忽略';
+          return;
+        }
+        if (result.unauthorized) {
+          this.saveError = '登录已过期：编辑器内容与本地构图仍保留，重新登录后可再次点「保存草稿」继续。';
+          this.saveNotice = '';
+          return;
+        }
+        if (result.ok) {
+          var pictureStep = result.steps.indexOf('uploadPicture') >= 0 ||
+            result.steps.indexOf('clearPicture') >= 0;
+          if (result.steps.indexOf('uploadPicture') >= 0) {
+            this.saveNotice = '草稿已保存，图片已更新（未发布）。' + (this.pictureNotice ? ' ' + this.pictureNotice : '');
+          } else if (result.steps.indexOf('clearPicture') >= 0) {
+            this.saveNotice = '草稿已保存，预览图已移除（未发布）。';
+          } else if (this.item && this.item.publishedRevision != null && this.item.hasUnpublishedChanges) {
+            this.saveNotice = '草稿已保存；公开版本仍为 v' + this.item.publishedRevision + '，显式发布后才切换';
+          } else {
+            this.saveNotice = '草稿已保存（未发布）';
+          }
+          this.saveError = '';
+          this.showToast(pictureStep ? '草稿与图片已保存' : '草稿已保存');
+          return;
+        }
+        if (result.conflict) this.conflict = result.conflict;
+        if (result.partial) {
+          this.saveError = '文本已保存，但图片保存失败：' + result.error +
+            '。本地构图与新的修订号已保留，可再次点「保存草稿」只重试图片。';
+        } else {
+          this.saveError = result.error || '保存失败';
+        }
+        this.saveNotice = '';
+      },
+      reloadServerVersion: function () {
+        if (!this.selectedId) return;
+        var lock = this.resourceLockReason();
+        if (lock) {
+          this.saveNotice = lock;
+          return;
+        }
+        if (this.hasPendingPicture) {
+          this.discardDialog.open = true;
+          this.discardDialog.pending = { type: 'reload-server' };
+          this.discardDialog.message = '加载服务器版本会丢弃尚未上传的本地图片与构图，且不会自动重试。确认继续？';
+          return;
+        }
+        this.loadServerVersionNow();
+      },
+      loadServerVersionNow: async function () {
         if (!this.selectedId) return;
         this.conflict = null;
         this.snapshot = JSON.stringify(this.form);
-        await this.openItem(this.selectedId);
+        this.discardDialog.message = '';
+        await this.openItem(this.selectedId, { force: true });
         this.saveError = '';
+        this.saveNotice = '已加载服务器最新草稿；本地未保存修改已丢弃';
         this.showToast('已加载服务器最新草稿');
       },
       overwriteWithLocal: function () {
@@ -1022,6 +1172,10 @@
       openPublish: function () {
         if (this.isNew || !this.item) {
           this.saveNotice = '请先保存草稿，再执行发布';
+          return;
+        }
+        if (this.hasPendingPicture) {
+          this.saveNotice = '有尚未保存的本地图片，请先保存草稿再发布';
           return;
         }
         if (this.isDirty) {
@@ -1118,6 +1272,7 @@
         }
         if (res.ok) {
           this.deleteDialog.open = false;
+          this.resetPictureState();
           this.item = null;
           this.selectedId = '';
           this.isNew = false;
@@ -1245,200 +1400,483 @@
       showMobilePane: function (pane) {
         this.mobilePane = pane;
       },
-      previewGuardError: function () {
-        var guard = CatalogAdmin.previewGuard({
-          isNew: this.isNew,
-          hasItem: !!this.item,
-          isDirty: this.isDirty
-        });
-        return guard.ok ? '' : guard.error;
+      // ---------------- 预览图：本地编辑、构图与保存链 ----------------
+      releaseLocalPicture: function () {
+        var editor = editorApi();
+        if (this.pictureLocal && editor) editor.releasePicture(this.pictureLocal);
+        this.pictureLocal = null;
       },
-      triggerPreviewPick: function () {
-        if (this.previewBusy) return;
-        var error = this.previewGuardError();
-        if (error) {
-          this.previewError = error;
-          this.saveNotice = error;
+      resetPictureState: function () {
+        this._sequence = (this._sequence || 0) + 1;
+        this._pictureToken = 0;
+        this._saveToken = 0;
+        this._dragState = null;
+        this.releaseLocalPicture();
+        this.pictureAction = '';
+        this.pictureGeom = { mode: 'cover', zoom: 1, offsetX: 0, offsetY: 0 };
+        this.pictureLoading = false;
+        this.pictureExporting = false;
+        this.pictureError = '';
+        this.pictureNotice = '';
+        this.pictureDragActive = false;
+        this.pictureAreaActive = false;
+      },
+      defaultGeometry: function (mode) {
+        var editor = editorApi();
+        return editor ? editor.geometryDefaults(mode || 'cover') : { mode: 'cover', zoom: 1, offsetX: 0, offsetY: 0 };
+      },
+      renderPicturePreviews: function () {
+        var self = this;
+        var editor = editorApi();
+        if (!editor || !this.pictureLocal) return;
+        this.$nextTick(function () {
+          var picture = self.pictureLocal;
+          if (!picture) return;
+          ['stageCanvas', 'thumbCanvas'].forEach(function (key) {
+            var canvas = self.$refs && self.$refs[key];
+            if (canvas) editor.renderComposition(canvas, picture, self.pictureGeom);
+          });
+        });
+      },
+      resourceLockReason: function () {
+        if (this.saving) return '正在保存，请稍候再切换资源';
+        if (this.pictureBusy) return '图片处理中，请稍候再切换资源';
+        return '';
+      },
+      beginOperation: function () {
+        this._sequence = (this._sequence || 0) + 1;
+        this._saveToken = this._sequence;
+        return this._saveToken;
+      },
+      isCurrentOperation: function (token) {
+        return token != null && token === this._saveToken;
+      },
+      beginPictureOperation: function () {
+        this._sequence = (this._sequence || 0) + 1;
+        this._pictureToken = this._sequence;
+        return this._pictureToken;
+      },
+      isCurrentPictureOperation: function (token) {
+        return token != null && token === this._pictureToken;
+      },
+      openPicturePicker: function () {
+        if (this.saveBusy) return;
+        if (this.kind !== 'preset' && this.kind !== 'snippet') {
+          this.pictureError = '仅预设与片段支持预览图';
           return;
         }
-        this.previewError = '';
-        this.saveNotice = '';
-        if (this.$refs.previewFile) this.$refs.previewFile.click();
+        this.pictureAreaActive = true;
+        this.pictureError = '';
+        var input = this.$refs && this.$refs.pictureFile;
+        if (input) input.click();
       },
-      decodePreviewImage: async function (file) {
-        if (typeof createImageBitmap === 'function') {
-          try {
-            return await createImageBitmap(file, { imageOrientation: 'from-image' });
-          } catch (err) {
-            // 部分浏览器不支持参数，回退到默认解码
-          }
-          try {
-            return await createImageBitmap(file);
-          } catch (err) {
-            throw new Error('无法解码图片，文件可能已损坏或不是有效图片');
-          }
-        }
-        return await new Promise(function (resolve, reject) {
-          var url = URL.createObjectURL(file);
-          var image = new Image();
-          image.onload = function () {
-            URL.revokeObjectURL(url);
-            resolve(image);
-          };
-          image.onerror = function () {
-            URL.revokeObjectURL(url);
-            reject(new Error('无法解码图片，文件可能已损坏或不是有效图片'));
-          };
-          image.src = url;
-        });
-      },
-      canvasToBlob: function (canvas, quality) {
-        return new Promise(function (resolve, reject) {
-          if (!canvas.toBlob) {
-            reject(new Error('当前浏览器不支持图片压缩'));
-            return;
-          }
-          canvas.toBlob(function (blob) {
-            if (blob) resolve(blob);
-            else reject(new Error('图片压缩失败'));
-          }, 'image/webp', quality);
-        });
-      },
-      /**
-       * 压缩为 WebP：长边 <= 480px、输出 <= 64KiB，不保留原图/EXIF/ICC。
-       * 输入像素超过 16MP 直接拒绝（防解码炸弹）。
-       */
-      compressPreviewImage: async function (file) {
-        var bitmap = await this.decodePreviewImage(file);
-        var srcW = Number(bitmap.width || bitmap.naturalWidth || 0);
-        var srcH = Number(bitmap.height || bitmap.naturalHeight || 0);
-        if (!srcW || !srcH) throw new Error('无法读取图片尺寸');
-        if (srcW * srcH > CatalogAdmin.PREVIEW.maxPixels) {
-          throw new Error('图片像素超过 16MP，请先缩小后再上传');
-        }
-        var longSide = Math.max(srcW, srcH);
-        var baseScale = Math.min(1, CatalogAdmin.PREVIEW.maxSide / longSide);
-        var canvas = document.createElement('canvas');
-        var ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('当前浏览器不支持图片压缩');
-        var qualityList = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4];
-        var scale = baseScale;
-        try {
-          for (var attempt = 0; attempt < 6; attempt += 1) {
-            var width = Math.max(1, Math.round(srcW * scale));
-            var height = Math.max(1, Math.round(srcH * scale));
-            canvas.width = width;
-            canvas.height = height;
-            ctx.clearRect(0, 0, width, height);
-            ctx.drawImage(bitmap, 0, 0, width, height);
-            for (var i = 0; i < qualityList.length; i += 1) {
-              var blob = await this.canvasToBlob(canvas, qualityList[i]);
-              if (blob && blob.size <= CatalogAdmin.PREVIEW.maxOutputBytes) {
-                return { blob: blob, width: width, height: height, bytes: blob.size };
-              }
-            }
-            scale *= 0.85;
-          }
-        } finally {
-          if (bitmap && typeof bitmap.close === 'function') bitmap.close();
-        }
-        throw new Error('图片压缩后仍超过 64 KiB，请换一张更简单的图片');
-      },
-      onPreviewFileChange: async function (event) {
+      onPictureFileChange: function (event) {
         var input = event && event.target;
-        var file = input && input.files && input.files[0];
+        var files = input && input.files ? Array.prototype.slice.call(input.files) : [];
         if (input) input.value = '';
-        if (!file || this.previewBusy) return;
-        var guardError = this.previewGuardError();
-        if (guardError) {
-          this.previewError = guardError;
-          this.saveNotice = guardError;
+        this.handlePictureFiles(files);
+      },
+      handlePictureFiles: async function (files) {
+        if (this.saving || this.pictureLoading) return;
+        if (this.kind !== 'preset' && this.kind !== 'snippet') {
+          this.pictureError = '仅预设与片段支持预览图';
           return;
         }
-        var check = CatalogAdmin.validatePreviewFile(file);
-        if (!check.ok) {
-          this.previewError = check.error;
+        var list = Array.prototype.slice.call(files || []);
+        if (!list.length) return;
+        if (list.length > 1) {
+          this.pictureError = '一次只能处理一张图片，请重新选择一张';
+          this.pictureNotice = '';
           return;
         }
-        this.previewBusy = true;
-        this.previewError = '';
-        this.saveNotice = '';
+        var editor = editorApi();
+        if (!editor) {
+          this.pictureError = '图片编辑模块未加载，请刷新页面后重试';
+          return;
+        }
+        var file = list[0];
+        var token = this.beginPictureOperation();
+        this.pictureLoading = true;
+        this.pictureError = '';
+        this.pictureNotice = '';
+        var result = null;
         try {
-          var prepared = await this.compressPreviewImage(file);
-          var res = await CatalogAdmin.api('POST', CatalogAdmin.previewUploadPath(this.item.id, this.baseRev), {
-            rawBody: prepared.blob,
-            contentType: 'image/webp',
-            csrf: this.auth.csrfToken
-          });
-          if (res.status === 401) {
-            this.previewBusy = false;
-            this.handleUnauthorized();
-            return;
-          }
-          if (res.ok && res.payload) {
-            var wasKind = this.kind;
-            this.applyItem(res.payload);
-            this.kind = wasKind;
-            await this.refreshList();
-            this.previewBroken = false;
-            this.saveNotice = '预览图已更新：已压缩为 WebP ' + prepared.width + '×' + prepared.height +
-              ' · ' + CatalogAdmin.formatPreviewBytes(prepared.bytes) + '（未自动发布）';
-            this.showToast('预览图已更新');
-          } else if (res.status === 409 && res.payload && res.payload.current) {
-            this.conflict = { current: res.payload.current, detail: CatalogAdmin.formatApiError(res.payload, res.status) };
-            this.previewError = CatalogAdmin.formatApiError(res.payload, res.status);
-          } else if (res.status === 413) {
-            this.previewError = '图片被服务器拒绝（过大或格式不允许）：' + CatalogAdmin.formatApiError(res.payload, res.status);
-          } else {
-            this.previewError = CatalogAdmin.formatApiError(res.payload, res.status);
-          }
+          result = await editor.loadPicture(file, typeof window !== 'undefined' ? window : undefined);
         } catch (err) {
-          this.previewError = err && err.message ? err.message : '预览图上传失败';
+          result = { ok: false, error: err && err.message ? err.message : '读取图片失败' };
         } finally {
-          this.previewBusy = false;
+          if (this.isCurrentPictureOperation(token)) this.pictureLoading = false;
+        }
+        if (!this.isCurrentPictureOperation(token) || this.saving) {
+          if (result && result.picture) editor.releasePicture(result.picture);
+          return;
+        }
+        if (!result || !result.ok) {
+          this.pictureError = (result && result.error) || '读取图片失败';
+          return;
+        }
+        this.releaseLocalPicture();
+        this.pictureLocal = result.picture;
+        this.pictureAction = 'set';
+        this.pictureGeom = editor.resetGeometry('cover', result.picture.width, result.picture.height);
+        this.pictureNotice = '已载入本地图片 ' + result.picture.width + '×' + result.picture.height +
+          '：保存草稿时才上传，未保存前可继续调整。';
+        this.renderPicturePreviews();
+      },
+      onPictureDragOver: function (event) {
+        if (event && event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+        this.pictureDragActive = true;
+        this.pictureAreaActive = true;
+      },
+      onPictureDragLeave: function (event) {
+        var target = event && event.currentTarget;
+        var related = event && event.relatedTarget;
+        if (target && related && target.contains && target.contains(related)) return;
+        this.pictureDragActive = false;
+      },
+      onPictureDrop: function (event) {
+        this.pictureDragActive = false;
+        var transfer = event && event.dataTransfer;
+        var files = transfer && transfer.files ? Array.prototype.slice.call(transfer.files) : [];
+        this.handlePictureFiles(files);
+      },
+      onDocumentRegionChange: function (event) {
+        var target = event && event.target;
+        var inside = !!(target && target.closest && target.closest('.ca-picture-field'));
+        if (!inside) this.pictureAreaActive = false;
+      },
+      onDocumentPaste: function (event) {
+        if (this.kind !== 'preset' && this.kind !== 'snippet') return;
+        if (!this.isReady || this.sessionExpired || this.saveBusy) return;
+        var target = event && event.target;
+        // 只有真正落在图片区域内（或该区域刚获得焦点/点击）的粘贴才处理；
+        // 页面其他位置的图片粘贴不拦默认行为。
+        var insideField = !!(target && target.closest && target.closest('.ca-picture-field'));
+        if (!insideField && !this.pictureAreaActive) return;
+        if (insideField && target) {
+          var tag = String(target.tagName || '').toLowerCase();
+          if (tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable) return;
+        }
+        var data = event && event.clipboardData;
+        if (!data || !data.items) return;
+        var files = [];
+        for (var i = 0; i < data.items.length; i += 1) {
+          var item = data.items[i];
+          if (item && item.kind === 'file' && /^image\//.test(String(item.type || ''))) {
+            var file = item.getAsFile ? item.getAsFile() : null;
+            if (file) files.push(file);
+          }
+        }
+        if (!files.length) return;
+        if (event.preventDefault) event.preventDefault();
+        this.handlePictureFiles(files);
+      },
+      stagePointFromEvent: function (event) {
+        var editor = editorApi();
+        var canvas = this.$refs && this.$refs.stageCanvas;
+        if (!editor || !canvas || !canvas.getBoundingClientRect) return null;
+        var rect = canvas.getBoundingClientRect();
+        if (!rect || !rect.width || !rect.height) return null;
+        return {
+          x: (event.clientX - rect.left) / rect.width,
+          y: ((event.clientY - rect.top) / rect.height) * editor.STAGE_HEIGHT
+        };
+      },
+      onStagePointerDown: function (event) {
+        if (this.saveBusy) return;
+        if (!editorApi() || !this.pictureLocal || this.pictureGeom.mode === 'contain') return;
+        this.pictureAreaActive = true;
+        var canvas = this.$refs && this.$refs.stageCanvas;
+        this._dragState = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          offsetX: this.pictureGeom.offsetX,
+          offsetY: this.pictureGeom.offsetY,
+          rect: canvas && canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null
+        };
+        var target = event.currentTarget;
+        if (target && target.setPointerCapture && event.pointerId != null) {
+          try { target.setPointerCapture(event.pointerId); } catch (err) { /* 忽略 */ }
+        }
+        if (event.preventDefault) event.preventDefault();
+      },
+      onStagePointerMove: function (event) {
+        var editor = editorApi();
+        var drag = this._dragState;
+        if (!editor || !drag || !this.pictureLocal || this.saveBusy) return;
+        if (drag.pointerId != null && event.pointerId != null && drag.pointerId !== event.pointerId) return;
+        var rect = drag.rect;
+        if (!rect || !rect.width || !rect.height) return;
+        var dx = (event.clientX - drag.startX) / rect.width;
+        var dy = ((event.clientY - drag.startY) / rect.height) * editor.STAGE_HEIGHT;
+        this.pictureGeom = editor.normalizeGeometry({
+          mode: 'cover',
+          zoom: this.pictureGeom.zoom,
+          offsetX: drag.offsetX + dx,
+          offsetY: drag.offsetY + dy
+        }, this.pictureLocal.width, this.pictureLocal.height);
+        this.renderPicturePreviews();
+      },
+      onStagePointerEnd: function (event) {
+        var target = event && event.currentTarget;
+        if (target && target.releasePointerCapture && event.pointerId != null) {
+          try { target.releasePointerCapture(event.pointerId); } catch (err) { /* 忽略 */ }
+        }
+        this._dragState = null;
+      },
+      onStageKeydown: function (event) {
+        var editor = editorApi();
+        if (!editor || !this.pictureLocal || this.saveBusy) return;
+        var step = event.shiftKey ? 0.05 : 0.015;
+        var key = event.key;
+        if (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown') {
+          if (this.pictureGeom.mode === 'contain') return;
+          if (event.preventDefault) event.preventDefault();
+          this.pictureGeom = editor.panBy(
+            this.pictureGeom,
+            key === 'ArrowLeft' ? -step : key === 'ArrowRight' ? step : 0,
+            key === 'ArrowUp' ? -step : key === 'ArrowDown' ? step : 0,
+            this.pictureLocal.width,
+            this.pictureLocal.height
+          );
+          this.renderPicturePreviews();
+          return;
+        }
+        if (key === '+' || key === '=' || key === '-' || key === '_') {
+          if (this.pictureGeom.mode === 'contain') return;
+          if (event.preventDefault) event.preventDefault();
+          var delta = (key === '+' || key === '=') ? 0.1 : -0.1;
+          this.pictureGeom = editor.zoomAt(this.pictureGeom, this.pictureGeom.zoom + delta,
+            this.pictureLocal.width, this.pictureLocal.height);
+          this.renderPicturePreviews();
+          return;
+        }
+        if (key === 'Home' || key === '0') {
+          if (event.preventDefault) event.preventDefault();
+          this.resetPictureGeometry();
         }
       },
-      removePreview: async function () {
-        if (this.previewBusy) return;
-        var guardError = this.previewGuardError();
-        if (guardError) {
-          this.previewError = guardError;
-          this.saveNotice = guardError;
-          return;
+      onStageWheel: function (event) {
+        var editor = editorApi();
+        if (!editor || !this.pictureLocal || this.pictureGeom.mode === 'contain' || this.saveBusy) return;
+        var factor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
+        this.pictureGeom = editor.zoomAt(this.pictureGeom, this.pictureGeom.zoom * factor,
+          this.pictureLocal.width, this.pictureLocal.height, this.stagePointFromEvent(event));
+        this.renderPicturePreviews();
+      },
+      setPictureMode: function (mode) {
+        var editor = editorApi();
+        if (!editor || !this.pictureLocal || this.saveBusy) return;
+        var next = mode === 'contain' ? 'contain' : 'cover';
+        this.pictureGeom = editor.resetGeometry(next, this.pictureLocal.width, this.pictureLocal.height);
+        this.pictureNotice = next === 'contain'
+          ? '完整显示：1 倍居中，不裁掉内容。'
+          : '裁剪填满：可拖动、缩放，裁掉的部分不会出现在成品里。';
+        this.renderPicturePreviews();
+      },
+      onPictureZoomInput: function (event) {
+        var editor = editorApi();
+        if (!editor || !this.pictureLocal || this.saveBusy) return;
+        var value = Number(event && event.target ? event.target.value : 1);
+        this.pictureGeom = editor.zoomAt(this.pictureGeom, value,
+          this.pictureLocal.width, this.pictureLocal.height);
+        this.renderPicturePreviews();
+      },
+      resetPictureGeometry: function () {
+        var editor = editorApi();
+        if (!editor || !this.pictureLocal || this.saveBusy) return;
+        this.pictureGeom = editor.resetGeometry(this.pictureGeom.mode,
+          this.pictureLocal.width, this.pictureLocal.height);
+        this.pictureNotice = '已重置构图。';
+        this.renderPicturePreviews();
+      },
+      cancelPictureEdit: function () {
+        if (this.saveBusy) return;
+        this.releaseLocalPicture();
+        this.pictureAction = '';
+        this.pictureGeom = this.defaultGeometry('cover');
+        this.pictureError = '';
+        this.pictureNotice = '已取消本地调整；已保存的预览图不受影响。';
+      },
+      markPictureRemoval: function () {
+        if (this.saveBusy) return;
+        this.releaseLocalPicture();
+        this.pictureAction = 'clear';
+        this.pictureError = '';
+        this.pictureNotice = '保存草稿后将移除预览图（不会自动发布）。';
+      },
+
+      // ---------------- 保存链：文本 → 图片，串行且校验回包 ----------------
+      applySavedItem: function (item, sentFormJson) {
+        if (!item || !item.id) return false;
+        var serverForm = formFromItem(item);
+        var serverJson = JSON.stringify(serverForm);
+        this.item = item;
+        this.isNew = false;
+        this.selectedId = item.id;
+        this.baseRev = item.draftRev;
+        if (item.kind && item.kind !== this.kind) this.kind = item.kind;
+        if (sentFormJson != null && JSON.stringify(this.form) !== sentFormJson) {
+          // 请求期间又有新编辑：保留本地表单，回包只更新修订号与服务器快照。
+          this.snapshot = serverJson;
+        } else {
+          this.form = serverForm;
+          this.snapshot = serverJson;
+          this.formErrors = {};
         }
-        if (!this.item || !this.item.preview) return;
-        this.previewBusy = true;
-        this.previewError = '';
-        this.saveNotice = '';
+        this.conflict = null;
+        this.previewBroken = false;
+        return true;
+      },
+      refreshListQuiet: async function () {
         try {
-          var res = await CatalogAdmin.api('DELETE', CatalogAdmin.previewUploadPath(this.item.id, this.baseRev), {
+          await this.loadItems({ quiet: true });
+        } catch (err) {
+          // 列表刷新失败不影响已成功的保存结果，也不回退 baseRev。
+        }
+      },
+      saveTextStep: async function (token, sentFormJson) {
+        var built = CatalogAdmin.buildPayload(this.kind, this.form, { includeKind: !this.item });
+        if (!built.ok) return { ok: false, error: '表单校验失败，请先修正错误' };
+        var isCreate = !this.item;
+        var targetId = isCreate ? '' : this.item.id;
+        var res;
+        if (isCreate) {
+          res = await CatalogAdmin.api('POST', '/api/admin/items', {
+            body: built.payload,
             csrf: this.auth.csrfToken
           });
-          if (res.status === 401) {
-            this.previewBusy = false;
-            this.handleUnauthorized();
-            return;
-          }
-          if (res.ok && res.payload) {
-            var wasKind = this.kind;
-            this.applyItem(res.payload);
-            this.kind = wasKind;
-            await this.refreshList();
-            this.previewBroken = false;
-            this.saveNotice = '预览图已移除（未自动发布）';
-            this.showToast('预览图已移除');
-          } else if (res.status === 409 && res.payload && res.payload.current) {
-            this.conflict = { current: res.payload.current, detail: CatalogAdmin.formatApiError(res.payload, res.status) };
-            this.previewError = CatalogAdmin.formatApiError(res.payload, res.status);
-          } else {
-            this.previewError = CatalogAdmin.formatApiError(res.payload, res.status);
-          }
-        } catch (err) {
-          this.previewError = err && err.message ? err.message : '预览图移除失败';
-        } finally {
-          this.previewBusy = false;
+        } else {
+          var patchPayload = CatalogAdmin.buildPayload(this.kind, this.form, { includeKind: false }).payload;
+          patchPayload.baseRev = this.baseRev;
+          res = await CatalogAdmin.api('PATCH', '/api/admin/items/' + encodeURIComponent(targetId), {
+            body: patchPayload,
+            csrf: this.auth.csrfToken
+          });
         }
-      }
+        if (!this.isCurrentOperation(token)) return { stale: true };
+        if (res.status === 401) {
+          this.handleUnauthorized();
+          return { unauthorized: true, error: '登录已过期' };
+        }
+        if (res.ok && res.payload && res.payload.id) {
+          if (!isCreate && res.payload.id !== targetId) {
+            return { ok: false, error: '服务器返回了其他资源，已忽略以保护当前编辑' };
+          }
+          if (!this.applySavedItem(res.payload, sentFormJson)) {
+            return { ok: false, error: '服务器响应缺少资源信息' };
+          }
+          return { ok: true };
+        }
+        if (res.status === 409 && res.payload && res.payload.current) {
+          var detail = CatalogAdmin.formatApiError(res.payload, res.status);
+          return { ok: false, error: detail, conflict: { current: res.payload.current, detail: detail } };
+        }
+        return { ok: false, error: CatalogAdmin.formatApiError(res.payload, res.status) };
+      },
+      uploadPictureStep: async function (token) {
+        var editor = editorApi();
+        if (!editor) return { ok: false, error: '图片编辑模块未加载' };
+        if (!this.item || !this.pictureLocal) return { ok: false, error: '没有待上传的本地图片' };
+        var targetId = this.item.id;
+        var baseRev = this.baseRev;
+        var geom = {
+          mode: this.pictureGeom.mode,
+          zoom: this.pictureGeom.zoom,
+          offsetX: this.pictureGeom.offsetX,
+          offsetY: this.pictureGeom.offsetY
+        };
+        this.pictureExporting = true;
+        this.savePhase = '生成 16:9 成品…';
+        var prepared = null;
+        try {
+          prepared = await editor.exportPicture(this.pictureLocal, geom,
+            typeof window !== 'undefined' ? window : undefined);
+        } catch (err) {
+          var message = err && err.message ? err.message : '图片压缩失败';
+          this.pictureError = message;
+          return { ok: false, error: message };
+        } finally {
+          if (this.isCurrentOperation(token)) this.pictureExporting = false;
+        }
+        if (!this.isCurrentOperation(token)) return { stale: true };
+        this.savePhase = '上传图片…';
+        var res = await CatalogAdmin.api('POST', CatalogAdmin.previewUploadPath(targetId, baseRev), {
+          rawBody: prepared.blob,
+          contentType: 'image/webp',
+          csrf: this.auth.csrfToken
+        });
+        if (!this.isCurrentOperation(token)) return { stale: true };
+        if (res.status === 401) {
+          this.handleUnauthorized();
+          return { unauthorized: true, error: '登录已过期' };
+        }
+        if (res.ok && res.payload && res.payload.id) {
+          if (res.payload.id !== targetId) {
+            return { ok: false, error: '服务器返回了其他资源，已忽略图片结果' };
+          }
+          this.applySavedItem(res.payload, JSON.stringify(this.form));
+          this.releaseLocalPicture();
+          this.pictureAction = '';
+          this.pictureGeom = this.defaultGeometry('cover');
+          this.pictureNotice = '图片已更新：' + prepared.width + '×' + prepared.height +
+            ' · ' + CatalogAdmin.formatPreviewBytes(prepared.bytes) + '（未发布）';
+          return { ok: true };
+        }
+        if (res.status === 409 && res.payload && res.payload.current) {
+          var conflictDetail = CatalogAdmin.formatApiError(res.payload, res.status);
+          this.pictureError = conflictDetail;
+          return {
+            ok: false,
+            error: conflictDetail,
+            conflict: { current: res.payload.current, detail: conflictDetail }
+          };
+        }
+        if (res.status === 413) {
+          var tooBig = '图片被服务器拒绝（超过 5 MiB）：' +
+            CatalogAdmin.formatApiError(res.payload, res.status);
+          this.pictureError = tooBig;
+          return { ok: false, error: tooBig };
+        }
+        var failure = CatalogAdmin.formatApiError(res.payload, res.status);
+        this.pictureError = failure;
+        return { ok: false, error: failure };
+      },
+      clearPictureStep: async function (token) {
+        if (!this.item) return { ok: false, error: '请先保存草稿再移除图片' };
+        var targetId = this.item.id;
+        var baseRev = this.baseRev;
+        this.savePhase = '移除图片…';
+        var res = await CatalogAdmin.api('DELETE', CatalogAdmin.previewUploadPath(targetId, baseRev), {
+          csrf: this.auth.csrfToken
+        });
+        if (!this.isCurrentOperation(token)) return { stale: true };
+        if (res.status === 401) {
+          this.handleUnauthorized();
+          return { unauthorized: true, error: '登录已过期' };
+        }
+        if (res.ok && res.payload && res.payload.id) {
+          if (res.payload.id !== targetId) {
+            return { ok: false, error: '服务器返回了其他资源，已忽略图片结果' };
+          }
+          this.applySavedItem(res.payload, JSON.stringify(this.form));
+          this.releaseLocalPicture();
+          this.pictureAction = '';
+          this.pictureGeom = this.defaultGeometry('cover');
+          this.pictureNotice = '预览图已移除（未发布）。';
+          return { ok: true };
+        }
+        if (res.status === 409 && res.payload && res.payload.current) {
+          var conflictDetail = CatalogAdmin.formatApiError(res.payload, res.status);
+          return {
+            ok: false,
+            error: conflictDetail,
+            conflict: { current: res.payload.current, detail: conflictDetail }
+          };
+        }
+        return { ok: false, error: CatalogAdmin.formatApiError(res.payload, res.status) };
+      },
     }
   }).mount('#catalog-admin-app');
 })(typeof window !== 'undefined' ? window : null);

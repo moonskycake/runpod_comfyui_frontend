@@ -168,7 +168,8 @@
                   <span class="ca-badge ca-badge-kind">{{ currentKindLabel }}</span>
                   <span v-if="item" class="ca-badge" :class="'ca-badge-' + status.tone">{{ status.label }}</span>
                   <span v-if="item && status.hasUnpublishedChanges" class="ca-badge ca-badge-warn">未发布修改</span>
-                  <span v-if="isDirty" class="ca-badge ca-badge-warn">未保存</span>
+                  <span v-if="isTextDirty" class="ca-badge ca-badge-warn">文本未保存</span>
+                  <span v-if="hasPendingPicture" class="ca-badge ca-badge-warn">图片待上传</span>
                 </div>
                 <p class="ca-editor-meta" v-if="item">
                   <span class="ca-mono">{{ item.id }}</span>
@@ -179,8 +180,8 @@
               </div>
 
               <div class="ca-editor-toolbar">
-                <button class="btn btn-primary btn-sm" type="button" @click="saveDraft" :disabled="saving">
-                  {{ saving ? '保存中…' : '保存草稿' }}
+                <button class="btn btn-primary btn-sm" type="button" @click="saveDraft" :disabled="saving || pictureLoading || pictureExporting">
+                  {{ saving ? (savePhase || '保存中…') : '保存草稿' }}
                   <span class="ca-kbd">Ctrl+S</span>
                 </button>
                 <button class="btn btn-outline-light btn-sm" type="button" v-if="!isNew" @click="openPublish">发布…</button>
@@ -205,6 +206,7 @@
               <div class="ca-alert ca-alert-ok" role="status" v-if="saveNotice">{{ saveNotice }}</div>
 
               <form class="ca-form" v-show="editorTab === 'form'" @submit.prevent="saveDraft" novalidate>
+                <fieldset class="ca-edit-fields" :disabled="saving" :aria-busy="saving">
                 <div class="ca-field ca-field-wide">
                   <label class="form-label" for="ca-name">名称 <span class="ca-required">*</span></label>
                   <input
@@ -290,40 +292,161 @@
                   </div>
                 </template>
 
-                <div class="ca-field ca-field-wide ca-preview-field" v-if="kind === 'preset' || kind === 'snippet'">
-                  <span class="form-label">预览图</span>
+                <div
+                  class="ca-field ca-field-wide ca-picture-field"
+                  v-if="kind === 'preset' || kind === 'snippet'"
+                  @focusin="pictureAreaActive = true"
+                  @click="pictureAreaActive = true"
+                  @dragover.prevent="onPictureDragOver"
+                  @dragleave="onPictureDragLeave"
+                  @drop.prevent="onPictureDrop"
+                >
+                  <span class="form-label" id="ca-picture-label">预览图（16:9 成品）</span>
                   <p class="ca-muted ca-small">
-                    仅预设与片段支持预览图，模板不使用。上传后自动压缩为 WebP（长边 ≤ 480px，≤ 64 KiB），
-                    不保留原图与 EXIF/ICC；先保存草稿才能上传或移除，草稿图不会自动公开。
+                    点击「选择图片」、把图片拖到下方画面，或在该区域内按 Ctrl/⌘+V 粘贴。
+                    支持静态 PNG / JPEG / WebP，≤ 5 MiB、≤ 16 MP；选图后只在本机调整，
+                    点「保存草稿」才会上传，而且只写入草稿、不会自动发布。
+                    透明区域按白底输出，与服务端压缩结果一致；原图只保留在本次编辑会话，
+                    离开后若要扩大已裁掉的范围需要重新选择原图。
                   </p>
-                  <div class="ca-preview-row">
-                    <div class="ca-preview-thumb" v-if="item && item.preview && adminPreviewSrc && !previewBroken">
-                      <img :src="adminPreviewSrc" :alt="(form.name || '资源') + ' 预览图'" loading="lazy" decoding="async" @error="previewBroken = true">
-                    </div>
-                    <div class="ca-preview-thumb ca-preview-thumb-empty" v-else>
-                      <span v-if="previewBroken">图片加载失败</span>
-                      <span v-else>暂无预览图</span>
-                    </div>
-                    <div class="ca-preview-actions">
-                      <p class="ca-preview-meta" v-if="item && item.preview">{{ previewMetaLabel(item.preview) }}</p>
-                      <p class="ca-muted ca-small" v-if="isNew">保存草稿后即可上传预览图。</p>
-                      <p class="ca-muted ca-small" v-else-if="isDirty">有未保存修改，请先保存草稿再操作预览图。</p>
-                      <input ref="previewFile" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" @change="onPreviewFileChange">
-                      <div class="ca-preview-buttons">
-                        <button class="btn btn-outline-light btn-sm" type="button" @click="triggerPreviewPick" :disabled="previewBusy">
-                          {{ previewBusy ? '处理中…' : (item && item.preview ? '替换图片' : '上传图片') }}
-                        </button>
-                        <button class="btn btn-outline-danger btn-sm" type="button" v-if="item && item.preview" @click="removePreview" :disabled="previewBusy">移除图片</button>
+
+                  <div class="ca-picture-grid">
+                    <div class="ca-stage-wrap">
+                      <div class="ca-stage" :class="{ 'is-dragover': pictureDragActive }">
+                        <canvas
+                          v-if="pictureHasLocal"
+                          ref="stageCanvas"
+                          class="ca-stage-canvas"
+                          width="480"
+                          height="270"
+                          tabindex="0"
+                          role="img"
+                          :aria-label="pictureStageLabel"
+                          @pointerdown="onStagePointerDown"
+                          @pointermove="onStagePointerMove"
+                          @pointerup="onStagePointerEnd"
+                          @pointercancel="onStagePointerEnd"
+                          @keydown="onStageKeydown"
+                          @wheel.prevent="onStageWheel"
+                        ></canvas>
+                        <img
+                          v-else-if="adminPreviewSrc && !previewBroken"
+                          class="ca-stage-image"
+                          :src="adminPreviewSrc"
+                          :alt="(form.name || '资源') + ' 预览图（草稿）'"
+                          loading="lazy"
+                          decoding="async"
+                          @error="previewBroken = true"
+                        >
+                        <div class="ca-stage-empty" v-else>
+                          <span v-if="previewBroken">已保存图片加载失败</span>
+                          <span v-else>尚未设置预览图</span>
+                          <span class="ca-stage-empty-hint">点击、拖入或在此粘贴图片</span>
+                        </div>
+                        <div class="ca-stage-overlay" v-if="pictureDragActive">松开即可载入图片</div>
+                        <div class="ca-stage-busy" v-if="pictureLoading">正在读取图片…</div>
                       </div>
-                      <p class="ca-field-error" role="alert" v-if="previewError">{{ previewError }}</p>
+                      <p class="ca-picture-status" v-if="pictureNotice">{{ pictureNotice }}</p>
+                      <p class="ca-field-error" role="alert" v-if="pictureError">{{ pictureError }}</p>
+                      <p class="ca-picture-status ca-pending" v-if="pictureAction === 'set' && pictureHasLocal">
+                        本地图片待上传：点「保存草稿」后写入草稿（不会自动发布）。
+                      </p>
+                      <p class="ca-picture-status ca-pending" v-else-if="pictureAction === 'clear'">
+                        已标记移除：点「保存草稿」后生效（不会自动发布）。
+                      </p>
+                    </div>
+
+                    <div class="ca-picture-side">
+                      <div class="ca-thumb-preview">
+                        <span class="ca-thumb-title">快捷缩略图（1:1 完整显示）</span>
+                        <div class="ca-thumb-frame">
+                          <canvas
+                            v-if="pictureHasLocal"
+                            ref="thumbCanvas"
+                            class="ca-thumb-canvas"
+                            width="160"
+                            height="160"
+                            aria-hidden="true"
+                          ></canvas>
+                          <img v-else-if="adminPreviewSrc && !previewBroken" :src="adminPreviewSrc" alt="" class="ca-thumb-image">
+                          <span v-else class="ca-muted ca-small">暂无</span>
+                        </div>
+                        <p class="ca-muted ca-small">前台快捷图按完整显示呈现，这里就是 1:1 的实际效果。</p>
+                      </div>
+
+                      <div class="ca-picture-controls" v-if="pictureHasLocal">
+                        <div class="ca-mode-row" role="group" aria-label="成品显示方式">
+                          <button
+                            type="button"
+                            class="ca-mode-btn"
+                            :aria-pressed="pictureGeom.mode === 'cover'"
+                            :class="{ 'is-active': pictureGeom.mode === 'cover' }"
+                            :disabled="saveBusy"
+                            @click="setPictureMode('cover')"
+                          >裁剪填满</button>
+                          <button
+                            type="button"
+                            class="ca-mode-btn"
+                            :aria-pressed="pictureGeom.mode === 'contain'"
+                            :class="{ 'is-active': pictureGeom.mode === 'contain' }"
+                            :disabled="saveBusy"
+                            @click="setPictureMode('contain')"
+                          >完整显示</button>
+                        </div>
+                        <p class="ca-muted ca-small" v-if="pictureGeom.mode === 'contain'">
+                          完整显示会锁定 1 倍并居中，避免把内容裁掉；需要调整取景请切到「裁剪填满」。
+                        </p>
+                        <template v-else>
+                          <label class="ca-zoom-row">
+                            <span>缩放</span>
+                            <input
+                              type="range"
+                              class="ca-zoom-range"
+                              min="1"
+                              max="4"
+                              step="0.05"
+                              :value="pictureGeom.zoom"
+                              aria-label="缩放比例"
+                              :disabled="saveBusy"
+                              @input="onPictureZoomInput"
+                            >
+                            <span class="ca-zoom-value">{{ pictureZoomLabel }}</span>
+                          </label>
+                          <p class="ca-muted ca-small">在画面上拖动可调整取景；画布聚焦时用方向键微调，+ / - 缩放，Home 重置。</p>
+                        </template>
+                        <div class="ca-picture-buttons">
+                          <button class="btn btn-outline-light btn-sm" type="button" @click="openPicturePicker" :disabled="saveBusy">重新选择</button>
+                          <button class="btn btn-outline-light btn-sm" type="button" @click="resetPictureGeometry" :disabled="saveBusy || pictureGeom.mode === 'contain'">重置</button>
+                          <button class="btn btn-outline-danger btn-sm" type="button" @click="cancelPictureEdit" :disabled="saveBusy">取消本地调整</button>
+                        </div>
+                      </div>
+                      <div class="ca-picture-actions" v-else>
+                        <button class="btn btn-outline-light btn-sm" type="button" @click="openPicturePicker" :disabled="pictureLoading || saving">
+                          {{ item && item.preview ? '替换图片' : '选择图片' }}
+                        </button>
+                        <button
+                          class="btn btn-outline-danger btn-sm"
+                          type="button"
+                          v-if="item && item.preview"
+                          @click="markPictureRemoval"
+                          :disabled="pictureLoading || saving"
+                        >移除图片</button>
+                        <button class="btn btn-outline-secondary btn-sm" type="button" v-if="pictureAction === 'clear'" @click="cancelPictureEdit">取消移除</button>
+                      </div>
+                      <p class="ca-preview-meta" v-if="item && item.preview && !pictureHasLocal && pictureAction !== 'clear'">
+                        已保存图片：{{ previewMetaLabel(item.preview) }}（草稿）
+                      </p>
                     </div>
                   </div>
+
+                  <input ref="pictureFile" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" @change="onPictureFileChange">
                 </div>
 
                 <div class="ca-form-foot ca-field-wide">
-                  <button class="btn btn-primary" type="submit" :disabled="saving">{{ saving ? '保存中…' : '保存草稿' }}</button>
-                  <span class="ca-muted">保存不会公开；发布需在工具栏点击「发布…」并二次确认。</span>
+                  <button class="btn btn-primary" type="submit" :disabled="saving || pictureLoading || pictureExporting">{{ saving ? (savePhase || '保存中…') : '保存草稿' }}</button>
+                  <span class="ca-muted">顺序：先保存文本草稿，再用返回的修订号上传图片；两者都不公开。</span>
                 </div>
+                </fieldset>
               </form>
 
               <div class="ca-preview" v-show="editorTab === 'preview'">
@@ -387,7 +510,7 @@
     <div class="ca-dialog-backdrop" v-if="discardDialog.open" @click.self="discardDialog.open = false">
       <div class="ca-dialog" role="dialog" aria-modal="true" aria-labelledby="ca-discard-title">
         <h2 id="ca-discard-title">放弃未保存的修改？</h2>
-        <p>当前编辑器有未保存内容，继续操作会丢失这些修改。</p>
+        <p>{{ discardDialog.message || '当前编辑器有未保存内容（包括文本修改和尚未上传的本地图片），继续操作会丢失这些修改。' }}</p>
         <div class="ca-dialog-actions">
           <button class="btn btn-outline-light" type="button" @click="discardDialog.open = false">继续编辑</button>
           <button class="btn btn-warning" type="button" @click="confirmDiscard">放弃修改并继续</button>
@@ -446,6 +569,7 @@
   </div>
 
   <script src="./vue/vue.global.prod.js"></script>
+  <script src="./js/catalog-image-editor.js"></script>
   <script src="./js/catalog-admin.js"></script>
 </body>
 </html>

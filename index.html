@@ -45,7 +45,7 @@
         </nav>
 
         <!-- 收藏侧边栏 -->
-        <div v-if="showFavoritesPanel" class="rp-fav-backdrop" @click="closeFavoritesPanel"></div>
+        <div v-if="showFavoritesPanel" data-overlay="favorites" class="rp-fav-backdrop" @click="closeFavoritesPanel"></div>
         <aside class="rp-fav-panel" :class="{ 'rp-fav-panel-show': showFavoritesPanel }">
             <div class="rp-fav-header border-bottom border-secondary d-flex justify-content-between align-items-center">
                 <div class="text-light fw-semibold d-flex align-items-center gap-2">
@@ -107,9 +107,11 @@
                                 <button class="btn btn-sm" :class="librarySource === 'shared' ? 'btn-primary' : 'btn-outline-secondary'" @click="librarySource = 'shared'">统一库</button>
                                 <button class="btn btn-sm" :class="librarySource === 'local' ? 'btn-primary' : 'btn-outline-secondary'" @click="librarySource = 'local'">我的本地</button>
                             </div>
-                            <div class="d-flex gap-2 flex-wrap">
-                                <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary rp-library-search" v-model="librarySearch" placeholder="搜索名称/分类">
-                                <select class="form-select form-select-sm bg-dark text-light border-secondary" v-model="libraryCategory" v-if="libraryCategories.length > 0">
+                            <div class="d-flex gap-2 flex-wrap align-items-center">
+                                <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary rp-library-search" v-model="librarySearch"
+                                       :placeholder="libraryKind === 'template' ? '搜索名称/分类/描述' : '搜索名称/已加载正文'"
+                                       aria-label="搜索资源库">
+                                <select class="form-select form-select-sm bg-dark text-light border-secondary" v-model="libraryCategory" v-if="libraryCategories.length > 0" aria-label="按分类筛选">
                                     <option value="">全部分类</option>
                                     <option v-for="c in libraryCategories" :key="c" :value="c">{{ c }}</option>
                                 </select>
@@ -119,6 +121,9 @@
                                     <input type="file" ref="localImportFile" class="d-none" accept=".json" @change="handleLocalImportFile">
                                 </template>
                             </div>
+                        </div>
+                        <div v-if="librarySearchNote" class="rp-ac-hint mb-2">
+                            <i class="bi bi-info-circle" aria-hidden="true"></i> {{ librarySearchNote }}
                         </div>
                         <div v-if="catalogStatus === 'offline'" class="alert alert-warning py-2">
                             <i class="bi bi-wifi-off"></i> 离线数据 · 最后同步 {{ catalogCacheAgeLabel }}（只读，本地资源不受影响）
@@ -137,28 +142,64 @@
                             <div v-else>本地还没有内容，可从统一库复制或导入 JSON</div>
                         </div>
                         <div v-else class="row g-3">
-                            <div v-for="item in libraryItems" :key="librarySource + ':' + item.id" class="col-12 col-md-6 col-xl-4 col-xxl-3">
+                            <div v-for="item in libraryVisibleItems" :key="librarySource + ':' + item.id" class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                 <div class="card bg-dark border-secondary h-100 rp-library-card">
                                     <div class="card-body d-flex flex-column">
-                                        <div class="rp-library-preview" v-if="item.preview && !isPreviewBroken(item)">
+                                        <!-- 模板：预览图为主；无图时用模板信息块，不留大块空图 -->
+                                        <template v-if="item.kind === 'template'">
+                                            <div class="rp-library-preview" v-if="item.preview && !isPreviewBroken(item)">
+                                                <img :src="item.preview.url" :alt="item.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(item)">
+                                            </div>
+                                            <div class="rp-library-preview rp-library-preview-info" v-else>
+                                                <i class="bi bi-diagram-3" aria-hidden="true"></i>
+                                                <span class="rp-preview-info-text">工作流模板{{ item.category ? ' · ' + item.category : '' }}</span>
+                                                <span class="visually-hidden">暂无预览图</span>
+                                            </div>
+                                        </template>
+                                        <!-- 预设/片段：预览图仅作辅助，无图时不留空块 -->
+                                        <div class="rp-library-preview rp-library-preview-aside" v-else-if="item.preview && !isPreviewBroken(item)">
                                             <img :src="item.preview.url" :alt="item.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(item)">
                                         </div>
-                                        <div class="rp-library-preview rp-library-preview-empty" v-else>
-                                            <i class="bi bi-image" aria-hidden="true"></i>
-                                            <span class="visually-hidden">暂无预览图</span>
-                                        </div>
                                         <div class="d-flex justify-content-between align-items-start gap-2">
-                                            <div class="text-light fw-semibold text-break">{{ item.name }}</div>
-                                            <span class="badge" :class="librarySource === 'shared' ? 'bg-info text-dark' : 'bg-secondary'">{{ librarySource === 'shared' ? '统一库' : '本地' }}</span>
+                                            <button v-if="item.kind !== 'template'" type="button" class="rp-library-title"
+                                                    @click="openLibraryPromptPreview(item)"
+                                                    :title="'查看全文：' + item.name" :aria-label="'查看全文：' + item.name">{{ item.name }}</button>
+                                            <div v-else class="text-light fw-semibold text-break">{{ item.name }}</div>
+                                            <span class="badge flex-shrink-0" :class="librarySource === 'shared' ? 'bg-info text-dark' : 'bg-secondary'">{{ librarySource === 'shared' ? '统一库' : '本地' }}</span>
                                         </div>
-                                        <div class="small text-muted mt-1 rp-clamp-2">{{ item.description || '暂无描述' }}</div>
+                                        <template v-if="item.kind !== 'template'">
+                                            <div class="rp-library-body mt-1">
+                                                <template v-if="librarySummaryFor(item).loaded">
+                                                    <template v-if="item.kind === 'preset'">
+                                                        <div class="rp-body-row"><span class="rp-field-tag rp-field-pos">正</span><span class="rp-clamp-2">{{ librarySummaryFor(item).positive || '（空）' }}</span></div>
+                                                        <div class="rp-body-row"><span class="rp-field-tag rp-field-neg">负</span><span class="rp-clamp-2">{{ librarySummaryFor(item).negative || '（空）' }}</span></div>
+                                                        <div class="rp-quick-scope">{{ presetScopeLabel(librarySummaryFor(item)) }}</div>
+                                                    </template>
+                                                    <div v-else class="rp-body-row">
+                                                        <span class="rp-field-tag" :class="librarySummaryFor(item).target === 'negative' ? 'rp-field-neg' : 'rp-field-pos'">{{ librarySummaryFor(item).target === 'negative' ? '负' : '正' }}</span>
+                                                        <span class="rp-clamp-3">{{ librarySummaryFor(item).text || '（空）' }}</span>
+                                                    </div>
+                                                </template>
+                                                <div v-else-if="librarySummaryFor(item).loading" class="small text-muted">
+                                                    <i class="bi bi-hourglass-split" aria-hidden="true"></i> 正文加载中…
+                                                </div>
+                                                <div v-else-if="librarySummaryFor(item).error" class="small text-warning d-flex flex-wrap align-items-center gap-2">
+                                                    <span class="rp-break">正文加载失败：{{ librarySummaryFor(item).error }}</span>
+                                                    <button class="btn btn-outline-light btn-sm" @click="retryLibrarySummary(item)">重试</button>
+                                                </div>
+                                                <div v-else class="small text-muted">正文待加载</div>
+                                            </div>
+                                            <div v-if="librarySource === 'shared' && item.description" class="rp-library-desc mt-1" :title="item.description">描述：{{ item.description }}</div>
+                                        </template>
+                                        <div v-else class="small text-muted mt-1 rp-clamp-2">{{ item.description || '暂无描述' }}</div>
                                         <div class="small text-muted mt-2 d-flex flex-wrap gap-2">
                                             <span v-if="item.category">{{ item.category }}</span>
                                             <span v-if="librarySource === 'shared'">v{{ item.publishedRevision === null ? '-' : item.publishedRevision }}</span>
                                             <span v-if="librarySource === 'local' && item.sourceId">来源 v{{ item.sourceRevision === null ? '-' : item.sourceRevision }} · 未跟随</span>
                                         </div>
                                         <div class="d-flex gap-2 flex-wrap mt-3 pt-2 border-top border-secondary">
-                                            <button class="btn btn-outline-primary btn-sm" @click="useLibraryItem(item)" :disabled="libraryDetailLoadingId === item.id">{{ libraryUseLabel }}</button>
+                                            <button class="btn btn-outline-primary btn-sm" @click="useLibraryItem(item)" :disabled="libraryDetailLoadingId === item.id || (item.kind !== 'template' && isParamsLocked)">{{ libraryUseLabel }}</button>
+                                            <button v-if="item.kind !== 'template'" class="btn btn-outline-light btn-sm" @click="openLibraryPromptPreview(item)" :disabled="librarySummaryFor(item).loading">全文</button>
                                             <button v-if="librarySource === 'shared'" class="btn btn-outline-light btn-sm" @click="copyLibraryItemToLocal(item)" :disabled="libraryDetailLoadingId === item.id">复制到本地</button>
                                             <template v-else>
                                                 <button class="btn btn-outline-secondary btn-sm" @click="openRenameLocalItem(item)">重命名</button>
@@ -168,6 +209,11 @@
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                        <div v-if="!libraryLoading && libraryRemainingCount > 0" class="text-center mt-3">
+                            <button type="button" class="btn btn-outline-light btn-sm" @click="showMoreLibraryItems">
+                                <i class="bi bi-chevron-down" aria-hidden="true"></i> 显示更多（剩余 {{ libraryRemainingCount }}）
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -193,7 +239,7 @@
             </div>
 
             <!-- 模板选择区 -->
-            <section class="mb-4">
+            <section class="mb-4" id="template-section">
                 <div class="card bg-dark border-secondary">
                     <div class="card-header border-secondary">
                         <h5 class="mb-0 text-light">
@@ -234,21 +280,28 @@
                                             :disabled="!canSaveTemplate">
                                         <i class="bi bi-save"></i> 保存为模板
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm" @click="updateTemplate"
-                                            :disabled="!canUpdateTemplate">
-                                        <i class="bi bi-arrow-repeat"></i> 更新
-                                    </button>
-                                    <button class="btn btn-outline-danger btn-sm" @click="deleteTemplate"
-                                            :disabled="!canDeleteTemplate">
-                                        <i class="bi bi-trash"></i> 删除
-                                    </button>
-                                    <button class="btn btn-outline-info btn-sm" @click="exportTemplate"
-                                            :disabled="!selectedTemplate">
-                                        <i class="bi bi-download"></i> 导出
-                                    </button>
-                                    <button class="btn btn-outline-warning btn-sm" @click="importTemplateDialog">
-                                        <i class="bi bi-upload"></i> 导入
-                                    </button>
+                                    <details class="rp-more-actions">
+                                        <summary class="btn btn-outline-secondary btn-sm" role="button">
+                                            <i class="bi bi-three-dots"></i> 更多操作
+                                        </summary>
+                                        <div class="rp-more-actions-menu">
+                                            <button class="btn btn-outline-secondary btn-sm" @click="updateTemplate"
+                                                    :disabled="!canUpdateTemplate">
+                                                <i class="bi bi-arrow-repeat"></i> 更新模板
+                                            </button>
+                                            <button class="btn btn-outline-danger btn-sm" @click="deleteTemplate"
+                                                    :disabled="!canDeleteTemplate">
+                                                <i class="bi bi-trash"></i> 删除
+                                            </button>
+                                            <button class="btn btn-outline-info btn-sm" @click="exportTemplate"
+                                                    :disabled="!selectedTemplate">
+                                                <i class="bi bi-download"></i> 导出
+                                            </button>
+                                            <button class="btn btn-outline-warning btn-sm" @click="importTemplateDialog">
+                                                <i class="bi bi-upload"></i> 导入
+                                            </button>
+                                        </div>
+                                    </details>
                                 </div>
                             </div>
                         </div>
@@ -279,13 +332,14 @@
                         <div v-if="hasSizePlaceholders" class="rp-param-section mb-3">
                             <div class="rp-param-header d-flex justify-content-between align-items-center"
                                  @click="toggleParamSection('size')">
-                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                <button type="button" class="rp-section-toggle d-flex align-items-center gap-2 min-w-0"
+                                        @click.stop="toggleParamSection('size')" :aria-expanded="paramSectionsOpen.size" aria-controls="param-body-size">
                                     <i class="bi bi-aspect-ratio text-light"></i>
                                     <span class="text-light fw-semibold">图片尺寸</span>
                                     <span class="badge bg-secondary" v-if="placeholderValues.width !== undefined && placeholderValues.height !== undefined">
                                         {{ placeholderValues.width }}x{{ placeholderValues.height }}
                                     </span>
-                                </div>
+                                </button>
                                 <div class="d-flex align-items-center gap-2">
                                     <select class="form-select form-select-sm rp-size-quick bg-dark text-light border-secondary"
                                             v-model="selectedSizePreset" title="快速选择预设尺寸" @click.stop>
@@ -298,7 +352,7 @@
                                 </div>
                             </div>
 
-                            <div class="rp-param-body" v-show="paramSectionsOpen.size">
+                            <div class="rp-param-body" id="param-body-size" v-show="paramSectionsOpen.size">
                                 <div class="row g-3">
                                     <!-- 宽高 -->
                                     <div class="col-md-5">
@@ -328,10 +382,11 @@
                         <div v-if="hasPromptPlaceholders" class="rp-param-section mb-3">
                             <div class="rp-param-header d-flex justify-content-between align-items-center"
                                  @click="toggleParamSection('prompt')">
-                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                <button type="button" class="rp-section-toggle d-flex align-items-center gap-2 min-w-0"
+                                        @click.stop="toggleParamSection('prompt')" :aria-expanded="paramSectionsOpen.prompt" aria-controls="param-body-prompt">
                                     <i class="bi bi-chat-left-text text-light"></i>
                                     <span class="text-light fw-semibold">提示词</span>
-                                </div>
+                                </button>
                                 <div class="d-flex align-items-center gap-2">
                                     <button class="btn btn-outline-info btn-sm" @click.stop="togglePromptRefs" title="标签参考站点">
                                         <i class="bi bi-link-45deg"></i> 参考
@@ -347,7 +402,7 @@
                                 </div>
                             </div>
 
-                            <div class="rp-param-body" v-show="paramSectionsOpen.prompt">
+                            <div class="rp-param-body" id="param-body-prompt" v-show="paramSectionsOpen.prompt">
                                 <div v-if="showPromptRefs" class="mb-3 p-3 border border-secondary rounded">
                                     <div class="d-flex justify-content-between align-items-center mb-2">
                                         <div class="rp-ac-hint"><i class="bi bi-link-45deg"></i> 参考站点（新窗口打开）</div>
@@ -398,18 +453,52 @@
                                 </div>
 
                                 <div v-for="p in promptPlaceholders" :key="p.name" class="mb-3">
-                                    <label class="form-label text-light d-flex justify-content-between align-items-center">
-                                        <span>{{ p.label }}</span>
-                                        <button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button>
-                                    </label>
-                                     <prompt-textarea
-                                         v-model="placeholderValues[p.name]"
-                                         :rows="p.rows || 3"
-                                         :placeholder="p.default"
-                                         :disabled="isParamsLocked"
-                                         :insert-options="promptInsertOptions"
-                                         :field-name="p.name"
-                                     ></prompt-textarea>
+                                    <template v-if="p.name === 'negative_prompt'">
+                                        <div class="d-flex align-items-center gap-2 rp-negative-head">
+                                            <button type="button" class="btn btn-link btn-sm text-light p-0 rp-collapse-head"
+                                                    :aria-expanded="negativePromptExpanded ? 'true' : 'false'"
+                                                    aria-controls="negative-prompt-body"
+                                                    @click="toggleNegativePromptSection">
+                                                <i class="bi" :class="negativePromptExpanded ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                                                {{ p.label }}
+                                            </button>
+                                            <span class="small text-muted text-truncate flex-grow-1 min-w-0">{{ negativePromptSummary }}</span>
+                                            <button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button>
+                                        </div>
+                                        <div id="negative-prompt-body" v-show="negativePromptExpanded" class="mt-2">
+                                            <prompt-textarea
+                                                v-model="placeholderValues[p.name]"
+                                                :rows="p.rows || 2"
+                                                :placeholder="p.default"
+                                                :disabled="isParamsLocked"
+                                                :insert-options="promptInsertOptions"
+                                                :field-name="p.name"
+                                                @focus="onPromptFieldFocus(p.name)"
+                                            ></prompt-textarea>
+                                        </div>
+                                    </template>
+                                    <template v-else>
+                                        <label class="form-label text-light d-flex justify-content-between align-items-center">
+                                            <span>{{ p.label }}</span>
+                                            <button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button>
+                                        </label>
+                                        <prompt-textarea
+                                            v-model="placeholderValues[p.name]"
+                                            :rows="p.rows || 3"
+                                            :placeholder="p.default"
+                                            :disabled="isParamsLocked"
+                                            :insert-options="promptInsertOptions"
+                                            :field-name="p.name"
+                                            @focus="onPromptFieldFocus(p.name)"
+                                        ></prompt-textarea>
+                                    </template>
+                                </div>
+                                <div v-if="promptUndo" class="rp-undo-inline" role="status" aria-live="polite">
+                                    <i class="bi bi-check2-circle" aria-hidden="true"></i>
+                                    <span class="small text-light flex-grow-1 min-w-0 rp-break">
+                                        已应用{{ promptUndo.label }}<template v-if="promptUndo.field">（{{ promptFieldLabel(promptUndo.field) }}）</template>
+                                    </span>
+                                    <button type="button" class="btn btn-outline-light btn-sm" @click="undoPromptApply" :disabled="isParamsLocked">撤销</button>
                                 </div>
                             </div>
                         </div>
@@ -418,14 +507,15 @@
                         <div v-if="hasSamplingPlaceholders" class="rp-param-section mb-3">
                             <div class="rp-param-header d-flex justify-content-between align-items-center"
                                  @click="toggleParamSection('sampling')">
-                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                <button type="button" class="rp-section-toggle d-flex align-items-center gap-2 min-w-0"
+                                        @click.stop="toggleParamSection('sampling')" :aria-expanded="paramSectionsOpen.sampling" aria-controls="param-body-sampling">
                                     <i class="bi bi-speedometer2 text-light"></i>
                                     <span class="text-light fw-semibold">采样参数</span>
-                                </div>
+                                </button>
                                 <i class="bi rp-param-chevron" :class="paramSectionsOpen.sampling ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
                             </div>
 
-                            <div class="rp-param-body" v-show="paramSectionsOpen.sampling">
+                            <div class="rp-param-body" id="param-body-sampling" v-show="paramSectionsOpen.sampling">
                                 <div class="row g-3">
                                     <template v-for="p in samplingPlaceholders" :key="p.name">
                                     <!-- Seed（支持每次随机） -->
@@ -508,15 +598,16 @@
                         <div v-if="hasInputImagePlaceholder" class="rp-param-section mb-3">
                             <div class="rp-param-header d-flex justify-content-between align-items-center"
                                  @click="toggleParamSection('inputImage')">
-                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                <button type="button" class="rp-section-toggle d-flex align-items-center gap-2 min-w-0"
+                                        @click.stop="toggleParamSection('inputImage')" :aria-expanded="paramSectionsOpen.inputImage" aria-controls="param-body-inputImage">
                                     <i class="bi bi-image text-light"></i>
                                     <span class="text-light fw-semibold">输入图片</span>
                                     <span class="small text-muted text-truncate" v-if="placeholderValues.input_image">文件名: {{ placeholderValues.input_image }}</span>
-                                </div>
+                                </button>
                                 <i class="bi rp-param-chevron" :class="paramSectionsOpen.inputImage ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
                             </div>
 
-                            <div class="rp-param-body" v-show="paramSectionsOpen.inputImage">
+                            <div class="rp-param-body" id="param-body-inputImage" v-show="paramSectionsOpen.inputImage">
                                 <div class="mb-2">
                                     <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2"
                                            v-model="placeholderValues.input_image"
@@ -524,7 +615,8 @@
                                 </div>
                                  <image-upload uploader-height="200"
                                                v-model:uploderimagesrc="inputImageData"
-                                               :disabled="isParamsLocked"></image-upload>
+                                               :disabled="isParamsLocked"
+                                               @remove="onInputImageRemoved"></image-upload>
                                 <div v-if="inputImageSizeWarning" class="alert alert-warning mt-2 mb-0 py-1">
                                     <i class="bi bi-exclamation-triangle"></i> {{ inputImageSizeWarning }}
                                 </div>
@@ -535,15 +627,16 @@
                         <div v-if="otherPlaceholders.length > 0" class="rp-param-section mb-3">
                             <div class="rp-param-header d-flex justify-content-between align-items-center"
                                  @click="toggleParamSection('other')">
-                                <div class="d-flex align-items-center gap-2 min-w-0">
+                                <button type="button" class="rp-section-toggle d-flex align-items-center gap-2 min-w-0"
+                                        @click.stop="toggleParamSection('other')" :aria-expanded="paramSectionsOpen.other" aria-controls="param-body-other">
                                     <i class="bi bi-three-dots text-light"></i>
                                     <span class="text-light fw-semibold">其他参数</span>
                                     <span class="badge bg-secondary">{{ otherPlaceholders.length }}</span>
-                                </div>
+                                </button>
                                 <i class="bi rp-param-chevron" :class="paramSectionsOpen.other ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
                             </div>
 
-                            <div class="rp-param-body" v-show="paramSectionsOpen.other">
+                            <div class="rp-param-body" id="param-body-other" v-show="paramSectionsOpen.other">
                                 <div class="row g-3">
                                     <template v-for="p in otherPlaceholders" :key="p.name">
                                         <div class="col-md-6">
@@ -584,7 +677,7 @@
             </section>
 
             <!-- Workflow 编辑区 -->
-            <section class="mb-4">
+            <section class="mb-4" id="workflow-section">
                 <div class="card bg-dark border-secondary rp-workflow-card">
                     <div class="card-header border-secondary d-flex justify-content-between align-items-center gap-3">
                         <div class="min-w-0">
@@ -782,34 +875,63 @@
                                 <button class="btn" :class="quickPromptTab === 'presets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'presets'">预设 {{ promptBlockPresets.length }}</button>
                                 <button class="btn" :class="quickPromptTab === 'snippets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'snippets'">片段 {{ promptSnippetPresets.length }}</button>
                             </div>
-                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2" v-model="quickPromptSearch" placeholder="搜索">
+                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2" v-model="quickPromptSearch" placeholder="搜索名称或正文">
+                            <div class="rp-ac-hint mb-2">
+                                <i class="bi bi-crosshair" aria-hidden="true"></i>
+                                默认插入目标：{{ promptInsertTargetLabel }}；正/负按钮固定插入对应字段。
+                            </div>
                             <div class="rp-quick-list">
                                 <template v-if="quickPromptTab === 'presets'">
-                                    <div v-for="p in quickPromptPresets" :key="p.id" class="rp-quick-item">
-                                        <span class="rp-quick-thumb" v-if="p.preview && !isPreviewBroken(p)">
-                                            <img :src="p.preview.url" :alt="p.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(p)">
-                                        </span>
-                                        <span class="rp-quick-thumb rp-quick-thumb-empty" v-else><i class="bi bi-image" aria-hidden="true"></i></span>
-                                        <span class="text-light small text-truncate flex-grow-1 min-w-0">{{ p.name }}</span>
-                                        <button class="btn btn-outline-primary btn-sm" @click="applyBlockPreset(p)">替换提示词</button>
+                                    <div v-for="p in quickPromptPresets" :key="p.id" class="rp-quick-item flex-column align-items-stretch">
+                                        <div class="rp-quick-head">
+                                            <span class="rp-quick-thumb" v-if="p.preview && !isPreviewBroken(p)">
+                                                <img :src="p.preview.url" :alt="p.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(p)">
+                                            </span>
+                                            <button type="button" class="rp-quick-title" @click="openQuickPresetPreview(p)"
+                                                    :title="'查看预设全文：' + p.name" :aria-label="'查看预设全文：' + p.name">{{ p.name }}</button>
+                                            <span class="badge rp-scope-badge">整块</span>
+                                            <button class="btn btn-outline-primary btn-sm ms-auto flex-shrink-0" @click="applyBlockPreset(p)"
+                                                    :disabled="isParamsLocked" :title="'整块替换提示词（' + presetScopeLabel(p) + '）'">替换</button>
+                                        </div>
+                                        <div class="rp-quick-body">
+                                            <div class="rp-body-row"><span class="rp-field-tag rp-field-pos">正</span><span class="rp-clamp-2">{{ p.prompt || '（空）' }}</span></div>
+                                            <div class="rp-body-row"><span class="rp-field-tag rp-field-neg">负</span><span class="rp-clamp-2">{{ p.negative_prompt || '（空）' }}</span></div>
+                                            <div class="rp-quick-scope">{{ presetScopeLabel(p) }}</div>
+                                        </div>
                                     </div>
                                     <div v-if="quickPromptPresets.length === 0" class="text-muted small py-2">暂无预设</div>
                                 </template>
                                 <template v-else>
-                                    <div v-for="s in quickPromptSnippets" :key="s.id" class="rp-quick-item">
-                                        <span class="rp-quick-thumb" v-if="s.preview && !isPreviewBroken(s)">
-                                            <img :src="s.preview.url" :alt="s.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(s)">
-                                        </span>
-                                        <span class="rp-quick-thumb rp-quick-thumb-empty" v-else><i class="bi bi-image" aria-hidden="true"></i></span>
-                                        <span class="text-light small text-truncate flex-grow-1 min-w-0">{{ s.name }}</span>
-                                        <button class="btn btn-outline-primary btn-sm" @click="insertSnippetToPrompt(s, s.target === 'negative' ? 'negative_prompt' : 'prompt')">插入片段</button>
+                                    <div v-for="s in quickPromptSnippets" :key="s.id" class="rp-quick-item flex-column align-items-stretch">
+                                        <div class="rp-quick-head">
+                                            <span class="rp-quick-thumb" v-if="s.preview && !isPreviewBroken(s)">
+                                                <img :src="s.preview.url" :alt="s.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(s)">
+                                            </span>
+                                            <button type="button" class="rp-quick-title" @click="openQuickSnippetPreview(s)"
+                                                    :title="'查看片段全文：' + s.name" :aria-label="'查看片段全文：' + s.name">{{ s.name }}</button>
+                                            <span class="badge" :class="s.target === 'negative' ? 'rp-target-neg' : 'rp-target-pos'">{{ s.target === 'negative' ? '负向' : '正向' }}</span>
+                                            <div class="rp-quick-actions ms-auto">
+                                                <button class="btn btn-outline-primary btn-sm" @click="insertSnippetToPrompt(s)"
+                                                        :disabled="isParamsLocked" :title="'插入到当前编辑框：' + promptInsertTargetLabel">插入当前</button>
+                                                <button class="btn btn-outline-light btn-sm" @click="insertSnippetToPrompt(s, 'prompt')"
+                                                        :disabled="isParamsLocked" title="插入到正向提示词（该字段光标处）">正</button>
+                                                <button class="btn btn-outline-danger btn-sm" @click="insertSnippetToPrompt(s, 'negative_prompt')"
+                                                        :disabled="isParamsLocked" title="插入到负向提示词（该字段光标处）">负</button>
+                                                <button class="btn btn-outline-secondary btn-sm" @click="copySnippet(s.text)" title="复制正文">
+                                                    <i class="bi bi-clipboard" aria-hidden="true"></i><span class="visually-hidden">复制正文</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="rp-quick-body">
+                                            <div class="rp-clamp-3">{{ s.text }}</div>
+                                        </div>
                                     </div>
                                     <div v-if="quickPromptSnippets.length === 0" class="text-muted small py-2">暂无片段</div>
                                 </template>
                             </div>
                             <div class="d-flex gap-2 mt-2 flex-wrap">
                                 <button class="btn btn-outline-warning btn-sm" @click="openPromptPresets"><i class="bi bi-gear"></i> 管理预设/片段</button>
-                                <button v-if="promptUndo" class="btn btn-outline-light btn-sm" @click="undoPromptApply"><i class="bi bi-arrow-counterclockwise"></i> 撤销上次应用</button>
+                                <button v-if="promptUndo" class="btn btn-outline-light btn-sm" @click="undoPromptApply" :disabled="isParamsLocked"><i class="bi bi-arrow-counterclockwise"></i> 撤销上次应用</button>
                             </div>
                         </div>
                     </div>
@@ -851,6 +973,13 @@
 
                                 <!-- 请求历史 -->
                                 <div v-show="resultsTab === 'history'">
+                                    <div v-if="hasUnseenLatestHistory" class="alert alert-info py-2 d-flex align-items-center justify-content-between gap-2 rp-latest-banner" role="status">
+                                        <span class="small">
+                                            <i class="bi bi-stars"></i>
+                                            最新任务：{{ latestHistoryLabel }}{{ latestHistoryRecord && latestHistoryRecord.errorMessage ? ' · ' + latestHistoryRecord.errorMessage : '' }}
+                                        </span>
+                                        <button type="button" class="btn btn-primary btn-sm flex-shrink-0" @click="selectLatestHistory">查看最新</button>
+                                    </div>
                                     <div v-if="!hasResultsSection" class="rp-results-empty">
                                         <i class="bi bi-image" aria-hidden="true"></i>
                                         <div>还没有生成结果</div>
@@ -1207,8 +1336,8 @@
                         <button class="btn btn-primary btn-lg rp-generate-btn rp-btn-generate"
                                 @click="generate"
                                 :disabled="!canGenerate || !canAcceptNewJob"
-                                title="快捷键 Ctrl+Enter">
-                            <i class="bi bi-play-fill"></i> 生成
+                                :title="generateButtonTitle">
+                            <i class="bi bi-play-fill"></i> {{ generateButtonLabel }}
                         </button>
                         <button class="btn btn-secondary btn-lg rp-generate-btn"
                                 @click="cancelGeneration"
@@ -1225,6 +1354,11 @@
                             <span class="rp-label-desktop">取消全部</span><span class="rp-label-mobile">全取消</span>
                         </button>
                     </div>
+                    <div v-if="generateDisabledReason" class="rp-generate-blocker small" role="status">
+                        <i class="bi bi-info-circle"></i>
+                        <span class="min-w-0 rp-break">{{ generateDisabledReason }}</span>
+                        <button type="button" class="btn btn-link btn-sm p-0 flex-shrink-0" @click="focusGenerateBlocker">{{ (generateBlocker && generateBlocker.actionLabel) || '去修正' }}</button>
+                    </div>
                     <div class="text-light rp-generate-status">
                         <span class="badge bg-secondary me-2">{{ runModeLabel }}</span>
                         <span v-if="activeJobCount > 0" class="badge bg-info me-2">
@@ -1240,7 +1374,7 @@
         </main>
 
         <!-- 设置模态框 -->
-        <div class="modal fade" :class="{ show: showSettings }" :style="{ display: showSettings ? 'block' : 'none' }">
+        <div data-overlay="settings" class="modal fade" :class="{ show: showSettings }" :style="{ display: showSettings ? 'block' : 'none', zIndex: 1075 }">
             <div class="modal-dialog modal-dialog-centered modal-lg">
                 <div class="modal-content bg-dark border-secondary">
                     <div class="modal-header border-secondary">
@@ -1429,10 +1563,10 @@
         </div>
 
         <!-- 设置模态框背景遮罩 -->
-        <div v-if="showSettings" class="modal-backdrop fade show"></div>
+        <div v-if="showSettings" class="modal-backdrop fade show" style="z-index: 1074;"></div>
 
         <!-- 保存模板模态框 -->
-        <div class="modal fade" :class="{ show: showSaveTemplate }" :style="{ display: showSaveTemplate ? 'block' : 'none' }">
+        <div data-overlay="saveTemplate" class="modal fade" :class="{ show: showSaveTemplate }" :style="{ display: showSaveTemplate ? 'block' : 'none', zIndex: 1065 }">
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content bg-dark border-secondary">
                     <div class="modal-header border-secondary">
@@ -1465,10 +1599,10 @@
         </div>
 
         <!-- 保存模板遮罩 -->
-        <div v-if="showSaveTemplate" class="modal-backdrop fade show"></div>
+        <div v-if="showSaveTemplate" class="modal-backdrop fade show" style="z-index: 1064;"></div>
 
         <!-- 导入模板模态框 -->
-        <div class="modal fade" :class="{ show: showImportTemplate }" :style="{ display: showImportTemplate ? 'block' : 'none' }">
+        <div data-overlay="importTemplate" class="modal fade" :class="{ show: showImportTemplate }" :style="{ display: showImportTemplate ? 'block' : 'none', zIndex: 1070 }">
             <div class="modal-dialog modal-dialog-centered modal-lg">
                 <div class="modal-content bg-dark border-secondary">
                     <div class="modal-header border-secondary">
@@ -1504,23 +1638,23 @@
         </div>
 
         <!-- 导入模板遮罩 -->
-        <div v-if="showImportTemplate" class="modal-backdrop fade show"></div>
+        <div v-if="showImportTemplate" class="modal-backdrop fade show" style="z-index: 1069;"></div>
 
         <!-- 提示词预设模态框 -->
-        <div class="modal fade" :class="{ show: showPromptPresets }" :style="{ display: showPromptPresets ? 'block' : 'none' }">
+        <div data-overlay="promptPresets" class="modal fade" :class="{ show: showPromptPresets }" :style="{ display: showPromptPresets ? 'block' : 'none', zIndex: 1060 }">
             <div class="modal-dialog modal-dialog-centered modal-lg">
                 <div class="modal-content bg-dark border-secondary">
                     <div class="modal-header border-secondary">
                         <h5 class="modal-title text-light">
-                            <i class="bi bi-bookmark-star"></i> 提示词预设
+                            <i class="bi bi-bookmark-star"></i> 预设与片段
                         </h5>
-                        <button type="button" class="btn-close btn-close-white" @click="closePromptPresets"></button>
+                        <button type="button" class="btn-close btn-close-white" @click="closePromptPresets" aria-label="关闭预设与片段"></button>
                     </div>
                     <div class="modal-body">
                         <ul class="nav nav-tabs rp-tabs mb-3">
                             <li class="nav-item">
                                 <button class="nav-link" :class="{ active: promptPresetTab === 'blocks' }" @click="promptPresetTab = 'blocks'">
-                                    整块替换
+                                    整块预设
                                     <span class="badge bg-secondary ms-1">{{ promptBlockPresets.length }}</span>
                                 </button>
                             </li>
@@ -1537,7 +1671,7 @@
                                 <i class="bi bi-search"></i>
                             </span>
                             <input type="text" class="form-control bg-dark text-light border-secondary"
-                                   v-model="promptPresetSearch" placeholder="搜索预设/片段（名称或内容）">
+                                   v-model="promptPresetSearch" placeholder="搜索名称或正文">
                             <button class="btn btn-outline-secondary" type="button"
                                     @click="promptPresetSearch = ''" :disabled="!promptPresetSearch">
                                 清除
@@ -1548,9 +1682,9 @@
                             <i class="bi" :class="promptPresetMessageIcon"></i> {{ promptPresetMessage }}
                         </div>
 
-                        <!-- 整块替换 -->
+                        <!-- 整块预设 -->
                         <div v-show="promptPresetTab === 'blocks'">
-                            <div class="text-muted small mb-2">应用会覆盖当前正向/负向提示词。</div>
+                            <div class="text-muted small mb-2">应用会整块覆盖当前正向/负向提示词（模板没有的字段保持不变）；应用后可撤销。</div>
                             <div class="input-group mb-3">
                                 <span class="input-group-text bg-dark text-light border-secondary">
                                     <i class="bi bi-pencil"></i>
@@ -1582,14 +1716,19 @@
                                             </div>
                                             <div class="small text-muted rp-clamp-2">正: {{ p.prompt || '-' }}</div>
                                             <div class="small text-muted rp-clamp-2">负: {{ p.negative_prompt || '-' }}</div>
+                                            <div class="rp-quick-scope">{{ presetScopeLabel(p) }}</div>
                                         </div>
                                         <div class="d-flex align-items-center gap-2 rp-preset-actions flex-shrink-0">
-                                            <button class="btn btn-outline-primary btn-sm" type="button" @click="applyBlockPreset(p)" title="应用（覆盖当前提示词）">
+                                            <button class="btn btn-outline-light btn-sm" type="button" @click="openQuickPresetPreview(p)" title="查看预设全文">
+                                                <i class="bi bi-card-text"></i>
+                                                <span class="d-none d-sm-inline ms-1">全文</span>
+                                            </button>
+                                            <button class="btn btn-outline-primary btn-sm" type="button" @click="applyBlockPreset(p)" :disabled="isParamsLocked" :title="'整块替换（' + presetScopeLabel(p) + '）'">
                                                 <i class="bi bi-check2"></i>
                                                 <span class="d-none d-sm-inline ms-1">应用</span>
                                             </button>
 
-                                            <button class="btn btn-outline-secondary btn-sm" type="button" @click="updateBlockPreset(p)" title="用当前提示词更新此预设">
+                                            <button class="btn btn-outline-secondary btn-sm" type="button" @click="updateBlockPreset(p)" :disabled="isParamsLocked" title="用当前提示词更新此预设">
                                                 <i class="bi bi-arrow-repeat"></i>
                                                 <span class="d-none d-sm-inline ms-1">更新</span>
                                             </button>
@@ -1604,13 +1743,13 @@
                             </div>
                         </div>
 
-                        <!-- 复制片段 -->
+                        <!-- 片段库 -->
                         <div v-show="promptPresetTab === 'snippets'">
-                            <div class="text-muted small mb-2">片段可插入到当前正向/负向提示词末尾，或复制到剪贴板。</div>
+                            <div class="text-muted small mb-2">片段会插入到指定字段的光标处；该字段没有记录光标时追加到末尾。参数锁定或模板加载中不可修改。</div>
 
                             <div class="row g-2 mb-3">
                                 <div class="col-12 rp-preset-toolbar">
-                                    <button class="btn btn-primary" type="button" @click="saveSnippetPreset">
+                                    <button class="btn btn-primary" type="button" @click="saveSnippetPreset" :disabled="isParamsLocked">
                                         <i class="bi bi-plus-lg"></i>
                                         <span class="ms-1">保存片段</span>
                                     </button>
@@ -1652,15 +1791,22 @@
                                 <div v-for="s in filteredPromptSnippetPresets" :key="s.id" class="list-group-item bg-dark border-secondary rp-preset-item">
                                     <div class="d-flex justify-content-between align-items-start gap-3">
                                         <div class="min-w-0">
-                                            <div class="text-light fw-semibold text-truncate">{{ s.name }}</div>
-                                            <div class="small text-muted rp-clamp-2">{{ s.text }}</div>
+                                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                <div class="text-light fw-semibold text-truncate">{{ s.name }}</div>
+                                                <span class="badge" :class="s.target === 'negative' ? 'rp-target-neg' : 'rp-target-pos'">{{ s.target === 'negative' ? '负向' : '正向' }}</span>
+                                            </div>
+                                            <div class="small text-muted rp-clamp-3">{{ s.text }}</div>
                                         </div>
                                         <div class="d-flex align-items-center gap-1 rp-preset-actions flex-shrink-0 flex-wrap justify-content-end">
-                                            <button class="btn btn-outline-primary btn-sm" type="button" @click="insertSnippetToPrompt(s, 'prompt')" title="插入到正向提示词末尾">
+                                            <button class="btn btn-outline-light btn-sm" type="button" @click="openQuickSnippetPreview(s)" title="查看片段全文">
+                                                <i class="bi bi-card-text"></i>
+                                                <span class="d-none d-sm-inline ms-1">全文</span>
+                                            </button>
+                                            <button class="btn btn-outline-primary btn-sm" type="button" @click="insertSnippetToPrompt(s, 'prompt')" :disabled="isParamsLocked" title="插入到正向提示词（该字段光标处；无光标则追加末尾）">
                                                 <i class="bi bi-arrow-down-left"></i>
                                                 <span class="d-none d-sm-inline ms-1">插入正向</span>
                                             </button>
-                                            <button class="btn btn-outline-danger btn-sm" type="button" @click="insertSnippetToPrompt(s, 'negative_prompt')" title="插入到负向提示词末尾">
+                                            <button class="btn btn-outline-danger btn-sm" type="button" @click="insertSnippetToPrompt(s, 'negative_prompt')" :disabled="isParamsLocked" title="插入到负向提示词（该字段光标处；无光标则追加末尾）">
                                                 <i class="bi bi-arrow-down-left"></i>
                                                 <span class="d-none d-sm-inline ms-1">插入负向</span>
                                             </button>
@@ -1686,10 +1832,82 @@
         </div>
 
         <!-- 提示词预设遮罩 -->
-        <div v-if="showPromptPresets" class="modal-backdrop fade show"></div>
+        <div v-if="showPromptPresets" class="modal-backdrop fade show" style="z-index: 1059;"></div>
+
+        <!-- 片段/预设全文预览：纯文本、可复制、可键盘展开与显式插入 -->
+        <div data-overlay="promptPreview" class="modal fade" :class="{ show: showPromptPreview }" :style="{ display: showPromptPreview ? 'block' : 'none', zIndex: 1090 }">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content bg-dark border-secondary" ref="promptPreviewDialog" tabindex="-1"
+                     role="dialog" aria-modal="true" :aria-label="'提示词全文预览：' + promptPreview.name">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title text-light text-break">
+                            <i class="bi bi-card-text"></i> {{ promptPreview.name }}
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" @click="closePromptPreview" aria-label="关闭全文预览"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="d-flex flex-wrap gap-2 align-items-center mb-2 small text-muted">
+                            <span class="badge bg-secondary">{{ promptPreview.kind === 'preset' ? '整块预设' : '片段' }}</span>
+                            <span v-if="promptPreview.sourceLabel">{{ promptPreview.sourceLabel }}</span>
+                            <span v-if="promptPreview.kind === 'snippet'">目标：{{ promptPreview.target === 'negative' ? '负向提示词' : '正向提示词' }}</span>
+                        </div>
+                        <div v-if="promptPreview.loading" class="text-muted small">
+                            <i class="bi bi-hourglass-split" aria-hidden="true"></i> 正文加载中…
+                        </div>
+                        <div v-else-if="promptPreview.error" class="alert alert-danger py-2 d-flex justify-content-between align-items-center gap-2">
+                            <span class="rp-break">{{ promptPreview.error }}</span>
+                            <button type="button" class="btn btn-outline-light btn-sm" @click="retryPromptPreviewLoad">重试</button>
+                        </div>
+                        <template v-else>
+                            <template v-if="promptPreview.kind === 'preset'">
+                                <div class="rp-preview-scope small mb-3">
+                                    <i class="bi bi-info-circle" aria-hidden="true"></i> {{ presetScopeLabel(promptPreview) }}
+                                </div>
+                                <div class="mb-3">
+                                    <div class="mb-1"><span class="rp-field-tag rp-field-pos">正向</span></div>
+                                    <pre class="rp-preview-text">{{ promptPreview.positive || '（空）' }}</pre>
+                                    <div class="d-flex gap-2 mt-2 flex-wrap">
+                                        <button type="button" class="btn btn-outline-light btn-sm" @click="copyPromptPreviewPart('positive')">复制正向</button>
+                                        <button type="button" class="btn btn-outline-info btn-sm" @click="insertPromptPreviewPart('prompt')"
+                                                :disabled="isParamsLocked || !hasPromptField('prompt')">插入正向</button>
+                                    </div>
+                                </div>
+                                <div class="mb-2">
+                                    <div class="mb-1"><span class="rp-field-tag rp-field-neg">负向</span></div>
+                                    <pre class="rp-preview-text">{{ promptPreview.negative || '（空）' }}</pre>
+                                    <div class="d-flex gap-2 mt-2 flex-wrap">
+                                        <button type="button" class="btn btn-outline-light btn-sm" @click="copyPromptPreviewPart('negative')">复制负向</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm" @click="insertPromptPreviewPart('negative_prompt')"
+                                                :disabled="isParamsLocked || !hasPromptField('negative_prompt')">插入负向</button>
+                                    </div>
+                                </div>
+                            </template>
+                            <template v-else>
+                                <pre class="rp-preview-text">{{ promptPreview.text || '（空）' }}</pre>
+                                <div class="d-flex gap-2 mt-2 flex-wrap">
+                                    <button type="button" class="btn btn-outline-light btn-sm" @click="copyPromptPreviewPart('text')">复制正文</button>
+                                    <button type="button" class="btn btn-outline-info btn-sm" @click="insertPromptPreviewPart('prompt')"
+                                            :disabled="isParamsLocked || !hasPromptField('prompt')">插入正向</button>
+                                    <button type="button" class="btn btn-outline-danger btn-sm" @click="insertPromptPreviewPart('negative_prompt')"
+                                            :disabled="isParamsLocked || !hasPromptField('negative_prompt')">插入负向</button>
+                                </div>
+                            </template>
+                        </template>
+                    </div>
+                    <div class="modal-footer border-secondary">
+                        <button v-if="promptPreview.kind === 'preset'" type="button" class="btn btn-primary"
+                                @click="applyPromptPreviewPreset" :disabled="isParamsLocked || promptPreview.loading || !!promptPreview.error">
+                            应用（{{ presetScopeLabel(promptPreview) }}）
+                        </button>
+                        <button type="button" class="btn btn-secondary" @click="closePromptPreview">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div v-if="showPromptPreview" class="modal-backdrop fade show" style="z-index: 1085;"></div>
 
         <!-- 图片预览模态框 -->
-        <div class="modal fade" :class="{ show: showImageModal }" :style="{ display: showImageModal ? 'block' : 'none' }">
+        <div data-overlay="image" class="modal fade" :class="{ show: showImageModal }" :style="{ display: showImageModal ? 'block' : 'none', zIndex: 1055 }">
             <div class="modal-dialog modal-fullscreen">
                 <div class="modal-content bg-dark">
                     <div class="modal-body d-flex align-items-center justify-content-center p-0 position-relative"
@@ -1785,7 +2003,7 @@
                 </div>
             </div>
         </div>
-        <div v-if="showImageModal" class="modal-backdrop fade show" @click="closeImageModal"></div>
+        <div v-if="showImageModal" class="modal-backdrop fade show" style="z-index: 1054;" @click="closeImageModal"></div>
 
         <!-- 自定义 Toast -->
         <div v-if="uiToast.show" class="rp-ui-toast-wrap" role="status" aria-live="polite" aria-atomic="true">
@@ -1799,7 +2017,7 @@
         </div>
 
         <!-- 暴露参数弹窗 -->
-        <div v-if="pendingExposeInput" class="modal fade show" style="display: block;" role="dialog" aria-modal="true">
+        <div v-if="pendingExposeInput" data-overlay="expose" class="modal fade show" style="display: block; z-index: 1080;" role="dialog" aria-modal="true">
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content bg-dark border-secondary">
                     <div class="modal-header border-secondary">
@@ -1839,10 +2057,10 @@
                 </div>
             </div>
         </div>
-        <div v-if="pendingExposeInput" class="modal-backdrop fade show"></div>
+        <div v-if="pendingExposeInput" class="modal-backdrop fade show" style="z-index: 1079;"></div>
 
         <!-- 重命名弹窗 -->
-        <div v-if="renameState.show" class="rp-ui-dialog-backdrop" @click.self="renameState.show = false">
+        <div v-if="renameState.show" data-overlay="rename" class="rp-ui-dialog-backdrop" @click.self="renameState.show = false">
             <div class="rp-ui-dialog card bg-dark border-secondary" role="dialog" aria-modal="true">
                 <div class="card-header border-secondary text-light fw-semibold">重命名本地资源</div>
                 <div class="card-body">
@@ -1855,8 +2073,49 @@
             </div>
         </div>
 
+        <!-- 历史参数回填确认（摘要 + Seed 保留/替换），取消不改草稿 -->
+        <div v-if="pendingParamsApply" data-overlay="paramsApply" class="modal fade show"
+             style="display: block; z-index: 1082;" role="dialog" aria-modal="true" aria-label="应用历史参数">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content bg-dark border-secondary" data-overlay-autofocus tabindex="-1">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title text-light"><i class="bi bi-arrow-up-circle"></i> 应用历史参数</h5>
+                        <button type="button" class="btn-close btn-close-white" @click="resolveParamsApply(false)" aria-label="取消"></button>
+                    </div>
+                    <div class="modal-body">
+                        <ul class="rp-apply-summary small text-light mb-3">
+                            <li v-for="(line, idx) in pendingParamsApply.summary.lines" :key="idx">{{ line }}</li>
+                        </ul>
+                        <div v-if="pendingParamsApply.summary.hasSeed" class="rp-seed-choice border border-secondary rounded p-2">
+                            <div class="small text-light mb-2">
+                                Seed：当前 <code>{{ pendingParamsApply.summary.currentSeed }}</code>
+                                · 历史 <code>{{ pendingParamsApply.summary.incomingSeed }}</code>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" :id="'seed-keep'" value="keep"
+                                       :checked="pendingParamsApply.seedMode !== 'replace'"
+                                       @change="setParamsApplySeedMode('keep')">
+                                <label class="form-check-label text-light small" for="seed-keep">保留当前 Seed（便于对比）</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" :id="'seed-replace'" value="replace"
+                                       :checked="pendingParamsApply.seedMode === 'replace'"
+                                       @change="setParamsApplySeedMode('replace')">
+                                <label class="form-check-label text-light small" for="seed-replace">使用历史 Seed（复现这张图）</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary">
+                        <button type="button" class="btn btn-outline-light" @click="resolveParamsApply(false)">取消</button>
+                        <button type="button" class="btn btn-primary" @click="resolveParamsApply(true)">应用参数</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div v-if="pendingParamsApply" class="modal-backdrop fade show" style="z-index: 1080;"></div>
+
         <!-- 自定义确认弹窗 -->
-        <div v-if="uiDialog.show" class="rp-ui-dialog-backdrop" @click.self="onUiDialogBackdropClick">
+        <div v-if="uiDialog.show" data-overlay="uiDialog" class="rp-ui-dialog-backdrop" @click.self="onUiDialogBackdropClick">
             <div class="rp-ui-dialog card bg-dark border-secondary" role="dialog" aria-modal="true">
                 <div class="card-header border-secondary d-flex align-items-center gap-2">
                     <i class="bi" :class="getUiNoticeIcon(uiDialog.type)"></i>
