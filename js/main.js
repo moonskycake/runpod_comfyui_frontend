@@ -472,6 +472,10 @@ const PromptTextareaComponent = {
                 escapeParentheses: true,
                 keepAtPrefix: false
             })
+        },
+        autoSpaceAfterAutocomplete: {
+            type: Boolean,
+            default: true
         }
     },
     emits: ['update:modelValue', 'focus'],
@@ -831,19 +835,20 @@ const PromptTextareaComponent = {
                 tokenEnd -= 1;
             }
 
-            // 在末尾选择时自动补 ", " 方便继续输入
             const after = value.slice(tokenEnd);
-            if (!after) {
+            // 候选后的分隔符可关闭；默认末尾补逗号和空格
+            if (this.autoSpaceAfterAutocomplete && !after) {
                 const trimmed = (value.slice(0, token.start) + replacement).trimEnd();
                 if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) {
                     replacement += ', ';
                 }
-            } else if (/^\r?\n/.test(after)) {
-                // token 在行末（后面紧跟换行）：只补逗号，不加空格，保留原换行与后续行
+            } else if (this.autoSpaceAfterAutocomplete && /^\r?\n/.test(after)) {
                 const prefix = (value.slice(0, token.start) + replacement).trimEnd();
                 if (prefix && !prefix.endsWith(',')) {
                     replacement += ',';
                 }
+            } else if (this.autoSpaceAfterAutocomplete && after && !/^[,\s]/.test(after)) {
+                replacement += ' ';
             }
 
             this.replaceRange(el, token.start, tokenEnd, replacement);
@@ -977,6 +982,8 @@ const app = Vue.createApp({
             catalogAliasMap: {},
             catalogDetails: {},
             previewBroken: {},
+            showLibraryImagePreview: false,
+            libraryImagePreview: { name: '', url: '' },
             libraryKind: 'template', // 'template' | 'preset' | 'snippet'
             librarySource: 'shared', // 'shared' | 'local'
             librarySearch: '',
@@ -3310,6 +3317,17 @@ const app = Vue.createApp({
         // ========== 前台视图 / 资源库 ==========
 
         // 预览图（固定尺寸 / broken 回退）：带参数，必须注册为 methods
+        openLibraryImagePreview(item) {
+            if (!item || !item.preview || !item.preview.url) return;
+            this.libraryImagePreview = { name: String(item.name || '资源预览'), url: item.preview.url };
+            this.showLibraryImagePreview = true;
+        },
+
+        closeLibraryImagePreview() {
+            this.showLibraryImagePreview = false;
+            this.libraryImagePreview = { name: '', url: '' };
+        },
+
         previewDomKey(item) {
             if (!item) return '';
             const preview = item.preview || null;
@@ -5904,6 +5922,7 @@ const app = Vue.createApp({
                 { key: 'paramsApply', open: !!this.pendingParamsApply, close: () => this.resolveParamsApply(false) },
                 { key: 'rename', open: !!(this.renameState && this.renameState.show), close: () => { this.renameState.show = false; } },
                 { key: 'promptPreview', open: !!this.showPromptPreview, close: () => this.closePromptPreview() },
+                { key: 'libraryImage', open: !!this.showLibraryImagePreview, close: () => this.closeLibraryImagePreview() },
                 { key: 'uiDialog', open: !!(this.uiDialog && this.uiDialog.show), close: () => this.resolveUiDialog(false) }
             ];
         },
@@ -6206,7 +6225,8 @@ const app = Vue.createApp({
                 maxConcurrent,
                 maxQueue,
                 autoScrollToResults: !!this.settingsForm.autoScrollToResults,
-                autoSelectLatestResult: !!this.settingsForm.autoSelectLatestResult
+                autoSelectLatestResult: !!this.settingsForm.autoSelectLatestResult,
+                autoSpaceAfterAutocomplete: !!this.settingsForm.autoSpaceAfterAutocomplete
             });
 
             RunpodClient.setConfig({

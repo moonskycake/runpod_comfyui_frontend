@@ -130,6 +130,7 @@ function makeInstance(env, insertOptions) {
     { keepUnderscore: true, escapeParentheses: true, keepAtPrefix: false },
     insertOptions || {}
   );
+  inst.autoSpaceAfterAutocomplete = true;
   inst.$refs = { ta: el };
   inst.emitted = [];
   inst.$emit = (name, payload) => {
@@ -273,6 +274,17 @@ async function runComponentCases() {
     checkTrue(prevented, 'Tab 仍拦截默认行为并选中候选');
     checkEq(inst.el.value, '1girl, wlop, ', 'Tab 选中末位画师后补 ", "');
     checkEq(inst.el.selectionStart, inst.el.value.length, 'Tab 选中后光标在末尾');
+  }
+
+  // ---- 空格开关关闭时不自动补分隔符 ----
+  {
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    inst.autoSpaceAfterAutocomplete = false;
+    await typeValue(inst, '@wl');
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, 'wlop', '关闭自动补空格时只替换候选，不添加逗号或空格');
   }
 
   // ---- 已有逗号不重复 ----

@@ -27,7 +27,9 @@ function createDefaultSettingsConfig() {
     // 生成后是否自动跳到结果区
     autoScrollToResults: true,
     // 生成后是否自动选择最新任务
-    autoSelectLatestResult: true
+    autoSelectLatestResult: true,
+    // 自动补全候选后是否插入分隔空格
+    autoSpaceAfterAutocomplete: true
   };
 }
 
@@ -51,7 +53,8 @@ const Settings = {
     MAX_CONCURRENT: 'runpod_max_concurrent',
     MAX_QUEUE: 'runpod_max_queue',
     AUTO_SCROLL_TO_RESULTS: 'runpod_auto_scroll_results',
-    AUTO_SELECT_LATEST_RESULT: 'runpod_auto_select_latest_result'
+    AUTO_SELECT_LATEST_RESULT: 'runpod_auto_select_latest_result',
+    AUTO_SPACE_AFTER_AUTOCOMPLETE: 'runpod_auto_space_after_autocomplete'
   },
 
   /**
@@ -101,6 +104,10 @@ const Settings = {
     const autoSelectLatestResult = autoSelectLatestResultRaw === null
       ? (autoScrollToResultsRaw === null ? this.config.autoSelectLatestResult : autoScrollToResults)
       : autoSelectLatestResultRaw === 'true';
+    const autoSpaceAfterAutocompleteRaw = localStorage.getItem(this.KEYS.AUTO_SPACE_AFTER_AUTOCOMPLETE);
+    const autoSpaceAfterAutocomplete = autoSpaceAfterAutocompleteRaw === null
+      ? this.config.autoSpaceAfterAutocomplete
+      : autoSpaceAfterAutocompleteRaw === 'true';
     
     let apiKey = '';
     if (rememberApiKey) {
@@ -122,7 +129,8 @@ const Settings = {
       maxConcurrent,
       maxQueue,
       autoScrollToResults,
-      autoSelectLatestResult
+      autoSelectLatestResult,
+      autoSpaceAfterAutocomplete
     };
 
     return this.config;
@@ -156,6 +164,7 @@ const Settings = {
     localStorage.setItem(this.KEYS.MAX_QUEUE, String(Number(this.config.maxQueue || 0)));
     localStorage.setItem(this.KEYS.AUTO_SCROLL_TO_RESULTS, String(!!this.config.autoScrollToResults));
     localStorage.setItem(this.KEYS.AUTO_SELECT_LATEST_RESULT, String(!!this.config.autoSelectLatestResult));
+    localStorage.setItem(this.KEYS.AUTO_SPACE_AFTER_AUTOCOMPLETE, String(!!this.config.autoSpaceAfterAutocomplete));
 
     // apiKey 仅在用户勾选"记住"时保存
     if (this.config.rememberApiKey) {

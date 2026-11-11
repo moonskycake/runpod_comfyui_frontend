@@ -321,6 +321,21 @@ test('收藏重排及历史预览不受图库保留图污染', () => {
   assert.strictEqual(ctx.previewImage.id, 'img-1');
   assert.strictEqual(ctx.previewRetainedImage, null);
 });
+test('资源库图片预览不写入资源，点击背景或关闭即可退出', () => {
+  const { ctx } = load();
+  const item = { id: 'shared:preview', name: '测试片段', preview: { url: '/_rel/rev/catalog/previews/p.webp' } };
+  ctx.openLibraryImagePreview(item);
+  assert.strictEqual(ctx.showLibraryImagePreview, true);
+  assert.strictEqual(ctx.libraryImagePreview.name, '测试片段');
+  assert.strictEqual(ctx.libraryImagePreview.url, item.preview.url);
+  assert.strictEqual(ctx.topOverlayLayer().key, 'libraryImage');
+  ctx.closeLibraryImagePreview();
+  assert.strictEqual(ctx.showLibraryImagePreview, false);
+  assert.strictEqual(ctx.libraryImagePreview.name, '');
+  assert.strictEqual(ctx.libraryImagePreview.url, '');
+  ctx.openLibraryImagePreview({ name: '无图' });
+  assert.strictEqual(ctx.showLibraryImagePreview, false);
+});
 test('图库显示方式独立记忆，损坏值及存储不可用时安全回退', () => {
   const { ctx } = load();
   let stored = null;

@@ -157,8 +157,12 @@
                                             </div>
                                         </template>
                                         <!-- 预设/片段：预览图仅作辅助，无图时不留空块 -->
-                                        <div class="rp-library-preview rp-library-preview-aside" v-else-if="item.preview && !isPreviewBroken(item)">
-                                            <img :src="item.preview.url" :alt="item.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(item)">
+                                    <div class="rp-library-preview rp-library-preview-aside" v-else-if="item.preview && !isPreviewBroken(item)">
+                                            <button type="button" class="rp-library-image-open" @click="openLibraryImagePreview(item)"
+                                                    :aria-label="'查看大图：' + item.name" :title="'查看大图：' + item.name">
+                                                <img :src="item.preview.url" :alt="item.name + ' 预览图'" loading="lazy" decoding="async" @error="markPreviewBroken(item)">
+                                                <span class="rp-library-image-hint"><i class="bi bi-arrows-fullscreen"></i> 查看大图</span>
+                                            </button>
                                         </div>
                                         <div class="d-flex justify-content-between align-items-start gap-2">
                                             <button v-if="item.kind !== 'template'" type="button" class="rp-library-title"
@@ -194,7 +198,6 @@
                                         <div v-else class="small text-muted mt-1 rp-clamp-2">{{ item.description || '暂无描述' }}</div>
                                         <div class="small text-muted mt-2 d-flex flex-wrap gap-2">
                                             <span v-if="item.category">{{ item.category }}</span>
-                                            <span v-if="librarySource === 'shared'">v{{ item.publishedRevision === null ? '-' : item.publishedRevision }}</span>
                                             <span v-if="librarySource === 'local' && item.sourceId">来源 v{{ item.sourceRevision === null ? '-' : item.sourceRevision }} · 未跟随</span>
                                         </div>
                                         <div class="d-flex gap-2 flex-wrap mt-3 pt-2 border-top border-secondary">
@@ -473,6 +476,7 @@
                                                 :placeholder="p.default"
                                                 :disabled="isParamsLocked"
                                                 :insert-options="promptInsertOptions"
+                                                :auto-space-after-autocomplete="settings.autoSpaceAfterAutocomplete !== false"
                                                 :field-name="p.name"
                                                 @focus="onPromptFieldFocus(p.name)"
                                             ></prompt-textarea>
@@ -489,6 +493,7 @@
                                             :placeholder="p.default"
                                             :disabled="isParamsLocked"
                                             :insert-options="promptInsertOptions"
+                                            :auto-space-after-autocomplete="settings.autoSpaceAfterAutocomplete !== false"
                                             :field-name="p.name"
                                             @focus="onPromptFieldFocus(p.name)"
                                         ></prompt-textarea>
@@ -1476,6 +1481,13 @@
                         </h6>
 
                         <div class="mb-3 form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="autoSpaceAfterAutocomplete"
+                                   v-model="settingsForm.autoSpaceAfterAutocomplete">
+                            <label class="form-check-label text-light" for="autoSpaceAfterAutocomplete">自动补全后添加空格</label>
+                            <div class="form-text text-muted">选择提示词候选后自动添加分隔符，方便继续输入标签。</div>
+                        </div>
+
+                        <div class="mb-3 form-check form-switch">
                             <input class="form-check-input" type="checkbox" id="lockParamsOnGenerate"
                                    v-model="settingsForm.lockParamsOnGenerate"
                                    :disabled="settingsForm.allowQueue">
@@ -1939,6 +1951,22 @@
             </div>
         </div>
         <div v-if="showPromptPreview" class="modal-backdrop fade show" style="z-index: 1085;"></div>
+
+        <!-- 资源预览图片：临时全图查看 -->
+        <div v-if="showLibraryImagePreview" data-overlay="libraryImage" class="rp-library-image-modal" role="dialog" aria-modal="true"
+             :aria-label="libraryImagePreview.name" @click.self="closeLibraryImagePreview">
+            <div class="rp-library-image-dialog">
+                <div class="rp-library-image-header">
+                    <div class="text-light text-truncate">{{ libraryImagePreview.name }}</div>
+                    <button type="button" class="btn btn-light btn-sm flex-shrink-0" @click="closeLibraryImagePreview" aria-label="关闭大图预览" title="关闭">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+                <div class="rp-library-image-stage">
+                    <img :src="libraryImagePreview.url" :alt="libraryImagePreview.name + ' 全图'">
+                </div>
+            </div>
+        </div>
 
         <!-- 图片预览模态框 -->
         <div data-overlay="image" class="modal fade" :class="{ show: showImageModal }" :style="{ display: showImageModal ? 'block' : 'none', zIndex: 1055 }">
