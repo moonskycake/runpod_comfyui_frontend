@@ -26,6 +26,7 @@ function load() {
   ctx.$refs = {};
   ctx._testDocument = sandbox.document;
   ctx._testStorage = sandbox.localStorage;
+  ctx._testSettings = sandbox.Settings;
   return { ctx, options, components };
 }
 function generationFixture(ctx, history = []) {
@@ -320,6 +321,19 @@ test('收藏重排及历史预览不受图库保留图污染', () => {
   ctx.previewPrev();
   assert.strictEqual(ctx.previewImage.id, 'img-1');
   assert.strictEqual(ctx.previewRetainedImage, null);
+});
+test('提示词设置里的自动补空格开关即时保存且刷新后生效', () => {
+  const { ctx } = load();
+  let saved;
+  ctx._testSettings.save = config => { saved = config; };
+  ctx._testSettings.get = () => saved;
+  ctx.settings = { autoSpaceAfterAutocomplete: false };
+  ctx.settingsForm = { autoSpaceAfterAutocomplete: false };
+  ctx.settings.autoSpaceAfterAutocomplete = true;
+  ctx.saveAutocompleteSpacingSetting();
+  assert.strictEqual(saved.autoSpaceAfterAutocomplete, true);
+  assert.strictEqual(ctx.settings.autoSpaceAfterAutocomplete, true);
+  assert.strictEqual(ctx.settingsForm.autoSpaceAfterAutocomplete, true);
 });
 test('资源库图片预览不写入资源，点击背景或关闭即可退出', () => {
   const { ctx } = load();

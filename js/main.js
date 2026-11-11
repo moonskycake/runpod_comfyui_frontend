@@ -2897,6 +2897,13 @@ const app = Vue.createApp({
             }
         },
 
+        saveAutocompleteSpacingSetting() {
+            const value = this.settings.autoSpaceAfterAutocomplete !== false;
+            Settings.save({ ...this.settings, autoSpaceAfterAutocomplete: value });
+            this.settings = Settings.get();
+            this.settingsForm = { ...this.settingsForm, autoSpaceAfterAutocomplete: value };
+        },
+
         // ========== 提示词预设 ==========
         loadPromptInsertOptions() {
             const raw = localStorage.getItem('runpod_prompt_insert_options_v1');

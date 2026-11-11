@@ -1705,11 +1705,6 @@ input[type="range"].rp-range::-moz-range-thumb {
     object-fit: contain;
     background: #111;
 }
-.rp-library-preview-aside {
-    width: min(100%, 18rem);
-    aspect-ratio: 4 / 3;
-    align-self: flex-start;
-}
 .rp-library-image-open {
     position: relative;
     display: block;
@@ -1919,9 +1914,11 @@ input[type="range"].rp-range::-moz-range-thumb {
     min-height: 8rem;
 }
 .rp-library-preview-aside {
-    aspect-ratio: 21 / 6;
-    max-height: 84px;
-    margin-bottom: 0.4rem;
+    width: min(100%, 18rem);
+    aspect-ratio: 4 / 3;
+    max-height: none;
+    align-self: flex-start;
+    margin-bottom: 0.55rem;
 }
 .rp-library-preview-info {
     flex-direction: column;
