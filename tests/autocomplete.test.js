@@ -277,15 +277,84 @@ async function runComponentCases() {
     checkEq(inst.el.selectionStart, inst.el.value.length, 'Tab 选中后光标在末尾');
   }
 
-  // ---- 空格开关关闭时不自动补分隔符 ----
+  // ---- 空格开关关闭：仍补逗号，只是不在逗号后加空格 ----
   {
+    // 行尾（值末尾）
     const env = buildEnv();
     await env.window.TagIndex.ensureLoaded();
     const inst = makeInstance(env);
     inst.autoSpaceAfterAutocomplete = false;
     await typeValue(inst, '@wl');
     inst.applySelection(inst.menuItems[0]);
-    checkEq(inst.el.value, 'wlop', '关闭自动补空格时只替换候选，不添加逗号或空格');
+    checkEq(inst.el.value, 'wlop,', '关闭开关：值末尾仍补逗号，不加空格');
+    checkEq(inst.el.selectionStart, 5, '关闭开关：值末尾光标停在逗号之后');
+  }
+  {
+    // 句中：token 后是换行（无逗号）
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    inst.autoSpaceAfterAutocomplete = false;
+    await typeValue(inst, '@wl\n8k', 3);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, 'wlop,\n8k', '关闭开关：换行前补逗号且不加空格，保留换行与后续行');
+    checkEq(inst.el.selectionStart, 5, '关闭开关：换行前选中后光标停在逗号之后');
+  }
+  {
+    // 行尾 token + CRLF
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    inst.autoSpaceAfterAutocomplete = false;
+    await typeValue(inst, '1girl, @wl\r\n8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop,\r\n8k', '关闭开关：CRLF 行尾补逗号且不破坏 \\r\\n');
+    checkEq(inst.el.selectionStart, 12, '关闭开关：CRLF 行尾光标停在逗号之后');
+  }
+  {
+    // 句中已有逗号（无空格）：不重复加逗号，也不强行加空格
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    inst.autoSpaceAfterAutocomplete = false;
+    await typeValue(inst, '1girl, @wl,8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop,8k', '关闭开关：句中已有逗号时不重复加逗号也不加空格');
+    checkEq(inst.el.selectionStart, 11, '关闭开关：句中已有逗号时光标停在逗号之前');
+  }
+  {
+    // 句中已有逗号 + 多个空格：不删除用户已有空白
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    inst.autoSpaceAfterAutocomplete = false;
+    await typeValue(inst, '1girl, @wl,   8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop,   8k', '关闭开关：不删除逗号后用户已有空白');
+    checkEq(inst.el.selectionStart, 11, '关闭开关：保留空白时光标停在逗号之前');
+  }
+  {
+    // 已有逗号 + 换行：保留逗号与换行
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    inst.autoSpaceAfterAutocomplete = false;
+    await typeValue(inst, '1girl, @wl,\n8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop,\n8k', '关闭开关：换行前已有逗号时保留逗号，不加空格');
+    checkEq(inst.el.selectionStart, 11, '关闭开关：换行前已有逗号时光标停在逗号之前');
+  }
+  {
+    // Tab 选择同样补逗号
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    inst.autoSpaceAfterAutocomplete = false;
+    await typeValue(inst, '1girl, @wl');
+    let prevented = false;
+    inst.onKeydown({ key: 'Tab', preventDefault() { prevented = true; } });
+    checkTrue(prevented, '关闭开关：Tab 仍拦截默认行为并选中候选');
+    checkEq(inst.el.value, '1girl, wlop,', '关闭开关：Tab 选中末位候选同样补逗号，不加空格');
   }
 
   // ---- 已有逗号不重复 ----
@@ -402,6 +471,18 @@ async function runComponentCases() {
     await typeValue(inst, '1girl, @wl\r\n8k', 10);
     inst.applySelection(inst.menuItems[0]);
     checkEq(inst.el.value, '1girl, wlop, \r\n8k', 'CRLF 行尾补逗号空格且不破坏 \\r\\n');
+  }
+
+  // ---- 开关开启：句中缺逗号（仅空格分词场景）仍补 ", " ----
+  {
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    inst.autoSpaceAfterAutocomplete = true;
+    await typeValue(inst, '1girl, @wl,8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop, 8k', '开启开关：句中缺空格时统一为逗号加一个空格');
+    checkEq(inst.el.selectionStart, 13, '开启开关：句中补空格后光标落在下一个词之前');
   }
 
   // ---- keepAtPrefix / keepUnderscore / escapeParentheses ----

@@ -836,31 +836,29 @@ const PromptTextareaComponent = {
                 tokenEnd -= 1;
             }
 
+            // 分隔符：逗号始终补；开关只控制逗号后的空格（开=", "，关=","）。
+            const autoSpace = this.autoSpaceAfterAutocomplete !== false;
+            const separator = autoSpace ? ', ' : ',';
+
             const after = value.slice(tokenEnd);
-            if (this.autoSpaceAfterAutocomplete && after[0] === ',') {
-                const afterComma = after.slice(1);
-                const existingSpace = afterComma.match(/^[ \t]*/)[0];
-                if (/^\r?\n/.test(afterComma)) {
-                    replacement += ', ';
-                    tokenEnd += 1;
-                } else {
-                    // 统一已有分隔符：保留逗号，只保留一个空格，并把光标放到空格后。
+            if (after[0] === ',') {
+                // 已有逗号：绝不重复添加。开时规范化为", "，关时原样保留用户已有空白与光标。
+                if (autoSpace) {
+                    const existingSpace = after.slice(1).match(/^[ \t]*/)[0];
                     replacement += ', ';
                     tokenEnd += 1 + existingSpace.length;
                 }
-            } else if (this.autoSpaceAfterAutocomplete && /^\r?\n/.test(after)) {
+            } else if (/^\r?\n/.test(after)) {
                 const prefix = (value.slice(0, token.start) + replacement).trimEnd();
-                if (prefix && !prefix.endsWith(',')) replacement += ', ';
-            } else if (this.autoSpaceAfterAutocomplete && !after) {
+                if (prefix && !prefix.endsWith(',')) replacement += separator;
+            } else if (!after) {
                 const trimmed = (value.slice(0, token.start) + replacement).trimEnd();
-                if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) replacement += ', ';
-            } else if (this.autoSpaceAfterAutocomplete && /^[ \t]+/.test(after)) {
+                if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) replacement += separator;
+            } else if (/^[ \t]+/.test(after)) {
                 const existingSpace = after.match(/^[ \t]*/)[0];
-                const afterSpace = after.slice(existingSpace.length);
-                if (!/^\r?\n/.test(afterSpace)) {
-                    replacement += ', ';
-                    tokenEnd += existingSpace.length;
-                }
+                // 没有逗号但后面跟着空白：仍需补逗号；开时把空白归一为一个空格（光标落到空格后）。
+                replacement += separator;
+                if (autoSpace) tokenEnd += existingSpace.length;
             }
 
             this.replaceRange(el, token.start, tokenEnd, replacement);
