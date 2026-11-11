@@ -841,7 +841,7 @@ const PromptTextareaComponent = {
                 const afterComma = after.slice(1);
                 const existingSpace = afterComma.match(/^[ \t]*/)[0];
                 if (/^\r?\n/.test(afterComma)) {
-                    replacement += ',';
+                    replacement += ', ';
                     tokenEnd += 1;
                 } else {
                     // 统一已有分隔符：保留逗号，只保留一个空格，并把光标放到空格后。
@@ -850,7 +850,7 @@ const PromptTextareaComponent = {
                 }
             } else if (this.autoSpaceAfterAutocomplete && /^\r?\n/.test(after)) {
                 const prefix = (value.slice(0, token.start) + replacement).trimEnd();
-                if (prefix && !prefix.endsWith(',')) replacement += ',';
+                if (prefix && !prefix.endsWith(',')) replacement += ', ';
             } else if (this.autoSpaceAfterAutocomplete && !after) {
                 const trimmed = (value.slice(0, token.start) + replacement).trimEnd();
                 if (trimmed && !trimmed.endsWith(',') && !trimmed.endsWith('\n')) replacement += ', ';
@@ -5374,15 +5374,18 @@ const app = Vue.createApp({
         },
 
         async finalizeHistoryEntry(entryId, data) {
+            // 取消是终态：迟到的结果不得复活已取消记录。
+            const current = (this.requestHistory || []).find(r => r && r.id === entryId);
+            if (current && current.status === 'CANCELLED') return;
+
             const images = this.extractImagesFromRunpodData(data);
 
             if (images.length === 0) {
                 const msg = '未在返回结果中找到图片';
-                this.errorMessage = msg;
-                this.updateHistoryEntry(entryId, {
-                    status: 'FAILED',
-                    errorMessage: msg,
-                    executionTime: data && data.executionTime !== undefined ? data.executionTime : null
+                this.recordTaskError(entryId, msg, {
+                    extra: {
+                        executionTime: data && data.executionTime !== undefined ? data.executionTime : null
+                    }
                 });
                 return;
             }
@@ -5419,6 +5422,44 @@ const app = Vue.createApp({
 
             // 完成后立即持久化（含裁剪）
             await this.persistHistoryNow();
+        },
+
+        // 取消可能在网络请求飞行期间发生：以任务标记或记录状态为准确认终态。
+        isTaskCancelled(task, historyId) {
+            if (task && task.cancelRequested) return true;
+            const id = historyId || (task && task.historyId ? task.historyId : '');
+            if (!id) return false;
+            const record = (this.requestHistory || []).find(r => r && r.id === id);
+            return !!(record && record.status === 'CANCELLED');
+        },
+
+        isFocusedHistoryId(historyId) {
+            if (!historyId) return false;
+            const selected = this.selectedHistoryRecord;
+            return !!(selected && selected.id === historyId);
+        },
+
+        /**
+         * 记录任务级错误：始终写入对应 historyId 的记录；顶部错误区只展示
+         * 当前查看任务的错误，后台任务失败改用临时通知，避免并发互相覆盖。
+         */
+        recordTaskError(historyId, message, options = {}) {
+            const msg = String(message || '').trim() || '生成失败';
+            const patch = {
+                status: options.status || 'FAILED',
+                errorMessage: msg
+            };
+            if (options.extra && typeof options.extra === 'object') {
+                Object.assign(patch, options.extra);
+            }
+            this.updateHistoryEntry(historyId, patch);
+
+            if (this.isFocusedHistoryId(historyId)) {
+                this.errorMessage = msg;
+            } else {
+                this.showUiToast(msg, 'danger', 2600);
+            }
+            return msg;
         },
 
         // ========== 生成（并发 / 排队） ==========
@@ -5738,7 +5779,7 @@ const app = Vue.createApp({
                     this.updateHistoryEntry(historyId, { status: 'IN_PROGRESS' });
                     const result = await RunpodClient.runSync(payload, 300000, clientCfg);
 
-                    if (task.cancelRequested) {
+                    if (this.isTaskCancelled(task, historyId)) {
                         this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
                         return;
                     }
@@ -5746,16 +5787,18 @@ const app = Vue.createApp({
                     if (result.success) {
                         await this.finalizeHistoryEntry(historyId, result.data);
                     } else {
-                        this.errorMessage = result.message;
-                        this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: result.message });
+                        this.recordTaskError(historyId, result.message);
                     }
                     return;
                 }
 
                 const runResult = await RunpodClient.run(payload, clientCfg);
                 if (!runResult.success) {
-                    this.errorMessage = runResult.message;
-                    this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: runResult.message });
+                    if (this.isTaskCancelled(task, historyId)) {
+                        this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+                        return;
+                    }
+                    this.recordTaskError(historyId, runResult.message);
                     return;
                 }
 
@@ -5763,7 +5806,7 @@ const app = Vue.createApp({
                 const initStatus = runResult.data && runResult.data.status ? String(runResult.data.status) : 'IN_QUEUE';
                 task.jobId = jobId;
 
-                if (task.cancelRequested) {
+                if (this.isTaskCancelled(task, historyId)) {
                     if (jobId) {
                         try {
                             await RunpodClient.cancel(jobId, clientCfg);
@@ -5778,8 +5821,7 @@ const app = Vue.createApp({
                 this.updateHistoryEntry(historyId, { jobId, status: initStatus });
 
                 if (!jobId) {
-                    this.errorMessage = '提交任务失败：未返回 job id';
-                    this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: '提交任务失败：未返回 job id' });
+                    this.recordTaskError(historyId, '提交任务失败：未返回 job id');
                     return;
                 }
 
@@ -5792,8 +5834,7 @@ const app = Vue.createApp({
                             : initStatus === 'TIMED_OUT'
                                 ? '任务超时'
                                 : '任务已取消';
-                        this.errorMessage = message;
-                        this.updateHistoryEntry(historyId, { status: initStatus, errorMessage: message });
+                        this.recordTaskError(historyId, message, { status: initStatus });
                     }
                     return;
                 }
@@ -5801,16 +5842,14 @@ const app = Vue.createApp({
                 await this.pollExistingJob(task, historyId, jobId, clientCfg);
             } catch (err) {
                 const msg = '生成失败: ' + (err && err.message ? err.message : String(err));
-                this.errorMessage = msg;
-                this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: msg });
+                this.recordTaskError(historyId, msg);
             }
         },
 
         async pollExistingJob(task, historyId, jobId, clientCfg) {
             const id = jobId ? String(jobId) : '';
             if (!id) {
-                this.errorMessage = '轮询失败：缺少 job id';
-                this.updateHistoryEntry(historyId, { status: 'FAILED', errorMessage: '轮询失败：缺少 job id' });
+                this.recordTaskError(historyId, '轮询失败：缺少 job id');
                 return;
             }
 
@@ -5818,14 +5857,20 @@ const app = Vue.createApp({
                 initialDelayMs: task.pollOnly ? 0 : task.initialPollDelayMs,
                 intervalMs: task.pollIntervalMs,
                 onStatus: (data) => {
-                    if (task.cancelRequested) return;
+                    if (this.isTaskCancelled(task, historyId)) return;
                     this.updateHistoryEntry(historyId, {
                         status: data.status,
                         delayTime: data.delayTime !== undefined ? data.delayTime : null
                     });
                 },
-                shouldStop: () => task.cancelRequested
+                shouldStop: () => this.isTaskCancelled(task, historyId)
             }, clientCfg);
+
+            // 取消优先：迟到的 status/run 回包不得恢复任务或记成 FAILED。
+            if (this.isTaskCancelled(task, historyId)) {
+                this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+                return;
+            }
 
             if (pollResult.success) {
                 await this.finalizeHistoryEntry(historyId, pollResult.data);
@@ -5833,8 +5878,7 @@ const app = Vue.createApp({
                 this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
             } else {
                 const st = pollResult.status || 'FAILED';
-                this.errorMessage = pollResult.message;
-                this.updateHistoryEntry(historyId, { status: st, errorMessage: pollResult.message });
+                this.recordTaskError(historyId, pollResult.message, { status: st });
             }
         },
 

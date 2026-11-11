@@ -8,7 +8,14 @@ const RunpodClient = {
   config: {
     endpointId: '',
     apiKey: '',
-    baseUrl: 'https://api.runpod.ai/v2'
+    baseUrl: 'https://api.runpod.ai/v2',
+    // 短请求（提交/状态/取消/健康检查）使用较短超时，避免界面无限等待。
+    // runSync 属于长任务语义，超时按 wait + runSyncTimeoutExtraMs 计算。
+    healthTimeoutMs: 15000,
+    runTimeoutMs: 60000,
+    statusTimeoutMs: 20000,
+    cancelTimeoutMs: 15000,
+    runSyncTimeoutExtraMs: 30000
   },
 
   /**
@@ -44,12 +51,38 @@ const RunpodClient = {
   },
 
   /**
+   * 读取超时配置（可按实例覆盖）
+   * @param {string} key - 配置键
+   * @param {number} fallback - 兜底毫秒数
+   * @param {Object} cfg - 可选的单请求配置
+   * @returns {number} 生效超时
+   */
+  getTimeoutMs(key, fallback, cfg) {
+    const source = cfg || this.config;
+    const raw = source ? source[key] : undefined;
+    const n = Math.trunc(Number(raw));
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  },
+
+  /**
+   * 是否为网络超时（非 HTTP 响应错误）
+   * @param {Error} error - 错误对象
+   * @returns {boolean}
+   */
+  isTimeoutError(error) {
+    if (!error || error.response) return false;
+    const code = String(error.code || '');
+    if (code === 'ECONNABORTED' || code === 'ETIMEDOUT') return true;
+    return /timeout/i.test(String(error.message || ''));
+  },
+
+  /**
    * 格式化错误
    * @param {Error} error - 错误对象
    * @returns {Object} 格式化后的错误信息
    */
   formatError(error) {
-    if (error.response) {
+    if (error && error.response) {
       const status = error.response.status;
       const data = error.response.data;
       
@@ -75,15 +108,33 @@ const RunpodClient = {
         success: false,
         message,
         status,
-        data
+        data,
+        timeout: false
       };
     }
-    
+
+    if (this.isTimeoutError(error)) {
+      const rawTimeout = error && error.config ? Number(error.config.timeout) : 0;
+      const seconds = Number.isFinite(rawTimeout) && rawTimeout > 0
+        ? Math.round(rawTimeout / 1000)
+        : 0;
+      return {
+        success: false,
+        message: seconds
+          ? `请求超时（${seconds} 秒内未响应）：请检查网络后重试；长任务可在历史记录中点击状态恢复查询`
+          : '请求超时：请检查网络后重试；长任务可在历史记录中点击状态恢复查询',
+        status: null,
+        data: null,
+        timeout: true
+      };
+    }
+
     return {
       success: false,
-      message: error.message || '网络请求失败',
+      message: (error && error.message) || '网络请求失败',
       status: null,
-      data: null
+      data: null,
+      timeout: false
     };
   },
 
@@ -95,7 +146,10 @@ const RunpodClient = {
     try {
       const response = await axios.get(
         this.buildUrl('/health', cfg),
-        { headers: this.getHeaders(cfg) }
+        {
+          headers: this.getHeaders(cfg),
+          timeout: this.getTimeoutMs('healthTimeoutMs', 15000, cfg)
+        }
       );
       
       return {
@@ -117,7 +171,10 @@ const RunpodClient = {
       const response = await axios.post(
         this.buildUrl('/run', cfg),
         payload,
-        { headers: this.getHeaders(cfg) }
+        {
+          headers: this.getHeaders(cfg),
+          timeout: this.getTimeoutMs('runTimeoutMs', 60000, cfg)
+        }
       );
       
       return {
@@ -136,11 +193,18 @@ const RunpodClient = {
    * @returns {Promise<Object>} 完整结果
    */
   async runSync(payload, waitMs = 90000, cfg) {
+    const wait = Math.trunc(Number(waitMs));
+    const effectiveWaitMs = Number.isFinite(wait) && wait >= 0 ? wait : 90000;
+    // 长任务：等待时间 + 缓冲，不因短超时误杀仍在执行的同步请求
+    const timeoutMs = effectiveWaitMs + this.getTimeoutMs('runSyncTimeoutExtraMs', 30000, cfg);
     try {
       const response = await axios.post(
         `${this.buildUrl('/runsync', cfg)}?wait=${waitMs}`,
         payload,
-        { headers: this.getHeaders(cfg) }
+        {
+          headers: this.getHeaders(cfg),
+          timeout: timeoutMs
+        }
       );
       
       return {
@@ -161,7 +225,10 @@ const RunpodClient = {
     try {
       const response = await axios.get(
         this.buildUrl(`/status/${jobId}`, cfg),
-        { headers: this.getHeaders(cfg) }
+        {
+          headers: this.getHeaders(cfg),
+          timeout: this.getTimeoutMs('statusTimeoutMs', 20000, cfg)
+        }
       );
       
       return {
@@ -183,7 +250,10 @@ const RunpodClient = {
       const response = await axios.post(
         this.buildUrl(`/cancel/${jobId}`, cfg),
         {},
-        { headers: this.getHeaders(cfg) }
+        {
+          headers: this.getHeaders(cfg),
+          timeout: this.getTimeoutMs('cancelTimeoutMs', 15000, cfg)
+        }
       );
       
       return {
@@ -252,7 +322,18 @@ const RunpodClient = {
       }
 
       const result = await this.status(jobId, cfg);
-      
+
+      // 取消可能发生在 status 请求飞行期间：迟到回包一律按取消处理，
+      // 不把任务恢复为 IN_QUEUE/IN_PROGRESS，也不把请求失败误记为任务失败。
+      if (shouldStop && shouldStop()) {
+        return {
+          success: false,
+          cancelled: true,
+          message: '用户取消',
+          data: lastStatus
+        };
+      }
+
       if (!result.success) {
         return result;
       }

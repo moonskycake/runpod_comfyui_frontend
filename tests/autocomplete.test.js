@@ -363,7 +363,7 @@ async function runComponentCases() {
     const inst = makeInstance(env);
     await typeValue(inst, '@wl\n8k', 3);
     inst.applySelection(inst.menuItems[0]);
-    checkEq(inst.el.value, 'wlop,\n8k', 'token 后是换行时补逗号，保留换行与后续行');
+    checkEq(inst.el.value, 'wlop, \n8k', 'token 后是换行时补逗号空格，保留换行与后续行');
   }
   {
     // 复现：光标停在行末 token 末（换行符之前）
@@ -373,8 +373,8 @@ async function runComponentCases() {
     await typeValue(inst, '1girl, @wl\n', 10);
     checkEq(inst.menuItems[0] && inst.menuItems[0].tag, 'wlop', '换行前 token 末光标仍能选到 wlop');
     inst.applySelection(inst.menuItems[0]);
-    checkEq(inst.el.value, '1girl, wlop,\n', '换行前选画师补逗号（不在换行前加空格）');
-    checkEq(inst.el.selectionStart, 12, '换行前选中后光标停在插入内容之后');
+    checkEq(inst.el.value, '1girl, wlop, \n', '换行前选画师补逗号空格并保留换行');
+    checkEq(inst.el.selectionStart, 13, '换行前选中后光标停在空格之后');
   }
   {
     // 后续多行内容全部保留
@@ -383,7 +383,7 @@ async function runComponentCases() {
     const inst = makeInstance(env);
     await typeValue(inst, '1girl, @wl\n8k, long_hair\n', 10);
     inst.applySelection(inst.menuItems[0]);
-    checkEq(inst.el.value, '1girl, wlop,\n8k, long_hair\n', '换行前补逗号并保留后续行内容');
+    checkEq(inst.el.value, '1girl, wlop, \n8k, long_hair\n', '换行前补逗号空格并保留后续行内容');
   }
   {
     // 已有逗号不重复加
@@ -392,7 +392,7 @@ async function runComponentCases() {
     const inst = makeInstance(env);
     await typeValue(inst, '1girl, @wl,\n8k', 10);
     inst.applySelection(inst.menuItems[0]);
-    checkEq(inst.el.value, '1girl, wlop,\n8k', '换行前已有逗号时不重复补逗号');
+    checkEq(inst.el.value, '1girl, wlop, \n8k', '换行前已有逗号时统一为逗号空格');
   }
   {
     // CRLF 不被破坏
@@ -401,7 +401,7 @@ async function runComponentCases() {
     const inst = makeInstance(env);
     await typeValue(inst, '1girl, @wl\r\n8k', 10);
     inst.applySelection(inst.menuItems[0]);
-    checkEq(inst.el.value, '1girl, wlop,\r\n8k', 'CRLF 行尾补逗号且不破坏 \\r\\n');
+    checkEq(inst.el.value, '1girl, wlop, \r\n8k', 'CRLF 行尾补逗号空格且不破坏 \\r\\n');
   }
 
   // ---- keepAtPrefix / keepUnderscore / escapeParentheses ----
