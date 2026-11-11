@@ -88,6 +88,7 @@ function buildEnv(options) {
   sandbox.document = {
     // 模拟浏览器 execCommand('insertText')：成功分支真正改值并前移光标
     execCommand: (cmd, ui, text) => {
+      if (execMode === 'lie') return true;
       if (execMode !== 'success') return false;
       const el = sandbox.__el;
       if (!el) return false;
@@ -337,6 +338,24 @@ async function runComponentCases() {
     checkEq(inst.el.value, '1girl, wlop,8k', '关闭开关时保留句中原分隔符');
   }
 
+  {
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl,8k', 10);
+    inst.onItemMouseDown(0);
+    checkEq(inst.el.value, '1girl, wlop, 8k', '真实鼠标 mousedown 句中选择补逗号空格');
+    checkEq(inst.el.selectionStart, 13, '真实鼠标句中选择后的光标位置');
+  }
+  {
+    const env = buildEnv({ execCommand: 'success' });
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl,8k', 10);
+    inst.onItemMouseDown(0);
+    checkEq(inst.el.value, '1girl, wlop, 8k', 'execCommand 成功时句中鼠标选择补逗号空格');
+  }
+
   // ---- 换行前补全：补逗号，且保留原换行与后续行 ----
   {
     const env = buildEnv();
@@ -471,6 +490,26 @@ async function runComponentCases() {
     inst.applySelection(inst.menuItems[0]);
     checkEq(inst.el.value, '1girl, wlop, ', 'execCommand 兜底分支：插入并补逗号');
     checkEq(inst.el.selectionStart, 13, 'execCommand 兜底分支：光标位置正确');
+  }
+
+  {
+    const env = buildEnv({ execCommand: 'lie' });
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '1girl, @wl,8k', 10);
+    inst.applySelection(inst.menuItems[0]);
+    checkEq(inst.el.value, '1girl, wlop, 8k', 'execCommand 虚假成功时仍走兜底插入');
+  }
+
+  {
+    const env = buildEnv();
+    await env.window.TagIndex.ensureLoaded();
+    const inst = makeInstance(env);
+    await typeValue(inst, '@wl');
+    let prevented = false;
+    inst.onKeydown({ key: 'Tab', shiftKey: true, preventDefault() { prevented = true; } });
+    checkEq(prevented, false, 'Shift+Tab 不被自动补全拦截');
+    checkEq(inst.el.value, '@wl', 'Shift+Tab 不插入候选');
   }
 
   // ---- Enter 仍是换行（回归）：不改文本、不选中 ----

@@ -198,7 +198,6 @@
                                         <div v-else class="small text-muted mt-1 rp-clamp-2">{{ item.description || '暂无描述' }}</div>
                                         <div class="small text-muted mt-2 d-flex flex-wrap gap-2">
                                             <span v-if="item.category">{{ item.category }}</span>
-                                            <span v-if="librarySource === 'local' && item.sourceId">来源 v{{ item.sourceRevision === null ? '-' : item.sourceRevision }} · 未跟随</span>
                                         </div>
                                         <div class="d-flex gap-2 flex-wrap mt-3 pt-2 border-top border-secondary">
                                             <button class="btn btn-outline-primary btn-sm" @click="useLibraryItem(item)" :disabled="libraryDetailLoadingId === item.id || (item.kind !== 'template' && isParamsLocked)">{{ libraryUseLabel }}</button>

@@ -551,7 +551,8 @@ const PromptTextareaComponent = {
             menuToken: null,
             searchSeq: 0,
             menuZhMode: false,
-            existingTagKeys: []
+            existingTagKeys: [],
+            blurTimer: null
         };
     },
     methods: {
@@ -872,7 +873,8 @@ const PromptTextareaComponent = {
             try {
                 el.focus();
                 el.setSelectionRange(start, end);
-                inserted = document.execCommand('insertText', false, text);
+                const before = el.value || '';
+                inserted = document.execCommand('insertText', false, text) && el.value !== before;
             } catch (e) {
                 inserted = false;
             }
@@ -884,6 +886,9 @@ const PromptTextareaComponent = {
                     el.setSelectionRange(start + text.length, start + text.length);
                 } catch (e) {
                     // ignore
+                }
+                if (el.dispatchEvent && typeof Event === 'function') {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
                 }
             }
 
@@ -906,6 +911,10 @@ const PromptTextareaComponent = {
         },
 
         onFocus(event) {
+            if (this.blurTimer) {
+                clearTimeout(this.blurTimer);
+                this.blurTimer = null;
+            }
             // 向上通知外层（用于自动展开负向提示词等）
             this.$emit('focus', event);
             // 懒加载 + 初始化一次搜索
@@ -914,7 +923,9 @@ const PromptTextareaComponent = {
 
         onBlur() {
             // 延迟关闭，给鼠标点击选择留时间（mousedown 先于 blur）
-            setTimeout(() => {
+            if (this.blurTimer) clearTimeout(this.blurTimer);
+            this.blurTimer = setTimeout(() => {
+                this.blurTimer = null;
                 this.closeMenu();
             }, 120);
         },
@@ -957,7 +968,7 @@ const PromptTextareaComponent = {
                 e.preventDefault();
                 this.closeMenu();
             } else if (e.key === 'Tab') {
-                if (this.menuItems.length === 0) return;
+                if (e.shiftKey || this.menuItems.length === 0) return;
                 e.preventDefault();
                 const item = this.menuItems[this.activeIndex];
                 this.applySelection(item);
@@ -1134,6 +1145,7 @@ const app = Vue.createApp({
             resultsTab: 'history', // 'history' | 'gallery'
             rightPanelTab: 'results', // 'results' | 'prompts'
             requestHistory: [],
+            _historyPersistPromise: null,
             selectedHistoryId: '',
             selectedHistoryImageIndex: 0,
             selectedGalleryIndex: 0,
@@ -1377,7 +1389,7 @@ const app = Vue.createApp({
             }
             if (this.catalogStatus === 'loading') return '同步中...';
             if (this.catalogStatus === 'error') return '统一库暂不可用';
-            return `统一库 v${this.catalogVersion || 0}`;
+            return '统一库';
         },
 
         catalogTemplateItems() {
@@ -3453,7 +3465,7 @@ const app = Vue.createApp({
                 const gotRaw = detail.publishedRevision;
                 const got = gotRaw === undefined || gotRaw === null ? null : Number(gotRaw);
                 if (expected !== null && (got === null || got !== expected)) {
-                    throw new Error(`统一库详情版本不一致（期望 v${expected}，收到 ${got === null ? '未知版本' : 'v' + got}），已忽略`);
+                    throw new Error('统一库详情已更新，请重试');
                 }
                 this.catalogDetails = { ...this.catalogDetails, [id]: detail };
                 CatalogClient.saveDetailCache(localStorage, detail);
@@ -4022,7 +4034,7 @@ const app = Vue.createApp({
             const gotRaw = detail.publishedRevision;
             const got = gotRaw === undefined || gotRaw === null ? null : Number(gotRaw);
             if (expected !== null && (got === null || got !== expected)) {
-                return fail(`统一库正文版本不一致（期望 v${expected}，收到 ${got === null ? '未知版本' : 'v' + got}），已忽略`);
+                return fail('统一库正文已更新，请重试');
             }
             this.libraryDetailCache = { ...(this.libraryDetailCache || {}), [key]: detail };
             const nextErrors = { ...(this.libraryDetailErrors || {}) };
@@ -4084,7 +4096,7 @@ const app = Vue.createApp({
             delete nextErrors[key];
             this.libraryDetailErrors = nextErrors;
             try {
-                return await this.loadLibrarySummary(item, { force: false });
+                return await this.loadLibrarySummary(item, { force: true });
             } catch (e) {
                 // 事件处理器再失败不能留下未处理的 Promise；错误已落在 libraryDetailErrors 供内联重试
                 return null;
@@ -5137,16 +5149,25 @@ const app = Vue.createApp({
 
         async persistHistoryNow() {
             if (!window.HistoryStore) return;
-            try {
-                const records = this.serializeHistoryForStore();
-                const favorites = this.serializeFavoritesForStore();
-                const pruned = await window.HistoryStore.save({ records, favorites });
-                this.applyPrunedRecordsToMemory(pruned.records);
-                this.applyPrunedFavoritesToMemory(pruned.favorites);
-                this.ensureResultsSelection();
-            } catch (e) {
-                // 忽略持久化失败
-            }
+            const save = async () => {
+                try {
+                    const records = this.serializeHistoryForStore();
+                    const favorites = this.serializeFavoritesForStore();
+                    const pruned = await window.HistoryStore.save({ records, favorites });
+                    this.applyPrunedRecordsToMemory(pruned.records);
+                    this.applyPrunedFavoritesToMemory(pruned.favorites);
+                    this.ensureResultsSelection();
+                } catch (e) {
+                    // 忽略持久化失败
+                }
+            };
+            const previous = this._historyPersistPromise || Promise.resolve();
+            const queued = previous.catch(() => {}).then(save);
+            const tracked = queued.finally(() => {
+                if (this._historyPersistPromise === tracked) this._historyPersistPromise = null;
+            });
+            this._historyPersistPromise = tracked;
+            return tracked;
         },
 
         serializeHistoryForStore() {

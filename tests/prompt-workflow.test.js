@@ -408,10 +408,10 @@ async function run() {
       publishedRevision: 2,
       data: { positive: 'wrong', negative: '' }
     });
-    await assert.rejects(() => ctx.loadLibrarySummary(item), /版本不一致/);
+    await assert.rejects(() => ctx.loadLibrarySummary(item), /正文已更新/);
     const summary = ctx.buildLibrarySummary(item);
     assert.strictEqual(summary.loaded, false, '版本不符的正文不得显示');
-    assert.ok(/版本不一致/.test(summary.error));
+    assert.ok(/正文已更新/.test(summary.error));
 
     ctx.fetchLibraryDetail = async target => detailFor(target, { positive: 'right', negative: 'n' });
     const detail = await ctx.retryLibrarySummary(item);
@@ -564,7 +564,7 @@ async function run() {
     assert.strictEqual(ctx.catalogDetails['shared:use'], undefined, '错条目不得写运行时缓存');
 
     ctx.requestCatalogDetail = async id => ({ id, kind: 'snippet', name: 'U', publishedRevision: 4, data: { text: 'stale' } });
-    await assert.rejects(() => ctx.loadCatalogDetail('shared:use', 5), /版本不一致/);
+    await assert.rejects(() => ctx.loadCatalogDetail('shared:use', 5), /详情已更新/);
     assert.strictEqual(ctx.catalogDetails['shared:use'], undefined, '旧版本不得写运行时缓存');
     assert.deepStrictEqual(requests, ['shared:use']);
   });

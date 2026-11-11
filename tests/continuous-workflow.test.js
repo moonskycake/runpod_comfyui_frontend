@@ -322,6 +322,12 @@ test('收藏重排及历史预览不受图库保留图污染', () => {
   assert.strictEqual(ctx.previewImage.id, 'img-1');
   assert.strictEqual(ctx.previewRetainedImage, null);
 });
+test('公共资源库标签不显示内部 catalogVersion', () => {
+  const { ctx } = load();
+  ctx.catalogStatus = 'ready';
+  ctx.catalogVersion = 42;
+  assert.strictEqual(ctx.catalogSourceLabel, '统一库');
+});
 test('提示词设置里的自动补空格开关即时保存且刷新后生效', () => {
   const { ctx } = load();
   let saved;
