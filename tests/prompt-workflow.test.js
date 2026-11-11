@@ -690,6 +690,40 @@ async function run() {
     assert.ok(/502/.test(ctx.buildLibrarySummary(item).error));
   });
 
+  await test('本地片段可编辑名称、正文与默认插入目标，并保留原 ID', async () => {
+    const { ctx } = loadApp(createStorage());
+    const snippet = { id: 'ps-local-1', name: '旧名称', text: '旧正文', target: 'positive', source: 'local', createdAt: 1 };
+    ctx.promptSnippetPresets = [snippet];
+    ctx.openEditSnippet(snippet);
+    assert.strictEqual(ctx.editingPromptSnippetId, snippet.id);
+    assert.strictEqual(ctx.newPromptSnippetName, '旧名称');
+    ctx.newPromptSnippetName = '新名称';
+    ctx.newPromptSnippetText = '新正文';
+    ctx.newPromptSnippetTarget = 'negative';
+    await ctx.saveSnippetPreset();
+    assert.deepStrictEqual(snippet, { id: 'ps-local-1', name: '新名称', text: '新正文', target: 'negative', source: 'local', createdAt: 1, updatedAt: snippet.updatedAt });
+    assert.ok(snippet.updatedAt > 1);
+    assert.strictEqual(ctx.editingPromptSnippetId, '');
+  });
+
+  await test('统一库片段不能进入本地编辑状态', () => {
+    const { ctx } = loadApp(createStorage());
+    const shared = { id: 'shared:s1', name: '统一片段', text: '只读', source: 'shared' };
+    ctx.openEditSnippet(shared);
+    assert.strictEqual(ctx.editingPromptSnippetId, '');
+    assert.strictEqual(ctx.isLocalPromptSnippet(shared), false);
+  });
+
+  await test('新建片段保存默认目标并标记为本地', async () => {
+    const { ctx } = loadApp(createStorage());
+    ctx.newPromptSnippetName = '新片段';
+    ctx.newPromptSnippetText = '正文';
+    ctx.newPromptSnippetTarget = 'negative';
+    await ctx.saveSnippetPreset();
+    assert.strictEqual(ctx.promptSnippetPresets[0].target, 'negative');
+    assert.strictEqual(ctx.promptSnippetPresets[0].source, 'local');
+  });
+
   // ===== 6. 安全与结构约束 =====
   await test('前台模板与脚本均不使用 v-html', () => {
     const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');

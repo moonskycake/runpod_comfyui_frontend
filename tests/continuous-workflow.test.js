@@ -44,7 +44,7 @@ function generationFixture(ctx, history = []) {
 }
 const cases = [];
 function test(name, fn) { cases.push([name, fn]); }
-test('查看旧图时生成不改变当前请求、图片索引或结果tab', async () => {
+test('开启生成后跳到结果时自动切换到最新任务', async () => {
   const { ctx } = load();
   generationFixture(ctx, [{ id: 'old', status: 'COMPLETED', images: [{}, {}] }]);
   ctx.selectedHistoryId = 'old';
@@ -55,12 +55,30 @@ test('查看旧图时生成不改变当前请求、图片索引或结果tab', as
   ctx.scrollToResults = () => scrolled++;
   await ctx.generate();
   assert.strictEqual(ctx.requestHistory[0].id, 'new');
+  assert.strictEqual(ctx.selectedHistoryId, 'new');
+  assert.strictEqual(ctx.selectedHistoryImageIndex, 0);
+  assert.strictEqual(ctx.resultsTab, 'history');
+  assert.strictEqual(scrolled, 1);
+});
+test('关闭生成后跳到结果时保留旧图上下文且不提示提交Toast', async () => {
+  const { ctx } = load();
+  generationFixture(ctx, [{ id: 'old', status: 'COMPLETED', images: [{}, {}] }]);
+  ctx.selectedHistoryId = 'old';
+  ctx.selectedHistoryImageIndex = 1;
+  ctx.resultsTab = 'gallery';
+  ctx.getEffectiveAutoScrollToResults = () => false;
+  let scrolled = 0;
+  ctx.scrollToResults = () => scrolled++;
+  const notices = [];
+  ctx.showUiToast = (...args) => notices.push(args);
+  await ctx.generate();
   assert.strictEqual(ctx.selectedHistoryId, 'old');
   assert.strictEqual(ctx.selectedHistoryImageIndex, 1);
   assert.strictEqual(ctx.resultsTab, 'gallery');
   assert.strictEqual(scrolled, 0);
+  assert.deepStrictEqual(notices, []);
 });
-test('大图预览打开时生成新任务不触发页面滚动', async () => {
+test('大图预览打开时生成新任务可按设置跳转结果', async () => {
   const { ctx } = load();
   generationFixture(ctx, [{ id: 'old', status: 'COMPLETED', images: [{}] }]);
   ctx.selectedHistoryId = 'old';
@@ -69,8 +87,8 @@ test('大图预览打开时生成新任务不触发页面滚动', async () => {
   let scrolled = 0;
   ctx.scrollToResults = () => scrolled++;
   await ctx.generate();
-  assert.strictEqual(scrolled, 0);
-  assert.strictEqual(ctx.selectedHistoryId, 'old');
+  assert.strictEqual(scrolled, 1);
+  assert.strictEqual(ctx.selectedHistoryId, 'new');
 });
 test('首个任务自动选中，关闭自动滚动时不切工作区', async () => {
   const { ctx } = load();

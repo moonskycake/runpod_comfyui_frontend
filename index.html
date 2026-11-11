@@ -202,6 +202,7 @@
                                             <button v-if="item.kind !== 'template'" class="btn btn-outline-light btn-sm" @click="openLibraryPromptPreview(item)" :disabled="librarySummaryFor(item).loading">全文</button>
                                             <button v-if="librarySource === 'shared'" class="btn btn-outline-light btn-sm" @click="copyLibraryItemToLocal(item)" :disabled="libraryDetailLoadingId === item.id">复制到本地</button>
                                             <template v-else>
+                                                <button v-if="item.kind === 'snippet'" class="btn btn-outline-primary btn-sm" @click="editLocalLibraryItem(item)">编辑内容</button>
                                                 <button class="btn btn-outline-secondary btn-sm" @click="openRenameLocalItem(item)">重命名</button>
                                                 <button class="btn btn-outline-danger btn-sm" @click="deleteLibraryLocalItem(item)">删除</button>
                                             </template>
@@ -1519,10 +1520,10 @@
                             <input class="form-check-input" type="checkbox" id="autoScrollToResults"
                                    v-model="settingsForm.autoScrollToResults">
                             <label class="form-check-label text-light" for="autoScrollToResults">
-                                生成后跳到结果
+                                生成后自动查看最新结果
                             </label>
                             <div class="form-text text-muted">
-                                关闭后点击“生成”不再自动滚动到结果区，保持当前视图位置。
+                                开启后生成会选中新任务并跳到结果区；关闭后继续保持当前旧图或图库上下文。
                             </div>
                         </div>
 
@@ -1745,13 +1746,16 @@
 
                         <!-- 片段库 -->
                         <div v-show="promptPresetTab === 'snippets'">
-                            <div class="text-muted small mb-2">片段会插入到指定字段的光标处；该字段没有记录光标时追加到末尾。参数锁定或模板加载中不可修改。</div>
+                            <div class="text-muted small mb-2">片段会插入到指定字段的光标处；该字段没有记录光标时追加到末尾。统一库只读，本地片段副本可编辑。</div>
 
                             <div class="row g-2 mb-3">
                                 <div class="col-12 rp-preset-toolbar">
                                     <button class="btn btn-primary" type="button" @click="saveSnippetPreset" :disabled="isParamsLocked">
-                                        <i class="bi bi-plus-lg"></i>
-                                        <span class="ms-1">保存片段</span>
+                                        <i class="bi" :class="editingPromptSnippetId ? 'bi-check-lg' : 'bi-plus-lg'"></i>
+                                        <span class="ms-1">{{ editingPromptSnippetId ? '保存修改' : '保存片段' }}</span>
+                                    </button>
+                                    <button v-if="editingPromptSnippetId" class="btn btn-outline-secondary" type="button" @click="cancelEditSnippet">
+                                        <i class="bi bi-x-lg"></i> 取消编辑
                                     </button>
 
                                     <button class="btn btn-outline-light" type="button" @click="fillSnippetFromCurrent('prompt')" :disabled="!placeholderValues.prompt"
@@ -1772,6 +1776,12 @@
                                 <div class="col-md-4">
                                     <input type="text" class="form-control bg-dark text-light border-secondary"
                                            v-model="newPromptSnippetName" placeholder="片段名称">
+                                </div>
+                                <div class="col-md-4">
+                                    <select class="form-select bg-dark text-light border-secondary" v-model="newPromptSnippetTarget" aria-label="片段默认插入目标">
+                                        <option value="positive">默认插入正向</option>
+                                        <option value="negative">默认插入负向</option>
+                                    </select>
                                 </div>
                                 <div class="col-md-8">
                                     <textarea class="form-control bg-dark text-light border-secondary" rows="3"
@@ -1813,6 +1823,10 @@
                                             <button class="btn btn-outline-light btn-sm" type="button" @click="copySnippet(s.text)" title="复制到剪贴板">
                                                 <i class="bi bi-clipboard"></i>
                                                 <span class="d-none d-sm-inline ms-1">复制</span>
+                                            </button>
+                                            <button v-if="isLocalPromptSnippet(s)" class="btn btn-outline-info btn-sm" type="button" @click="openEditSnippet(s)" title="编辑本地副本">
+                                                <i class="bi bi-pencil-square"></i>
+                                                <span class="d-none d-sm-inline ms-1">编辑</span>
                                             </button>
                                             <button class="btn btn-outline-secondary btn-sm" type="button" @click="deleteSnippetPreset(s)" title="删除此片段">
                                                 <i class="bi bi-trash"></i>

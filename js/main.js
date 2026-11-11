@@ -1051,6 +1051,8 @@ const app = Vue.createApp({
             appliedBlockPresetId: '',
             newPromptSnippetName: '',
             newPromptSnippetText: '',
+            newPromptSnippetTarget: 'positive',
+            editingPromptSnippetId: '',
             promptSnippetPresets: [],
 
             // ========== 片段/预设全文预览（纯文本，可键盘操作） ==========
@@ -3108,9 +3110,43 @@ const app = Vue.createApp({
             this.setPromptPresetMessage(label, 'success');
         },
 
+        resetSnippetEditor() {
+            this.newPromptSnippetName = '';
+            this.newPromptSnippetText = '';
+            this.newPromptSnippetTarget = 'positive';
+            this.editingPromptSnippetId = '';
+        },
+
+        isLocalPromptSnippet(s) {
+            return !!(s && s.id && CatalogClient.sourceOf(s) === 'local');
+        },
+
+        openEditSnippet(s) {
+            if (!this.isLocalPromptSnippet(s)) return;
+            this.editingPromptSnippetId = s.id;
+            this.newPromptSnippetName = String(s.name || '');
+            this.newPromptSnippetText = String(s.text || '');
+            this.newPromptSnippetTarget = s.target === 'negative' ? 'negative' : 'positive';
+            this.setPromptPresetMessage('正在编辑本地片段；统一库原件不会被修改', 'info');
+        },
+
+        editLocalLibraryItem(item) {
+            if (!item || item.kind !== 'snippet' || CatalogClient.sourceOf(item) !== 'local') return;
+            this.mainView = 'generate';
+            this.openPromptPresets();
+            this.promptPresetTab = 'snippets';
+            this.openEditSnippet((this.promptSnippetPresets || []).find(s => s && s.id === item.id));
+        },
+
+        cancelEditSnippet() {
+            this.resetSnippetEditor();
+            this.setPromptPresetMessage('已取消编辑', '');
+        },
+
         async saveSnippetPreset() {
             const name = (this.newPromptSnippetName || '').trim();
             const text = String(this.newPromptSnippetText || '').trim();
+            const target = this.newPromptSnippetTarget === 'negative' ? 'negative' : 'positive';
             if (!name) {
                 this.setPromptPresetMessage('请输入片段名称', 'warning');
                 return;
@@ -3120,8 +3156,30 @@ const app = Vue.createApp({
                 return;
             }
 
-            const existing = (this.promptSnippetPresets || []).find(s => s && s.name === name);
             const now = Date.now();
+            if (this.editingPromptSnippetId) {
+                const editing = (this.promptSnippetPresets || []).find(s => s && s.id === this.editingPromptSnippetId);
+                if (!editing || CatalogClient.sourceOf(editing) !== 'local') {
+                    this.resetSnippetEditor();
+                    this.setPromptPresetMessage('只能编辑本地片段副本', 'warning');
+                    return;
+                }
+                const duplicate = (this.promptSnippetPresets || []).find(s => s && s.id !== editing.id && s.name === name);
+                if (duplicate) {
+                    this.setPromptPresetMessage('已有同名本地片段，请换一个名称', 'warning');
+                    return;
+                }
+                editing.name = name;
+                editing.text = text;
+                editing.target = target;
+                editing.updatedAt = now;
+                this.persistPromptPresets();
+                this.resetSnippetEditor();
+                this.setPromptPresetMessage('已保存本地片段修改', 'success');
+                return;
+            }
+
+            const existing = (this.promptSnippetPresets || []).find(s => s && s.name === name);
             if (existing) {
                 const shouldOverwrite = await this.askConfirm('已存在同名片段，是否覆盖更新？', {
                     title: '覆盖确认',
@@ -3129,10 +3187,10 @@ const app = Vue.createApp({
                 });
                 if (!shouldOverwrite) return;
                 existing.text = text;
+                existing.target = target;
                 existing.updatedAt = now;
                 this.persistPromptPresets();
-                this.newPromptSnippetName = '';
-                this.newPromptSnippetText = '';
+                this.resetSnippetEditor();
                 this.setPromptPresetMessage('已更新片段', 'success');
                 return;
             }
@@ -3141,13 +3199,14 @@ const app = Vue.createApp({
                 id: generateLocalId('ps'),
                 name,
                 text,
+                target,
+                source: 'local',
                 createdAt: now,
                 updatedAt: now
             };
             this.promptSnippetPresets = [s, ...(this.promptSnippetPresets || [])].slice(0, 120);
             this.persistPromptPresets();
-            this.newPromptSnippetName = '';
-            this.newPromptSnippetText = '';
+            this.resetSnippetEditor();
             this.setPromptPresetMessage('已保存片段', 'success');
         },
 
@@ -5749,8 +5808,6 @@ const app = Vue.createApp({
                 this.selectedHistoryImageIndex = 0;
                 this.selectedGalleryIndex = 0;
                 this.resultsTab = 'history';
-            } else {
-                this.showUiToast('新任务已提交，当前查看保持不变；可用结果区的“查看最新”切换', 'info', 2600);
             }
             this.queuePersistHistory();
 
@@ -5773,11 +5830,20 @@ const app = Vue.createApp({
                 this.updateHistoryEntry(historyEntry.id, { status: 'IN_QUEUE' });
             }
 
+            // 开启后即使正在查看旧图，也切换到刚提交的最新任务。
+            if (this.getEffectiveAutoScrollToResults()) {
+                this.mainView = 'generate';
+                this.selectedHistoryId = historyEntry.id;
+                this.selectedHistoryImageIndex = 0;
+                this.selectedGalleryIndex = 0;
+                this.resultsTab = 'history';
+            }
+
             // 若此时并发有空位，立即尝试启动队列
             this.pumpQueue();
 
             // 生成后滚动到结果区（可在设置 → 生成行为中关闭）；看旧图时不打断
-            if (!keepView && this.getEffectiveAutoScrollToResults()) {
+            if (this.getEffectiveAutoScrollToResults()) {
                 this.$nextTick(() => this.scrollToResults());
             }
         },
