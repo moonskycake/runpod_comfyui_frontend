@@ -328,6 +328,30 @@ test('公共资源库标签不显示内部 catalogVersion', () => {
   ctx.catalogVersion = 42;
   assert.strictEqual(ctx.catalogSourceLabel, '统一库');
 });
+test('点击正向提示词不改变负向提示词折叠状态', () => {
+  const { ctx } = load();
+  ctx.negativePromptExpanded = false;
+  ctx.onPromptFieldFocus('prompt');
+  assert.strictEqual(ctx.negativePromptExpanded, false);
+  ctx.onPromptFieldFocus('negative_prompt');
+  assert.strictEqual(ctx.negativePromptExpanded, true);
+});
+test('聚焦字段时只有负向提示词展开负向摘要区', () => {
+  const { ctx } = load();
+  const focused = [];
+  // 沙箱 document 默认 querySelector 返回 null，这里补最小 textarea stub 以便走到 focus 分支。
+  ctx._testDocument.querySelector = () => ({
+    focus() { focused.push('focus'); },
+    setSelectionRange() {}
+  });
+  ctx.mainView = 'generate';
+  ctx.negativePromptExpanded = false;
+  ctx.focusPromptField('prompt');
+  assert.strictEqual(ctx.negativePromptExpanded, false);
+  ctx.focusPromptField('negative_prompt');
+  assert.strictEqual(ctx.negativePromptExpanded, true);
+  assert.deepStrictEqual(focused, ['focus', 'focus']);
+});
 test('提示词设置里的自动补空格开关即时保存且刷新后生效', () => {
   const { ctx } = load();
   let saved;

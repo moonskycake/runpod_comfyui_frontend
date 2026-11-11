@@ -3845,7 +3845,6 @@ const app = Vue.createApp({
                 this.paramSectionsOpen = { ...(this.paramSectionsOpen || {}), prompt: true };
             }
             if (target === 'negative_prompt') this.negativePromptExpanded = true;
-            else this.negativePromptExpanded = true;
             this.$nextTick(() => {
                 let el = null;
                 try {
@@ -4955,9 +4954,9 @@ const app = Vue.createApp({
             this.negativePromptExpanded = !this.negativePromptExpanded;
         },
 
-        /** 编辑正/负提示词时自动展开负向摘要区。 */
+        /** 只有进入负向字段时自动展开；点击正向字段不改变用户的折叠选择。 */
         onPromptFieldFocus(field) {
-            if (field === 'prompt' || field === 'negative_prompt') {
+            if (field === 'negative_prompt') {
                 this.negativePromptExpanded = true;
             }
         },
