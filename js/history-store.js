@@ -104,6 +104,10 @@
       delayTime: record.delayTime !== undefined ? record.delayTime : null,
       executionTime: record.executionTime !== undefined ? record.executionTime : null,
       errorMessage: record.errorMessage || '',
+      // 查询中断信息（QUERY_INTERRUPTED）：原因码 / 发生阶段 / 中断时间，刷新后仍需保留以便恢复查询
+      interruptReason: record.interruptReason || '',
+      interruptStage: record.interruptStage || '',
+      interruptedAt: record.interruptedAt !== undefined ? record.interruptedAt : null,
       deletedImages: Array.isArray(record.deletedImages) ? record.deletedImages : [],
       images
     };

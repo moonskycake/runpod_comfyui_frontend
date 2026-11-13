@@ -3,6 +3,16 @@
  * 封装 RunPod Serverless API 调用
  */
 
+// /status 允许的任务状态（其余一律视为无效响应，不继续轮询）
+const POLL_KNOWN_STATUSES = [
+  'IN_QUEUE',
+  'IN_PROGRESS',
+  'COMPLETED',
+  'FAILED',
+  'TIMED_OUT',
+  'CANCELLED'
+];
+
 const RunpodClient = {
   // 配置
   config: {
@@ -66,13 +76,15 @@ const RunpodClient = {
 
   /**
    * 是否为网络超时（非 HTTP 响应错误）
+   * axios 的 ECONNABORTED 同时表示“超时”和“请求被主动中止”，
+   * 只有文案明确 timeout（或 ETIMEDOUT）才算超时；否则归为普通网络错误。
    * @param {Error} error - 错误对象
    * @returns {boolean}
    */
   isTimeoutError(error) {
     if (!error || error.response) return false;
     const code = String(error.code || '');
-    if (code === 'ECONNABORTED' || code === 'ETIMEDOUT') return true;
+    if (code === 'ETIMEDOUT') return true;
     return /timeout/i.test(String(error.message || ''));
   },
 
@@ -109,23 +121,26 @@ const RunpodClient = {
         message,
         status,
         data,
-        timeout: false
+        timeout: false,
+        timeoutMs: 0,
+        errorKind: 'http'
       };
     }
 
     if (this.isTimeoutError(error)) {
       const rawTimeout = error && error.config ? Number(error.config.timeout) : 0;
-      const seconds = Number.isFinite(rawTimeout) && rawTimeout > 0
-        ? Math.round(rawTimeout / 1000)
-        : 0;
+      const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? Math.trunc(rawTimeout) : 0;
+      const seconds = timeoutMs > 0 ? Math.round(timeoutMs / 1000) : 0;
       return {
         success: false,
         message: seconds
-          ? `请求超时（${seconds} 秒内未响应）：请检查网络后重试；长任务可在历史记录中点击状态恢复查询`
-          : '请求超时：请检查网络后重试；长任务可在历史记录中点击状态恢复查询',
+          ? `请求超时（${seconds} 秒内未响应）：请检查网络后重试`
+          : '请求超时：请检查网络后重试',
         status: null,
         data: null,
-        timeout: true
+        timeout: true,
+        timeoutMs,
+        errorKind: 'timeout'
       };
     }
 
@@ -134,8 +149,23 @@ const RunpodClient = {
       message: (error && error.message) || '网络请求失败',
       status: null,
       data: null,
-      timeout: false
+      timeout: false,
+      timeoutMs: 0,
+      errorKind: 'network'
     };
+  },
+
+  /**
+   * 校验 /status 响应里的任务状态：只接受已知状态，缺失/未知一律视为无效响应。
+   * 不做 trim/大小写归一：调用方拿到的 status 与 data.status 必须完全一致，
+   * 否则 onStatus / 终止判定会把“带空格的状态”写进未知分组。
+   * @param {*} data - /status 响应体
+   * @returns {string} 已知状态，或空字符串表示无效
+   */
+  readPollStatus(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return '';
+    const status = typeof data.status === 'string' ? data.status : '';
+    return POLL_KNOWN_STATUSES.includes(status) ? status : '';
   },
 
   /**
@@ -338,7 +368,21 @@ const RunpodClient = {
         return result;
       }
 
-      const status = result.data.status;
+      // HTTP 200 也可能是 HTML 错误页 / 空响应 / 未知状态：校验后才写状态并继续。
+      // 否则会无限轮询并长期占用 activeJobs（还会把记录状态写成 undefined）。
+      const status = this.readPollStatus(result.data);
+      if (!status) {
+        return {
+          success: false,
+          errorKind: 'protocol',
+          message: '状态查询响应无效：HTTP 200 但未返回可识别的 status，已停止本次查询',
+          status: null,
+          data: null,
+          timeout: false,
+          timeoutMs: 0
+        };
+      }
+
       lastStatus = result.data;
 
       // 通知状态更新

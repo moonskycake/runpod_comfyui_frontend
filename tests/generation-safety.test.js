@@ -191,9 +191,10 @@ test('formatError 区分 ECONNABORTED / ETIMEDOUT 超时并给出中文可行动
   assert.strictEqual(aborted.success, false);
   assert.strictEqual(aborted.timeout, true);
   assert.strictEqual(aborted.status, null);
+  assert.strictEqual(aborted.errorKind, 'timeout', '按类型区分超时');
   assert.match(aborted.message, /超时/);
   assert.match(aborted.message, /检查网络/);
-  assert.match(aborted.message, /历史记录/, '提示长任务恢复入口');
+  assert.doesNotMatch(aborted.message, /历史记录|恢复查询/, '阶段文案由 main 负责，客户端不承诺可恢复');
 
   const timedOut = client.formatError({
     code: 'ETIMEDOUT',
@@ -210,15 +211,23 @@ test('formatError 不把普通网络错误或 HTTP 错误误判为超时', () =>
   const network = client.formatError({ message: 'Network Error' });
   assert.strictEqual(network.timeout, false);
   assert.strictEqual(network.message, 'Network Error');
+  assert.strictEqual(network.errorKind, 'network');
+
+  // 不含 network/socket 字样的无响应错误同样归类为网络类（不再靠文案正则）
+  const aborted = client.formatError({ code: 'ECONNABORTED', message: 'Request aborted', config: { timeout: 0 } });
+  assert.strictEqual(aborted.timeout, false);
+  assert.strictEqual(aborted.errorKind, 'network');
 
   const unauthorized = client.formatError({ response: { status: 401, data: { error: 'x' } } });
   assert.strictEqual(unauthorized.timeout, false);
+  assert.strictEqual(unauthorized.errorKind, 'http');
   assert.strictEqual(unauthorized.message, 'API Key 无效或已过期');
   assert.strictEqual(unauthorized.status, 401);
   assert.deepStrictEqual(unauthorized.data, { error: 'x' });
 
   const server = client.formatError({ response: { status: 500, data: {} } });
   assert.strictEqual(server.timeout, false);
+  assert.strictEqual(server.errorKind, 'http');
   assert.strictEqual(server.message, '服务器内部错误');
 });
 
@@ -263,7 +272,8 @@ test('并发任务失败时错误各归各的历史记录，不互相覆盖', as
   const runB = ctx.runTask(taskB);
   await tick();
 
-  pending.h2.resolve({ success: false, message: '任务B失败：模型加载失败' });
+  // 真实 Submit 失败来自 HTTP 业务错误：补齐真实 status，避免靠字面量分类
+  pending.h2.resolve({ success: false, status: 500, message: '任务B失败：模型加载失败' });
   await runB;
 
   const recordB = ctx.requestHistory.find(r => r.id === 'h2');
@@ -272,7 +282,7 @@ test('并发任务失败时错误各归各的历史记录，不互相覆盖', as
   assert.strictEqual(ctx.errorMessage, '', '后台任务错误不占用顶部错误区');
   assert.ok(toasts.some(t => String(t[0]).includes('任务B失败')), '后台失败仍有临时通知');
 
-  pending.h1.resolve({ success: false, message: '任务A失败：提示词非法' });
+  pending.h1.resolve({ success: false, status: 400, message: '任务A失败：提示词非法' });
   await runA;
 
   const recordA = ctx.requestHistory.find(r => r.id === 'h1');
@@ -538,7 +548,7 @@ test('回归：正常完成仍记录 COMPLETED 与图片', async () => {
 
 test('回归：普通失败仍记录 FAILED 且归属对应历史', async () => {
   const RunpodClient = {
-    run() { return Promise.resolve({ success: false, message: '请求过于频繁，请稍后重试' }); },
+    run() { return Promise.resolve({ success: false, status: 429, message: '请求过于频繁，请稍后重试' }); },
     status() { return Promise.resolve({ success: true, data: { status: 'IN_QUEUE' } }); },
     poll() { return Promise.resolve({ success: false, cancelled: true, message: '用户取消' }); },
     cancel() { return Promise.resolve({ success: true }); }

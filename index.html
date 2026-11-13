@@ -1101,6 +1101,10 @@
                                                     </div>
                                                 </div>
 
+                                                <div v-if="getManualRetryBlockedReason(selectedHistoryRecord)" class="small text-warning mt-2 mb-0">
+                                                    <i class="bi bi-info-circle"></i> 无法恢复查询：{{ getManualRetryBlockedReason(selectedHistoryRecord) }}
+                                                </div>
+
                                                 <div v-if="selectedHistoryRecord.errorMessage" class="alert alert-danger py-2 mt-3 mb-0 rp-break small">
                                                     <i class="bi bi-exclamation-triangle-fill"></i> {{ selectedHistoryRecord.errorMessage }}
                                                 </div>
@@ -1477,6 +1481,19 @@
                             <input type="number" class="form-control bg-dark text-light border-secondary"
                                    v-model.number="settingsForm.pollIntervalMs"
                                    min="1000" max="10000" step="500">
+                        </div>
+
+                        <!-- 状态查询超时 -->
+                        <div class="mb-3">
+                            <label class="form-label text-light">单次状态查询超时（秒）</label>
+                            <input type="number" class="form-control bg-dark text-light border-secondary"
+                                   v-model.number="settingsForm.statusTimeoutSeconds"
+                                   min="5" max="120" step="1"
+                                   :disabled="settingsForm.runMode !== 'run'">
+                            <div class="form-text text-muted">
+                                默认 20 秒，可设 5–120 秒。仅作用于每次 /status 状态查询：超时按“查询中断”处理（不判定为生成失败），
+                                可在历史记录中点击“恢复查询”继续轮询原 Job；提交与同步请求的超时不受影响。
+                            </div>
                         </div>
 
                         <hr class="border-secondary my-4">

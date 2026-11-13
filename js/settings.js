@@ -3,6 +3,24 @@
  * 处理 Endpoint ID 和 API Key 的存储与读取
  */
 
+// 单次 /status 查询超时：默认 20s，可设置 5s–120s（仅影响状态查询）
+const STATUS_TIMEOUT_DEFAULT_MS = 20000;
+const STATUS_TIMEOUT_MIN_MS = 5000;
+const STATUS_TIMEOUT_MAX_MS = 120000;
+
+/**
+ * 归一化状态查询超时：无效值回退默认，越界值钳制到 5s–120s。
+ * @param {*} value - 毫秒数（或来自 localStorage 的字符串）
+ * @returns {number} 生效毫秒数
+ */
+function normalizeStatusTimeoutMs(value) {
+  if (value === null || value === undefined) return STATUS_TIMEOUT_DEFAULT_MS;
+  if (typeof value === 'string' && value.trim() === '') return STATUS_TIMEOUT_DEFAULT_MS;
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n) || n <= 0) return STATUS_TIMEOUT_DEFAULT_MS;
+  return Math.min(STATUS_TIMEOUT_MAX_MS, Math.max(STATUS_TIMEOUT_MIN_MS, n));
+}
+
 function createDefaultSettingsConfig() {
   return {
     endpointId: '',
@@ -12,6 +30,7 @@ function createDefaultSettingsConfig() {
     initialPollDelayEnabled: true,
     initialPollDelayMs: 3000,
     pollIntervalMs: 2000,
+    statusTimeoutMs: STATUS_TIMEOUT_DEFAULT_MS,
 
     // ========== 生成行为 ==========
     // 生成时是否锁定参数（注意：开启排队时会强制关闭锁定）
@@ -46,6 +65,7 @@ const Settings = {
     INITIAL_POLL_DELAY_ENABLED: 'runpod_initial_poll_delay_enabled',
     INITIAL_POLL_DELAY: 'runpod_initial_poll_delay',
     POLL_INTERVAL: 'runpod_poll_interval',
+    STATUS_TIMEOUT: 'runpod_status_timeout_ms',
 
     LOCK_PARAMS_ON_GENERATE: 'runpod_lock_params_on_generate',
     ALLOW_CONCURRENT: 'runpod_allow_concurrent',
@@ -73,6 +93,7 @@ const Settings = {
       ? initialPollDelayRaw
       : this.config.initialPollDelayMs;
     const pollIntervalMs = parseInt(localStorage.getItem(this.KEYS.POLL_INTERVAL)) || 2000;
+    const statusTimeoutMs = normalizeStatusTimeoutMs(localStorage.getItem(this.KEYS.STATUS_TIMEOUT));
 
     const lockParamsOnGenerateRaw = localStorage.getItem(this.KEYS.LOCK_PARAMS_ON_GENERATE);
     const lockParamsOnGenerate = lockParamsOnGenerateRaw === null
@@ -122,6 +143,7 @@ const Settings = {
       initialPollDelayEnabled,
       initialPollDelayMs,
       pollIntervalMs,
+      statusTimeoutMs,
 
       lockParamsOnGenerate,
       allowConcurrent,
@@ -142,6 +164,8 @@ const Settings = {
    */
   save(cfg) {
     this.config = { ...this.config, ...cfg };
+    // 统一归一化，避免外部传入越界/无效值
+    this.config.statusTimeoutMs = normalizeStatusTimeoutMs(this.config.statusTimeoutMs);
 
     // 始终保存 endpointId
     localStorage.setItem(this.KEYS.ENDPOINT_ID, this.config.endpointId);
@@ -156,6 +180,7 @@ const Settings = {
       String(Number(this.config.initialPollDelayMs || 0))
     );
     localStorage.setItem(this.KEYS.POLL_INTERVAL, this.config.pollIntervalMs.toString());
+    localStorage.setItem(this.KEYS.STATUS_TIMEOUT, String(this.config.statusTimeoutMs));
 
     localStorage.setItem(this.KEYS.LOCK_PARAMS_ON_GENERATE, String(!!this.config.lockParamsOnGenerate));
     localStorage.setItem(this.KEYS.ALLOW_CONCURRENT, String(!!this.config.allowConcurrent));
@@ -189,6 +214,19 @@ const Settings = {
   createDefaultConfig() {
     return createDefaultSettingsConfig();
   },
+
+  /**
+   * 归一化状态查询超时（毫秒）：无效值回退默认，越界钳制到 5s–120s
+   * @param {*} value - 毫秒数
+   * @returns {number}
+   */
+  normalizeStatusTimeoutMs(value) {
+    return normalizeStatusTimeoutMs(value);
+  },
+
+  STATUS_TIMEOUT_MIN_MS,
+  STATUS_TIMEOUT_MAX_MS,
+  STATUS_TIMEOUT_DEFAULT_MS,
 
   /**
    * 从 URL 提取 Endpoint ID

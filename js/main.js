@@ -419,6 +419,7 @@ function getInitialSettingsState() {
         initialPollDelayEnabled: true,
         initialPollDelayMs: 3000,
         pollIntervalMs: 2000,
+        statusTimeoutMs: 20000,
 
         lockParamsOnGenerate: true,
         allowConcurrent: false,
@@ -1628,6 +1629,7 @@ const app = Vue.createApp({
             return [
                 { value: 'all', label: '全部' },
                 { value: 'running', label: '进行中' },
+                { value: 'interrupted', label: '查询中断' },
                 { value: 'completed', label: '已完成' },
                 { value: 'failed', label: '失败' },
                 { value: 'cancelled', label: '已取消' }
@@ -5184,6 +5186,9 @@ const app = Vue.createApp({
                 delayTime: r.delayTime,
                 executionTime: r.executionTime,
                 errorMessage: r.errorMessage,
+                interruptReason: r.interruptReason || '',
+                interruptStage: r.interruptStage || '',
+                interruptedAt: r.interruptedAt !== undefined ? r.interruptedAt : null,
                 deletedImages: Array.isArray(r.deletedImages) ? r.deletedImages : [],
                 images: (r.images || []).map(img => ({
                     id: img.id,
@@ -5310,6 +5315,9 @@ const app = Vue.createApp({
                 delayTime: null,
                 executionTime: null,
                 errorMessage: '',
+                interruptReason: '',
+                interruptStage: '',
+                interruptedAt: null,
                 deletedImages: [],
                 images: []
             };
@@ -5399,7 +5407,11 @@ const app = Vue.createApp({
             this.updateHistoryEntry(entryId, {
                 status: 'COMPLETED',
                 images,
-                executionTime: data && data.executionTime !== undefined ? data.executionTime : null
+                executionTime: data && data.executionTime !== undefined ? data.executionTime : null,
+                errorMessage: '',
+                interruptReason: '',
+                interruptStage: '',
+                interruptedAt: null
             });
 
             // 如果用户当前正在查看该请求，则自动切到第一张
@@ -5459,6 +5471,101 @@ const app = Vue.createApp({
             return msg;
         },
 
+        /** 读取错误结果里的 HTTP 状态（无 HTTP 响应时返回 null）。 */
+        readHttpStatus(result) {
+            const raw = result ? result.status : null;
+            if (raw === null || raw === undefined || raw === '') return null;
+            const n = Number(raw);
+            return Number.isFinite(n) ? Math.trunc(n) : null;
+        },
+
+        /** 只有远端明确终态才算“远端任务失败/结束”，查询失败不算。 */
+        isRemoteTaskFailure(result) {
+            const st = String((result && result.status) || '');
+            return st === 'FAILED' || st === 'TIMED_OUT' || st === 'CANCELLED';
+        },
+
+        getQueryInterruptReasonCode(result) {
+            const kind = result && result.errorKind ? String(result.errorKind) : '';
+            if (kind === 'protocol') return 'protocol';
+            if (kind === 'timeout' || (result && result.timeout)) return 'timeout';
+            const status = this.readHttpStatus(result);
+            if (status === null) return 'network';
+            // 用具体 HTTP 码（http_500 / http_429 / http_401…）便于排查，不合并成区间
+            return `http_${status}`;
+        },
+
+        /** 状态查询失败文案：明确“查询中断，可恢复”，不冒充远端生成失败。 */
+        buildQueryInterruptMessage(result) {
+            const kind = result && result.errorKind ? String(result.errorKind) : '';
+            const status = this.readHttpStatus(result);
+            const timeoutMs = Number(result && result.timeoutMs) || 0;
+            const seconds = timeoutMs > 0 ? Math.max(1, Math.round(timeoutMs / 1000)) : 0;
+            let cause;
+            if (kind === 'protocol') {
+                // HTTP 200 但响应无法识别：已停止轮询，但 Job 本身仍可能存在
+                cause = '状态查询返回了无法识别的响应（HTTP 200，但缺少有效的 status）';
+            } else if (kind === 'timeout' || (result && result.timeout)) {
+                cause = seconds
+                    ? `状态查询超时（${seconds} 秒内未响应）`
+                    : '状态查询超时（远端无响应）';
+            } else if (status === 429) {
+                cause = '状态查询被限流（HTTP 429）';
+            } else if (status !== null && status >= 500) {
+                cause = `RunPod 服务暂时不可用（HTTP ${status}）`;
+            } else if (status === 401) {
+                cause = '状态查询鉴权失败（HTTP 401）：API Key 无效或已过期，请先在设置中修正';
+            } else if (status === 404) {
+                cause = '状态查询失败（HTTP 404）：端点或 Job 不存在，请核对 Endpoint ID 与 Job ID';
+            } else if (status !== null) {
+                cause = `状态查询失败（HTTP ${status}）`;
+            } else {
+                cause = `状态查询网络中断（${(result && result.message) || '网络请求失败'}）`;
+            }
+            return `查询中断，可恢复：${cause}。远端任务状态未知，未判定为生成失败；可点击“恢复查询”继续查询该 Job。`;
+        },
+
+        recordQueryInterrupted(historyId, result) {
+            const msg = this.buildQueryInterruptMessage(result);
+            this.updateHistoryEntry(historyId, {
+                status: 'QUERY_INTERRUPTED',
+                errorMessage: msg,
+                interruptReason: this.getQueryInterruptReasonCode(result),
+                interruptStage: 'poll',
+                interruptedAt: Date.now()
+            });
+            if (this.isFocusedHistoryId(historyId)) {
+                this.errorMessage = msg;
+            } else {
+                this.showUiToast(msg, 'warning', 4000);
+            }
+            return msg;
+        },
+
+        /**
+         * 提交阶段失败文案：
+         * - errorKind === 'http' / 有 HTTP 状态：远端已明确拒绝，保留原业务消息；
+         * - errorKind === 'timeout'：远端可能已受理，提示核对控制台、避免重复提交；
+         * - 其余（无 HTTP 响应的网络类/未知错误）：同上提示核对控制台，且不承诺“可恢复”
+         *   （本地没有 jobId）。分类只看客户端给出的类型，不再匹配错误文案。
+         */
+        buildSubmitFailureMessage(result) {
+            const kind = result && result.errorKind ? String(result.errorKind) : '';
+            const status = this.readHttpStatus(result);
+            if (kind === 'http' || status !== null) {
+                return (result && result.message) || `提交任务失败（HTTP ${status}）`;
+            }
+            const timeoutMs = Number(result && result.timeoutMs) || 0;
+            const seconds = timeoutMs > 0 ? Math.max(1, Math.round(timeoutMs / 1000)) : 0;
+            const isTimeout = kind === 'timeout' || !!(result && result.timeout);
+            const cause = kind === 'protocol'
+                ? '提交响应无效（HTTP 200，但未返回 Job ID）'
+                : isTimeout
+                    ? (seconds ? `提交请求超时（${seconds} 秒内未响应）` : '提交请求超时（远端无响应）')
+                    : `提交请求网络中断（${(result && result.message) || '网络请求失败'}）`;
+            return `${cause}：未拿到 Job ID，无法确认远端是否已受理。请先检查网络，并到 RunPod 控制台核对任务列表后再决定是否重新提交，避免重复提交。`;
+        },
+
         // ========== 生成（并发 / 排队） ==========
         clampInt(value, min, max) {
             const n = Math.trunc(Number(value));
@@ -5488,6 +5595,18 @@ const app = Vue.createApp({
             return this.clampInt(n, 0, 60000);
         },
 
+        /**
+         * 单次 /status 查询超时（毫秒）：默认 20s，钳制到 5s–120s。
+         * 仅用于状态查询；提交 / runsync / 取消的超时不受影响。
+         */
+        getEffectiveStatusTimeoutMs() {
+            const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
+            const raw = base && base.statusTimeoutMs !== undefined ? base.statusTimeoutMs : 20000;
+            const n = Math.trunc(Number(raw));
+            if (!Number.isFinite(n) || n <= 0) return 20000;
+            return this.clampInt(n, 5000, 120000);
+        },
+
         getEffectiveRunMode() {
             const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
             return base && base.runMode === 'runsync' ? 'runsync' : 'run';
@@ -5508,7 +5627,9 @@ const app = Vue.createApp({
             return {
                 endpointId: (base && base.endpointId) || '',
                 apiKey: (base && base.apiKey) || '',
-                baseUrl: (RunpodClient && RunpodClient.config && RunpodClient.config.baseUrl) || 'https://api.runpod.ai/v2'
+                baseUrl: (RunpodClient && RunpodClient.config && RunpodClient.config.baseUrl) || 'https://api.runpod.ai/v2',
+                // 状态查询超时随快照下发；恢复查询会重新取快照，因此总是最新设置
+                statusTimeoutMs: this.getEffectiveStatusTimeoutMs()
             };
         },
 
@@ -5522,7 +5643,10 @@ const app = Vue.createApp({
         },
 
         isManualRetryableStatus(status) {
-            return status === 'IN_PROGRESS' || status === 'IN_QUEUE' || status === 'SUBMITTING';
+            return status === 'IN_PROGRESS'
+                || status === 'IN_QUEUE'
+                || status === 'SUBMITTING'
+                || status === 'QUERY_INTERRUPTED';
         },
 
         getManualRetryState(record) {
@@ -5535,17 +5659,30 @@ const app = Vue.createApp({
             }
 
             if (!this.isManualRetryableStatus(record.status)) {
-                return { ok: false, reason: '仅处理中请求支持手动重试轮询' };
+                const terminal = String(record.status || '') === 'COMPLETED'
+                    || String(record.status || '') === 'FAILED'
+                    || String(record.status || '') === 'TIMED_OUT'
+                    || String(record.status || '') === 'CANCELLED';
+                // 旧 FAILED 记录不因为“可能有 jobId”就开放恢复，只承认显式查询中断。
+                return {
+                    ok: false,
+                    reason: terminal
+                        ? '该请求已结束，无需恢复查询'
+                        : '仅处理中或查询中断的请求支持恢复查询'
+                };
             }
 
             if (!record.jobId) {
-                return { ok: false, reason: '该请求尚无 Job ID，暂时无法重试' };
+                return {
+                    ok: false,
+                    reason: '该请求没有 Job ID（提交结果未知），无法继续查询。请先到 RunPod 控制台核对任务列表，避免重复提交。'
+                };
             }
 
             const historyId = record.id;
             const active = (this.activeJobs || []).some(t => t && t.historyId === historyId);
             if (active) {
-                return { ok: false, reason: '该请求已在重试中' };
+                return { ok: false, reason: '该请求正在查询中（处理中），请等待当前查询结束' };
             }
 
             const queued = (this.jobQueue || []).some(t => t && t.historyId === historyId);
@@ -5559,6 +5696,17 @@ const app = Vue.createApp({
         getManualRetryTitle(record) {
             const state = this.getManualRetryState(record);
             return state.ok ? '点击恢复查询（继续轮询该 Job）' : state.reason;
+        },
+
+        /**
+         * 恢复按钮的禁用原因：需在正文可见（title 不够）。
+         * 只在“查询中断、需要用户行动”时展示；正常处理中/已结束的记录不刷正文噪声。
+         */
+        getManualRetryBlockedReason(record) {
+            if (!record || !record.id) return '';
+            if (String(record.status || '') !== 'QUERY_INTERRUPTED') return '';
+            const state = this.getManualRetryState(record);
+            return state.ok ? '' : state.reason;
         },
 
         canManualRetryRecord(record) {
@@ -5601,9 +5749,15 @@ const app = Vue.createApp({
             };
 
             this.errorMessage = '';
-            this.updateHistoryEntry(historyId, { status: 'IN_PROGRESS', errorMessage: '' });
+            this.updateHistoryEntry(historyId, {
+                status: 'IN_PROGRESS',
+                errorMessage: '',
+                interruptReason: '',
+                interruptStage: '',
+                interruptedAt: null
+            });
             this.startTask(task);
-            this.showUiToast('已开始重试轮询', 'info');
+            this.showUiToast('已开始恢复查询（继续轮询原 Job）', 'info');
         },
 
         getEffectiveGenerationSettings() {
@@ -5784,7 +5938,7 @@ const app = Vue.createApp({
                     if (result.success) {
                         await this.finalizeHistoryEntry(historyId, result.data);
                     } else {
-                        this.recordTaskError(historyId, result.message);
+                        this.recordTaskError(historyId, this.buildSubmitFailureMessage(result));
                     }
                     return;
                 }
@@ -5795,7 +5949,7 @@ const app = Vue.createApp({
                         this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
                         return;
                     }
-                    this.recordTaskError(historyId, runResult.message);
+                    this.recordTaskError(historyId, this.buildSubmitFailureMessage(runResult));
                     return;
                 }
 
@@ -5818,7 +5972,13 @@ const app = Vue.createApp({
                 this.updateHistoryEntry(historyId, { jobId, status: initStatus });
 
                 if (!jobId) {
-                    this.recordTaskError(historyId, '提交任务失败：未返回 job id');
+                    // HTTP 200 但没有 id：远端可能已受理，按“未拿到 id”处理并提示核对控制台
+                    this.recordTaskError(historyId, this.buildSubmitFailureMessage({
+                        success: false,
+                        errorKind: 'protocol',
+                        status: null,
+                        message: '提交响应缺少 job id'
+                    }));
                     return;
                 }
 
@@ -5855,6 +6015,9 @@ const app = Vue.createApp({
                 intervalMs: task.pollIntervalMs,
                 onStatus: (data) => {
                     if (this.isTaskCancelled(task, historyId)) return;
+                    // 远端 CANCELLED ≠ 本地用户取消：不在回调里落库，
+                    // 否则 isTaskCancelled 会把“在控制台被取消”误标成“用户取消”。
+                    if (String((data && data.status) || '') === 'CANCELLED') return;
                     this.updateHistoryEntry(historyId, {
                         status: data.status,
                         delayTime: data.delayTime !== undefined ? data.delayTime : null
@@ -5873,9 +6036,16 @@ const app = Vue.createApp({
                 await this.finalizeHistoryEntry(historyId, pollResult.data);
             } else if (pollResult.cancelled) {
                 this.updateHistoryEntry(historyId, { status: 'CANCELLED', errorMessage: '用户取消' });
+            } else if (this.isRemoteTaskFailure(pollResult)) {
+                // 远端明确终态（FAILED / TIMED_OUT / CANCELLED）才记为任务失败。
+                const remoteStatus = String(pollResult.status);
+                const message = remoteStatus === 'CANCELLED'
+                    ? '远端任务已取消（非本地操作，可能在其他端或 RunPod 控制台被取消）'
+                    : pollResult.message;
+                this.recordTaskError(historyId, message, { status: remoteStatus });
             } else {
-                const st = pollResult.status || 'FAILED';
-                this.recordTaskError(historyId, pollResult.message, { status: st });
+                // 超时 / 无响应网络错误 / HTTP 401/404/429/5xx：查询中断，不是远端失败。
+                this.recordQueryInterrupted(historyId, pollResult);
             }
         },
 
@@ -6241,6 +6411,8 @@ const app = Vue.createApp({
             // 每次打开都从“已生效设置”复制一份，避免未保存的修改影响运行时逻辑
             const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
             this.settingsForm = { ...base };
+            // 表单以“秒”编辑，内部统一用毫秒；统一走生效值，避免越界值显示异常
+            this.settingsForm.statusTimeoutSeconds = Math.round(this.getEffectiveStatusTimeoutMs() / 1000);
             this.connectionTestResult = null;
             this.showApiKey = false;
             this.showSettings = true;
@@ -6261,6 +6433,7 @@ const app = Vue.createApp({
             // 丢弃未保存的表单修改
             const base = (this.settings && typeof this.settings === 'object') ? this.settings : Settings.get();
             this.settingsForm = { ...base };
+            this.settingsForm.statusTimeoutSeconds = Math.round(this.getEffectiveStatusTimeoutMs() / 1000);
         },
 
         saveSettings() {
@@ -6286,6 +6459,11 @@ const app = Vue.createApp({
                 0,
                 60000
             );
+            // 秒 → 毫秒（空值/非数字交给 normalize 回退默认 20s，越界值钳制到 5s–120s）
+            const statusTimeoutSeconds = Number(this.settingsForm.statusTimeoutSeconds);
+            const statusTimeoutMs = Settings.normalizeStatusTimeoutMs(
+                Number.isFinite(statusTimeoutSeconds) ? Math.round(statusTimeoutSeconds * 1000) : NaN
+            );
             const runMode = this.settingsForm.runMode === 'runsync' ? 'runsync' : 'run';
 
             const endpointId = Settings.extractEndpointId(this.settingsForm.endpointId);
@@ -6298,6 +6476,7 @@ const app = Vue.createApp({
                 initialPollDelayEnabled,
                 initialPollDelayMs,
                 pollIntervalMs,
+                statusTimeoutMs,
 
                 lockParamsOnGenerate,
                 allowConcurrent,
@@ -6386,6 +6565,7 @@ const app = Vue.createApp({
             if (status === 'COMPLETED') return 'bg-success';
             if (status === 'FAILED' || status === 'TIMED_OUT') return 'bg-danger';
             if (status === 'CANCELLED') return 'bg-warning text-dark';
+            if (status === 'QUERY_INTERRUPTED') return 'bg-warning text-dark';
             if (status === 'IN_PROGRESS') return 'bg-info';
             if (status === 'IN_QUEUE') return 'bg-secondary';
             return 'bg-secondary';
@@ -6440,7 +6620,8 @@ const app = Vue.createApp({
                 COMPLETED: '已完成',
                 FAILED: '失败',
                 TIMED_OUT: '超时',
-                CANCELLED: '已取消'
+                CANCELLED: '已取消',
+                QUERY_INTERRUPTED: '查询中断'
             };
             return map[status] || (status ? String(status) : '未知');
         },
@@ -6451,6 +6632,7 @@ const app = Vue.createApp({
             if (status === 'COMPLETED') return 'completed';
             if (status === 'FAILED' || status === 'TIMED_OUT') return 'failed';
             if (status === 'CANCELLED') return 'cancelled';
+            if (status === 'QUERY_INTERRUPTED') return 'interrupted';
             return 'other';
         },
 
@@ -6464,6 +6646,7 @@ const app = Vue.createApp({
             const group = this.historyStatusGroup(record && record.status);
             if (group === 'running') return 'bi-hourglass-split';
             if (group === 'failed') return 'bi-exclamation-triangle';
+            if (group === 'interrupted') return 'bi-cloud-slash';
             return 'bi-image';
         },
 
@@ -6480,6 +6663,7 @@ const app = Vue.createApp({
             if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') return '任务进行中，完成后会显示图片';
             if (status === 'FAILED' || status === 'TIMED_OUT') return '本次请求未生成图片';
             if (status === 'CANCELLED') return '请求已取消，没有图片';
+            if (status === 'QUERY_INTERRUPTED') return '查询中断，任务可能仍在远端运行；可点击“恢复查询”继续查询';
             if (record && record.deletedImages && record.deletedImages.length) return '图片已删除';
             return '这条记录没有图片';
         },
