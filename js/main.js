@@ -5148,14 +5148,32 @@ const app = Vue.createApp({
 
         async persistHistoryNow() {
             if (!window.HistoryStore) return;
+            // 保存是异步的（本地写 + IndexedDB 裁剪）：回包到达时内存可能已经推进
+            // （恢复查询成功、用户取消、新记录插入…）。旧快照的裁剪结果只能应用到
+            // “自快照以来没有变化”的内存；否则重存最新状态，保证落盘与内存一致。
+            const MAX_PERSIST_ATTEMPTS = 3;
             const save = async () => {
                 try {
-                    const records = this.serializeHistoryForStore();
-                    const favorites = this.serializeFavoritesForStore();
-                    const pruned = await window.HistoryStore.save({ records, favorites });
-                    this.applyPrunedRecordsToMemory(pruned.records);
-                    this.applyPrunedFavoritesToMemory(pruned.favorites);
-                    this.ensureResultsSelection();
+                    for (let attempt = 0; attempt < MAX_PERSIST_ATTEMPTS; attempt++) {
+                        const records = this.serializeHistoryForStore();
+                        const favorites = this.serializeFavoritesForStore();
+                        const signature = this.buildHistoryPersistSignature(records, favorites);
+                        const pruned = await window.HistoryStore.save({ records, favorites });
+                        const currentSignature = this.buildHistoryPersistSignature(
+                            this.serializeHistoryForStore(),
+                            this.serializeFavoritesForStore()
+                        );
+                        if (currentSignature !== signature) {
+                            // 这份回包属于旧快照，丢弃其裁剪结果并重存（磁盘已写过旧快照，需要覆盖）
+                            continue;
+                        }
+                        this.applyPrunedRecordsToMemory(pruned.records);
+                        this.applyPrunedFavoritesToMemory(pruned.favorites);
+                        this.ensureResultsSelection();
+                        return;
+                    }
+                    // 内存持续变化：旧回包一律不应用，交给下一轮持久化收敛
+                    this.queuePersistHistory();
                 } catch (e) {
                     // 忽略持久化失败
                 }
@@ -5167,6 +5185,17 @@ const app = Vue.createApp({
             });
             this._historyPersistPromise = tracked;
             return tracked;
+        },
+
+        /**
+         * 持久化快照签名：用于判定回包是否属于旧快照。
+         * 必须是完整序列化元数据的比较（仅比 updatedAt 不够：同一毫秒内的多次更新会撞车，
+         * 且恢复/取消都会改 status/images/interrupt* 而不一定改 updatedAt）。
+         * 故意不做 try/catch：序列化失败就抛错，由 persistHistoryNow 的 save() 捕获并中止本轮，
+         * 绝不把“无法比较”当成“未变化”（fail-closed，宁可少裁剪也不能覆盖新状态）。
+         */
+        buildHistoryPersistSignature(records, favorites) {
+            return JSON.stringify({ records: records || [], favorites: favorites || [] });
         },
 
         serializeHistoryForStore() {
@@ -6023,7 +6052,10 @@ const app = Vue.createApp({
                         delayTime: data.delayTime !== undefined ? data.delayTime : null
                     });
                 },
-                shouldStop: () => this.isTaskCancelled(task, historyId)
+                shouldStop: () => this.isTaskCancelled(task, historyId),
+                // 每次 /status 请求前才取最新生效值：设置改过后，尚未发出的查询立即用新超时；
+                // endpointId / apiKey / payload 仍用本任务最初快照（不会把旧 Job 发到别的端点）。
+                getStatusTimeoutMs: () => this.getEffectiveStatusTimeoutMs()
             }, clientCfg);
 
             // 取消优先：迟到的 status/run 回包不得恢复任务或记成 FAILED。

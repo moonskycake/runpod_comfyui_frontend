@@ -295,6 +295,30 @@ const RunpodClient = {
     }
   },
 
+  /**
+   * 为单次 /status 请求解析配置：只覆盖超时字段，
+   * endpointId / apiKey / baseUrl 一律沿用调用方传入的任务快照，
+   * 避免把旧 Job 的状态查询发到“后来改过的”端点上。
+   * @param {Object} cfg - 任务快照配置
+   * @param {Function} getStatusTimeoutMs - 取最新超时的回调
+   * @returns {Object} 本次请求使用的配置
+   */
+  withStatusTimeout(cfg, getStatusTimeoutMs) {
+    const base = cfg || this.config;
+    if (typeof getStatusTimeoutMs !== 'function') return base;
+
+    let raw;
+    try {
+      raw = getStatusTimeoutMs();
+    } catch (e) {
+      return base;
+    }
+
+    const n = Math.trunc(Number(raw));
+    if (!Number.isFinite(n) || n <= 0) return base;
+    return { ...base, statusTimeoutMs: n };
+  },
+
   async waitForPollDelay(delayMs, shouldStop) {
     const totalMs = Math.max(0, Math.trunc(Number(delayMs) || 0));
     const deadline = Date.now() + totalMs;
@@ -316,6 +340,7 @@ const RunpodClient = {
    * @param {number} options.intervalMs - 轮询间隔（默认 2000ms）
    * @param {Function} options.onStatus - 状态回调
    * @param {Function} options.shouldStop - 是否停止轮询的函数
+   * @param {Function} options.getStatusTimeoutMs - 每次请求前取最新 /status 超时（毫秒）
    * @returns {Promise<Object>} 最终结果
    */
   async poll(jobId, options = {}, cfg) {
@@ -323,7 +348,8 @@ const RunpodClient = {
       initialDelayMs = 0,
       intervalMs = 2000,
       onStatus = null,
-      shouldStop = null
+      shouldStop = null,
+      getStatusTimeoutMs = null
     } = options;
 
     let lastStatus = null;
@@ -351,7 +377,9 @@ const RunpodClient = {
         };
       }
 
-      const result = await this.status(jobId, cfg);
+      // 每次请求前才取最新超时：改设置后，尚未发出的 /status 立即生效；
+      // 已经发出的请求仍用它自己的配置（axios 的 timeout 无法中途修改）。
+      const result = await this.status(jobId, this.withStatusTimeout(cfg, getStatusTimeoutMs));
 
       // 取消可能发生在 status 请求飞行期间：迟到回包一律按取消处理，
       // 不把任务恢复为 IN_QUEUE/IN_PROGRESS，也不把请求失败误记为任务失败。

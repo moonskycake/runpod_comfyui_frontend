@@ -694,6 +694,509 @@ test('提交失败按 errorKind 分类：HTTP 业务错误原样保留，无 HTT
   assert.match(timeoutText, /控制台/);
 });
 
+// ---------- 15：持久化竞态（真实 persistHistoryNow + 真实 HistoryStore.save） ----------
+// 只把 HistoryStore.save 包一层：先执行真实 save（localStorage 同步落盘），
+// 再用可控 Promise 挂住回包，模拟“IndexedDB 裁剪较慢，旧快照回包迟到”。
+function gateHistoryStoreSaves(historyStore, gateCount) {
+  const original = historyStore.save;
+  const entries = [];
+  historyStore.save = async function (state) {
+    const pruned = await original.call(historyStore, state);
+    const entry = { snapshot: state, pruned, released: false, release: null };
+    entry.gate = new Promise(resolve => {
+      entry.release = () => { entry.released = true; resolve(); };
+    });
+    entries.push(entry);
+    if (entries.length <= gateCount) await entry.gate;
+    return entry.pruned;
+  };
+  return entries;
+}
+
+function diskRecordsOf(historyStore, storage) {
+  const raw = storage.get(historyStore.HISTORY_KEY);
+  return raw ? JSON.parse(raw) : [];
+}
+
+async function waitForCondition(condition, label, tries = 600) {
+  for (let i = 0; i < tries; i++) {
+    if (condition()) return;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  throw new Error(`等待超时：${label}`);
+}
+
+// 等持久化链（含 finally 里的自我清理与后续入链）彻底收敛，不 stub 被测方法。
+async function settlePersist(ctx, tries = 400) {
+  let lastPending = null;
+  let samePending = 0;
+  for (let i = 0; i < tries; i++) {
+    const pending = ctx._historyPersistPromise;
+    if (!pending) return;
+    if (pending === lastPending) {
+      samePending++;
+      if (samePending > 100) return;
+    } else {
+      lastPending = pending;
+      samePending = 0;
+    }
+    await pending.catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  throw new Error('持久化链未收敛');
+}
+
+function persistFixture(ctx) {
+  // 保留真实 persistHistoryNow / applyPruned* / ensureResultsSelection，仅关掉 400ms 自动 timer
+  ctx.queuePersistHistory = () => {};
+  ctx.showUiToast = () => {};
+  ctx.reanchorImageSelections = () => {};
+}
+
+test('回归：恢复查询成功后，旧的中断快照回包不得把 COMPLETED 覆盖回查询中断', async () => {
+  const harness = createHarness((method, url) => {
+    if (url.includes('/status/')) {
+      return Promise.resolve({
+        data: {
+          status: 'COMPLETED',
+          executionTime: 7,
+          output: { images: [{ type: 'base64', data: 'aGk=' }] }
+        }
+      });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  const { ctx, historyStore, storage } = harness;
+  persistFixture(ctx);
+  ctx.requestHistory = [makeRecord('h1', 'QUERY_INTERRUPTED', {
+    jobId: 'job-9',
+    interruptReason: 'timeout',
+    interruptStage: 'poll',
+    interruptedAt: Date.now() - 1000,
+    errorMessage: '查询中断，可恢复：状态查询超时'
+  })];
+  ctx.selectedHistoryId = 'h1';
+  ctx.isConfigValid = true;
+  ctx.getEffectivePollIntervalMs = () => 5;
+
+  const entries = gateHistoryStoreSaves(historyStore, 1);
+
+  // 旧快照（QUERY_INTERRUPTED）已落盘，回包被挂住
+  const stalePersist = ctx.persistHistoryNow();
+  await waitForCondition(() => entries.length === 1, '旧快照 save 已发起');
+  assert.strictEqual(diskRecordsOf(historyStore, storage)[0].status, 'QUERY_INTERRUPTED', '旧快照先落盘');
+
+  // 用户点“恢复查询”，/status 返回 COMPLETED（带图）
+  ctx.retryHistoryRecord('h1');
+  await waitForCondition(
+    () => ctx.requestHistory[0].status === 'COMPLETED' && ctx.requestHistory[0].images.length === 1,
+    '恢复查询拿到 COMPLETED'
+  );
+
+  // 旧回包这时才到
+  entries[0].release();
+  await stalePersist;
+  await waitForCondition(() => ctx.activeJobs.length === 0, 'activeJobs 释放');
+  await settlePersist(ctx);
+
+  assert.strictEqual(ctx.requestHistory[0].status, 'COMPLETED', '内存不得回退到旧快照的查询中断');
+  assert.strictEqual(ctx.requestHistory[0].images.length, 1, '内存图片不得被旧快照清空');
+  assert.strictEqual(ctx.requestHistory[0].interruptReason, '', '中断原因已清除');
+  assert.strictEqual(ctx.requestHistory[0].interruptedAt, null);
+
+  const disk = diskRecordsOf(historyStore, storage);
+  assert.strictEqual(disk[0].status, 'COMPLETED', '落盘必须是 COMPLETED');
+  assert.strictEqual(disk[0].images.length, 1, '落盘图片引用不得为空');
+  assert.strictEqual(ctx.canManualRetryRecord(ctx.requestHistory[0]), false, '完成记录不再提示恢复');
+});
+
+test('回归：旧快照回包不得撤销保存期间发生的取消', async () => {
+  const harness = createHarness(() => Promise.resolve({ data: {} }));
+  const { ctx, historyStore, storage } = harness;
+  persistFixture(ctx);
+  ctx.requestHistory = [makeRecord('h1', 'IN_PROGRESS', { jobId: 'job-9' })];
+  ctx.selectedHistoryId = 'h1';
+
+  const entries = gateHistoryStoreSaves(historyStore, 1);
+  const stalePersist = ctx.persistHistoryNow();
+  await waitForCondition(() => entries.length === 1, '旧快照 save 已发起');
+
+  // 保存进行中用户取消（等价 cancelTaskByHistoryId 落库的写法）
+  ctx.updateHistoryEntry('h1', { status: 'CANCELLED', errorMessage: '用户取消' });
+
+  entries[0].release();
+  await stalePersist;
+  await settlePersist(ctx);
+
+  assert.strictEqual(ctx.requestHistory[0].status, 'CANCELLED', '取消不得被旧快照的 IN_PROGRESS 覆盖');
+  assert.strictEqual(ctx.requestHistory[0].errorMessage, '用户取消');
+  assert.strictEqual(diskRecordsOf(historyStore, storage)[0].status, 'CANCELLED', '落盘保持取消');
+});
+
+test('回归：保存期间插入的新历史不得被旧快照裁剪结果丢弃', async () => {
+  const harness = createHarness(() => Promise.resolve({ data: {} }));
+  const { ctx, historyStore, storage } = harness;
+  persistFixture(ctx);
+  ctx.requestHistory = [makeRecord('old', 'IN_PROGRESS', { jobId: 'job-1' })];
+  ctx.selectedHistoryId = 'old';
+
+  const entries = gateHistoryStoreSaves(historyStore, 1);
+  const stalePersist = ctx.persistHistoryNow();
+  await waitForCondition(() => entries.length === 1, '旧快照 save 已发起');
+
+  ctx.requestHistory.unshift(makeRecord('fresh', 'IN_QUEUE'));
+
+  entries[0].release();
+  await stalePersist;
+  await settlePersist(ctx);
+
+  assert.deepStrictEqual(Array.from(ctx.requestHistory, r => r.id), ['fresh', 'old'], '新记录不得丢失');
+  assert.deepStrictEqual(
+    diskRecordsOf(historyStore, storage).map(r => r.id),
+    ['fresh', 'old'],
+    '新记录必须最终落盘'
+  );
+});
+
+test('回归：多次插入/取消后，最终落盘与最新内存完全一致', async () => {
+  const harness = createHarness(() => Promise.resolve({ data: {} }));
+  const { ctx, historyStore, storage } = harness;
+  persistFixture(ctx);
+  ctx.requestHistory = [makeRecord('a', 'IN_PROGRESS', { jobId: 'job-a' })];
+  ctx.selectedHistoryId = 'a';
+
+  const entries = gateHistoryStoreSaves(historyStore, 1);
+  const stalePersist = ctx.persistHistoryNow();
+  await waitForCondition(() => entries.length === 1, '旧快照 save 已发起');
+
+  ctx.requestHistory.unshift(makeRecord('b', 'IN_QUEUE'));
+  ctx.updateHistoryEntry('a', { status: 'CANCELLED', errorMessage: '用户取消' });
+  ctx.updateHistoryEntry('b', { status: 'IN_PROGRESS', delayTime: 12 });
+
+  entries[0].release();
+  await stalePersist;
+  await settlePersist(ctx);
+
+  const memory = ctx.serializeHistoryForStore();
+  const disk = diskRecordsOf(historyStore, storage);
+  assert.deepStrictEqual(disk, JSON.parse(JSON.stringify(memory)), '落盘快照必须等于最新内存快照');
+  assert.strictEqual(memory[0].id, 'b');
+  assert.strictEqual(memory[0].status, 'IN_PROGRESS');
+  assert.strictEqual(memory[0].delayTime, 12);
+  assert.strictEqual(memory[1].status, 'CANCELLED');
+});
+
+test('持久化仍按上限裁剪，且裁剪结果应用到内存并重定位预览', async () => {
+  const harness = createHarness(() => Promise.resolve({ data: {} }));
+  const { ctx, historyStore, storage } = harness;
+  persistFixture(ctx);
+  ctx.ensureResultsSelection = () => {};
+  const records = [];
+  for (let i = 0; i < 35; i++) records.push(makeRecord('r' + i, 'COMPLETED'));
+  ctx.requestHistory = records;
+
+  let reanchorCalls = 0;
+  ctx.reanchorImageSelections = () => { reanchorCalls++; };
+
+  await ctx.persistHistoryNow();
+  await settlePersist(ctx);
+
+  const max = historyStore.LIMITS.maxRequests;
+  assert.strictEqual(ctx.requestHistory.length, max, `内存裁剪到 ${max}`);
+  assert.strictEqual(diskRecordsOf(historyStore, storage).length, max, '落盘同样裁剪');
+  assert.strictEqual(ctx.requestHistory[0].id, 'r0', '保留最近记录、顺序不变');
+  assert.ok(reanchorCalls >= 1, '应用裁剪后仍重定位预览锚点');
+});
+
+test('回归：签名/序列化异常时绝不应用旧快照的裁剪结果（fail-closed）', async () => {
+  const harness = createHarness(() => Promise.resolve({ data: {} }));
+  const { ctx, historyStore, storage } = harness;
+  persistFixture(ctx);
+  ctx.requestHistory = [makeRecord('h1', 'IN_PROGRESS', { jobId: 'job-9' })];
+  ctx.selectedHistoryId = 'h1';
+
+  const realSerialize = ctx.serializeHistoryForStore;
+  let calls = 0;
+  // 第 2 次序列化（保存后的“是否仍是同一快照”比对）故意抛错
+  ctx.serializeHistoryForStore = function () {
+    calls++;
+    if (calls === 2) throw new Error('boom: 元数据不可序列化');
+    return realSerialize.call(ctx);
+  };
+
+  const entries = gateHistoryStoreSaves(historyStore, 1);
+  const stalePersist = ctx.persistHistoryNow();
+  await waitForCondition(() => entries.length === 1, '旧快照 save 已发起');
+
+  // 保存期间拿到新结果
+  ctx.updateHistoryEntry('h1', { status: 'COMPLETED' });
+
+  entries[0].release();
+  await stalePersist;
+  await settlePersist(ctx);
+
+  assert.strictEqual(ctx.requestHistory[0].status, 'COMPLETED', '比较失败时不得应用旧回包');
+  assert.ok(calls >= 2, '保存后确实尝试了比对（未静默跳过）');
+
+  // 恢复正常序列化后，下一轮持久化能把落盘收敛到最新内存
+  ctx.serializeHistoryForStore = realSerialize;
+  await ctx.persistHistoryNow();
+  await settlePersist(ctx);
+  assert.strictEqual(ctx.requestHistory[0].status, 'COMPLETED');
+  assert.strictEqual(diskRecordsOf(historyStore, storage)[0].status, 'COMPLETED', '恢复正常后落盘收敛');
+});
+
+test('回归：保存期间的收藏新增/删除不被旧快照的裁剪结果覆盖', async () => {
+  const makeFav = (id, addedAt) => ({
+    id,
+    addedAt,
+    filename: id + '.png',
+    type: 'base64',
+    requestId: '',
+    requestCreatedAt: null,
+    requestTemplateId: '',
+    requestTemplateName: '',
+    requestJobId: '',
+    placeholderValues: {}
+  });
+
+  const harness = createHarness(() => Promise.resolve({ data: {} }));
+  const { ctx, historyStore, storage } = harness;
+  persistFixture(ctx);
+  ctx.requestHistory = [makeRecord('h1', 'COMPLETED')];
+  ctx.favorites = [makeFav('fav-a', 1000), makeFav('fav-b', 2000)];
+  ctx.favoriteImageCache = {};
+  ctx.selectedFavoriteIndex = 0;
+
+  const entries = gateHistoryStoreSaves(historyStore, 1);
+  const stalePersist = ctx.persistHistoryNow();
+  await waitForCondition(() => entries.length === 1, '旧快照 save 已发起');
+
+  // 保存进行中：删掉 fav-a，新增 fav-c
+  ctx.favorites = ctx.favorites.filter(f => f.id !== 'fav-a');
+  ctx.favorites.unshift(makeFav('fav-c', 3000));
+
+  entries[0].release();
+  await stalePersist;
+  await settlePersist(ctx);
+
+  const memoryIds = Array.from(ctx.favorites, f => f.id);
+  assert.deepStrictEqual(memoryIds, ['fav-c', 'fav-b'], '内存收藏不得被旧快照覆盖');
+
+  const diskFavorites = JSON.parse(storage.get(historyStore.FAVORITES_KEY) || '[]');
+  assert.deepStrictEqual(diskFavorites.map(f => f.id), ['fav-c', 'fav-b'], '落盘收藏与内存一致');
+});
+
+// ---------- 16：状态查询超时可动态生效（真实 client + main 链路） ----------
+test('回归：运行中保存新的状态超时，下一次 /status 生效，已发出的请求保持旧值', async () => {
+  let pendingFirst = null;
+  let statusGets = 0;
+  const harness = createHarness((method, url) => {
+    if (url.includes('/status/')) {
+      statusGets++;
+      if (statusGets === 1) {
+        return new Promise(resolve => {
+          pendingFirst = { release: () => resolve({ data: { status: 'IN_PROGRESS' } }) };
+        });
+      }
+      return Promise.resolve({
+        data: { status: 'COMPLETED', output: { images: [{ type: 'base64', data: 'aGk=' }] } }
+      });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  const { ctx, calls } = harness;
+  persistFixture(ctx);
+  // 用真实配置（endpoint/key 来自 CLIENT_CFG）建立已配置状态，走真实 persistHistoryNow
+  ctx.settings = { ...ctx.settings, endpointId: CLIENT_CFG.endpointId, apiKey: CLIENT_CFG.apiKey };
+  ctx.updateConnectionStatus = () => {};
+  ctx.pumpQueue = () => {};
+  ctx.requestHistory = [makeRecord('h1', 'QUERY_INTERRUPTED', {
+    jobId: 'job-9',
+    interruptReason: 'timeout',
+    interruptStage: 'poll',
+    interruptedAt: Date.now() - 1000,
+    errorMessage: '查询中断，可恢复：状态查询超时'
+  })];
+  ctx.selectedHistoryId = 'h1';
+  ctx.isConfigValid = true;
+  ctx.getEffectivePollIntervalMs = () => 5;
+
+  ctx.retryHistoryRecord('h1');
+  await waitForCondition(() => statusGets === 1 && pendingFirst, 'GET1 已发出并挂起');
+
+  const statusCalls = () => calls.filter(c => c.url.includes('/status/'));
+  assert.strictEqual(statusCalls()[0].config.timeout, 20000, '首帧沿用默认 20 秒');
+  const firstAxiosConfig = statusCalls()[0].config;
+
+  const task = ctx.activeJobs[0];
+  assert.ok(task, '恢复查询任务在运行中');
+  const taskCfgEndpoint = task.clientConfig.endpointId;
+  const taskCfgKey = task.clientConfig.apiKey;
+
+  // 用户改成 40 秒（并顺手改了端点/密钥），保存
+  ctx.openSettings();
+  ctx.settingsForm.statusTimeoutSeconds = 40;
+  ctx.settingsForm.endpointId = 'ep-switched';
+  ctx.settingsForm.apiKey = 'switched-key';
+  ctx.saveSettings();
+
+  assert.strictEqual(ctx.settings.statusTimeoutMs, 40000, '已生效 40 秒');
+  assert.strictEqual(ctx.getClientConfigSnapshot().statusTimeoutMs, 40000, '新快照是 40 秒');
+  assert.strictEqual(firstAxiosConfig.timeout, 20000, '已发出的 GET 保持旧时限');
+  assert.strictEqual(task.clientConfig.statusTimeoutMs, 20000, '任务快照不被就地改写');
+
+  pendingFirst.release();
+  await waitForCondition(() => statusCalls().length >= 2, 'GET2 已发出');
+
+  const second = statusCalls()[1];
+  assert.strictEqual(second.config.timeout, 40000, '下一次尚未发出的 /status 用新值');
+  assert.ok(second.url.includes(`/${taskCfgEndpoint}/status/`), '端点仍用任务快照');
+  assert.strictEqual(second.config.headers.Authorization, `Bearer ${taskCfgKey}`, '密钥仍用任务快照');
+
+  await waitForCondition(() => ctx.requestHistory[0].status === 'COMPLETED', 'GET2 完成');
+  assert.strictEqual(ctx.requestHistory[0].images.length, 1);
+});
+
+test('回归：未保存的表单值不改变运行中的状态查询超时', async () => {
+  let pendingFirst = null;
+  let statusGets = 0;
+  const harness = createHarness((method, url) => {
+    if (url.includes('/status/')) {
+      statusGets++;
+      if (statusGets === 1) {
+        return new Promise(resolve => {
+          pendingFirst = { release: () => resolve({ data: { status: 'IN_PROGRESS' } }) };
+        });
+      }
+      return Promise.resolve({ data: { status: 'IN_PROGRESS' } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  const { ctx, calls } = harness;
+  persistFixture(ctx);
+  // 用真实配置（endpoint/key 来自 CLIENT_CFG）建立已配置状态，走真实 persistHistoryNow
+  ctx.settings = { ...ctx.settings, endpointId: CLIENT_CFG.endpointId, apiKey: CLIENT_CFG.apiKey };
+  ctx.updateConnectionStatus = () => {};
+  ctx.pumpQueue = () => {};
+  ctx.requestHistory = [makeRecord('h1', 'QUERY_INTERRUPTED', {
+    jobId: 'job-9',
+    interruptReason: 'timeout',
+    interruptStage: 'poll',
+    interruptedAt: Date.now() - 1000,
+    errorMessage: '查询中断，可恢复：状态查询超时'
+  })];
+  ctx.selectedHistoryId = 'h1';
+  ctx.isConfigValid = true;
+  ctx.getEffectivePollIntervalMs = () => 5;
+
+  ctx.retryHistoryRecord('h1');
+  await waitForCondition(() => statusGets === 1 && pendingFirst, 'GET1 已发出并挂起');
+
+  // 只改表单，不保存
+  ctx.openSettings();
+  ctx.settingsForm.statusTimeoutSeconds = 90;
+
+  pendingFirst.release();
+  await waitForCondition(() => statusGets >= 2, 'GET2 已发出');
+  const statusCalls = calls.filter(c => c.url.includes('/status/'));
+  assert.strictEqual(statusCalls[1].config.timeout, 20000, '未保存的表单值不生效');
+
+  // 取消该轮询，避免测试挂着
+  ctx.cancelTaskByHistoryId('h1');
+  await waitForCondition(() => ctx.requestHistory[0].status === 'CANCELLED', '取消生效');
+  await waitForCondition(() => ctx.activeJobs.length === 0, 'activeJobs 释放');
+});
+
+test('回归：保存后新的恢复查询直接使用最新状态超时', async () => {
+  const harness = createHarness((method, url) => {
+    if (url.includes('/status/')) {
+      return Promise.resolve({
+        data: { status: 'COMPLETED', output: { images: [{ type: 'base64', data: 'aGk=' }] } }
+      });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  const { ctx, calls } = harness;
+  persistFixture(ctx);
+  // 用真实配置（endpoint/key 来自 CLIENT_CFG）建立已配置状态，走真实 persistHistoryNow
+  ctx.settings = { ...ctx.settings, endpointId: CLIENT_CFG.endpointId, apiKey: CLIENT_CFG.apiKey };
+  ctx.updateConnectionStatus = () => {};
+  ctx.pumpQueue = () => {};
+  ctx.requestHistory = [makeRecord('h2', 'QUERY_INTERRUPTED', {
+    jobId: 'job-2',
+    interruptReason: 'timeout',
+    interruptStage: 'poll',
+    interruptedAt: Date.now() - 1000
+  })];
+  ctx.selectedHistoryId = 'h2';
+  ctx.isConfigValid = true;
+  ctx.getEffectivePollIntervalMs = () => 5;
+
+  ctx.openSettings();
+  ctx.settingsForm.statusTimeoutSeconds = 40;
+  ctx.saveSettings();
+
+  ctx.retryHistoryRecord('h2');
+  await waitForCondition(() => ctx.requestHistory[0].status === 'COMPLETED', '恢复查询完成');
+
+  const statusCalls = calls.filter(c => c.url.includes('/status/'));
+  assert.strictEqual(statusCalls.length, 1);
+  assert.strictEqual(statusCalls[0].config.timeout, 40000, '新恢复查询直接用最新值');
+});
+
+test('回归：改超时后 HTTP 5xx 仍记为查询中断（不是失败）', async () => {
+  let pendingFirst = null;
+  let statusGets = 0;
+  const harness = createHarness((method, url) => {
+    if (url.includes('/status/')) {
+      statusGets++;
+      if (statusGets === 1) {
+        return new Promise(resolve => {
+          pendingFirst = { release: () => resolve({ data: { status: 'IN_PROGRESS' } }) };
+        });
+      }
+      return Promise.reject({ response: { status: 503, data: { error: 'fixture' } } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  const { ctx, calls } = harness;
+  persistFixture(ctx);
+  // 用真实配置（endpoint/key 来自 CLIENT_CFG）建立已配置状态，走真实 persistHistoryNow
+  ctx.settings = { ...ctx.settings, endpointId: CLIENT_CFG.endpointId, apiKey: CLIENT_CFG.apiKey };
+  ctx.updateConnectionStatus = () => {};
+  ctx.pumpQueue = () => {};
+  ctx.requestHistory = [makeRecord('h1', 'QUERY_INTERRUPTED', {
+    jobId: 'job-9',
+    interruptReason: 'timeout',
+    interruptStage: 'poll',
+    interruptedAt: Date.now() - 1000
+  })];
+  ctx.selectedHistoryId = 'h1';
+  ctx.isConfigValid = true;
+  ctx.getEffectivePollIntervalMs = () => 5;
+
+  ctx.retryHistoryRecord('h1');
+  await waitForCondition(() => statusGets === 1 && pendingFirst, 'GET1 已发出并挂起');
+
+  ctx.openSettings();
+  ctx.settingsForm.statusTimeoutSeconds = 40;
+  ctx.saveSettings();
+
+  pendingFirst.release();
+  await waitForCondition(() => ctx.requestHistory[0].status === 'QUERY_INTERRUPTED' && ctx.requestHistory[0].interruptReason === 'http_503', '记录查询中断');
+
+  const statusCalls = calls.filter(c => c.url.includes('/status/'));
+  assert.strictEqual(statusCalls[1].config.timeout, 40000, '新一次请求用新超时');
+  assert.match(ctx.requestHistory[0].errorMessage, /查询中断/);
+  assert.match(ctx.requestHistory[0].errorMessage, /503/);
+  await waitForCondition(() => ctx.activeJobs.length === 0, 'activeJobs 释放');
+  assert.strictEqual(ctx.canManualRetryRecord(ctx.requestHistory[0]), true);
+
+  ctx.cancelTaskByHistoryId('h1');
+  await waitForCondition(() => ctx.activeJobs.length === 0, 'activeJobs 释放');
+});
+
 (async () => {
   let passed = 0;
   for (const [name, fn] of cases) {
