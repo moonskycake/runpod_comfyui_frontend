@@ -5142,12 +5142,20 @@ const app = Vue.createApp({
             if (!window.HistoryStore) return;
             if (this._persistTimer) clearTimeout(this._persistTimer);
             this._persistTimer = setTimeout(() => {
+                // timer 已触发：句柄作废，避免后续显式保存去 clear 一个已经执行的 timer
+                this._persistTimer = null;
                 this.persistHistoryNow();
             }, 400);
         },
 
         async persistHistoryNow() {
             if (!window.HistoryStore) return;
+            // 显式保存接管已排队的防抖 timer：必须在同步入口清掉并置空，不能放到 await 之后，
+            // 否则会清掉“保存进行中”新变化排出的 timer，把最新状态吞掉。
+            if (this._persistTimer) {
+                clearTimeout(this._persistTimer);
+                this._persistTimer = null;
+            }
             // 保存是异步的（本地写 + IndexedDB 裁剪）：回包到达时内存可能已经推进
             // （恢复查询成功、用户取消、新记录插入…）。旧快照的裁剪结果只能应用到
             // “自快照以来没有变化”的内存；否则重存最新状态，保证落盘与内存一致。
@@ -5408,9 +5416,9 @@ const app = Vue.createApp({
         },
 
         async finalizeHistoryEntry(entryId, data) {
-            // 取消是终态：迟到的结果不得复活已取消记录。
-            const current = (this.requestHistory || []).find(r => r && r.id === entryId);
-            if (current && current.status === 'CANCELLED') return;
+            // 取消是终态：迟到的结果不得复活已取消记录；记录已被删除/裁剪时也不再回写。
+            const entry = (this.requestHistory || []).find(r => r && r.id === entryId);
+            if (!entry || entry.status === 'CANCELLED') return;
 
             const images = this.extractImagesFromRunpodData(data);
 
@@ -5432,6 +5440,14 @@ const app = Vue.createApp({
                     // ignore
                 }
             }
+
+            // 写图是跨 await 的存储边界：这期间用户可能已取消、记录可能被删除或被裁剪掉。
+            // applyPrunedRecordsToMemory / deleteImage 会重建或移除记录对象，所以只能按 id 重新读取，
+            // 不能做“仍是同一个对象”的身份比较。
+            // 守卫失败直接返回：新写入的 blob 可能被收藏引用，不做无条件删除；
+            // 确实没人引用的孤儿 blob 交给 HistoryStore.load 的既有清理。
+            const latest = (this.requestHistory || []).find(r => r && r.id === entryId);
+            if (!latest || latest.status === 'CANCELLED') return;
 
             this.updateHistoryEntry(entryId, {
                 status: 'COMPLETED',

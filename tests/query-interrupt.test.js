@@ -7,6 +7,8 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 
+const { createFakeIndexedDB } = require('./support/fake-indexeddb');
+
 const ROOT = path.join(__dirname, '..');
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
@@ -16,10 +18,15 @@ const CLIENT_CFG = {
   baseUrl: 'https://api.runpod.ai/v2'
 };
 
-function createHarness(transport) {
+// harnessOptions:
+//   indexedDB：可选，传入 createFakeIndexedDB() 让真实 history-store.js 走 IndexedDB 分支
+//   （默认不注入，旧用例仍走“没有 indexedDB”的元数据分支）。
+function createHarness(transport, harnessOptions) {
+  const extra = harnessOptions || {};
   const storage = new Map();
   const calls = [];
-  let options = null;
+  const setCalls = [];
+  let vueOptions = null;
 
   const sandbox = {
     console,
@@ -28,7 +35,7 @@ function createHarness(transport) {
     navigator: { userAgent: 'node' },
     localStorage: {
       getItem(key) { return storage.has(key) ? storage.get(key) : null; },
-      setItem(key, value) { storage.set(key, String(value)); },
+      setItem(key, value) { setCalls.push(key); storage.set(key, String(value)); },
       removeItem(key) { storage.delete(key); }
     },
     document: { getElementById() { return null; }, querySelector() { return null; } },
@@ -44,11 +51,12 @@ function createHarness(transport) {
     },
     Vue: {
       createApp(captured) {
-        options = captured;
+        vueOptions = captured;
         return { component() { return this; }, mount() {} };
       }
     }
   };
+  if (extra.indexedDB) sandbox.indexedDB = extra.indexedDB;
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(read('js/settings.js'), sandbox, { filename: 'settings.js' });
@@ -56,9 +64,9 @@ function createHarness(transport) {
   vm.runInContext(read('js/history-store.js'), sandbox, { filename: 'history-store.js' });
   vm.runInContext(read('js/main.js'), sandbox, { filename: 'main.js' });
 
-  const ctx = options.data();
-  for (const [key, value] of Object.entries(options.methods)) ctx[key] = value.bind(ctx);
-  for (const [key, value] of Object.entries(options.computed)) {
+  const ctx = vueOptions.data();
+  for (const [key, value] of Object.entries(vueOptions.methods)) ctx[key] = value.bind(ctx);
+  for (const [key, value] of Object.entries(vueOptions.computed)) {
     Object.defineProperty(ctx, key, { configurable: true, get: () => value.call(ctx) });
   }
   ctx.$nextTick = fn => { if (fn) fn(); return Promise.resolve(); };
@@ -68,7 +76,9 @@ function createHarness(transport) {
     ctx,
     storage,
     calls,
+    setCalls,
     sandbox,
+    indexedDB: extra.indexedDB || null,
     settings: sandbox.Settings,
     client: sandbox.RunpodClient,
     historyStore: sandbox.HistoryStore
@@ -1195,6 +1205,478 @@ test('回归：改超时后 HTTP 5xx 仍记为查询中断（不是失败）', a
 
   ctx.cancelTaskByHistoryId('h1');
   await waitForCondition(() => ctx.activeJobs.length === 0, 'activeJobs 释放');
+});
+
+// ---------- 17：R1 真实 IndexedDB 分支 —— 写图期间取消 / 记录被移除 ----------
+// 本段用 tests/support/fake-indexeddb.js 让真实 history-store.js 走 IndexedDB 分支；
+// 只控制网络回包与 IDB 事务提交时机，不替换 startTask / runTask / cancelTaskByHistoryId /
+// finalizeHistoryEntry / queuePersistHistory / persistHistoryNow。
+function recordOf(ctx, id) {
+  return (ctx.requestHistory || []).find(r => r && r.id === id) || null;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function stopPersistTimer(ctx) {
+  if (ctx._persistTimer) {
+    clearTimeout(ctx._persistTimer);
+    ctx._persistTimer = null;
+  }
+}
+
+function referencedImageIds(ctx) {
+  const ids = new Set();
+  (ctx.requestHistory || []).forEach(r => {
+    (r.images || []).forEach(img => { if (img && img.id) ids.add(img.id); });
+  });
+  (ctx.favorites || []).forEach(f => { if (f && f.id) ids.add(f.id); });
+  return ids;
+}
+
+function makeFavorite(id, requestId) {
+  return {
+    id,
+    addedAt: 1000,
+    filename: `${id}.png`,
+    type: 'base64',
+    requestId: requestId || '',
+    requestCreatedAt: null,
+    requestTemplateId: '',
+    requestTemplateName: '',
+    requestJobId: '',
+    placeholderValues: {}
+  };
+}
+
+function completedImage(id, data) {
+  return {
+    id,
+    filename: `${id}.png`,
+    type: 'base64',
+    data,
+    imageUrl: `data:image/png;base64,${data}`,
+    createdAt: Date.now()
+  };
+}
+
+test('回归（R1）：写图期间取消 → 记录保持 CANCELLED、新图不挂入、槽位释放且后续队列启动', async () => {
+  const fake = createFakeIndexedDB();
+  const harness = createHarness((method, url) => {
+    if (url.includes('/status/job-a')) {
+      return Promise.resolve({
+        data: {
+          status: 'COMPLETED',
+          executionTime: 11,
+          output: { images: [{ type: 'base64', data: 'YQ==' }, { type: 'base64', data: 'Yg==' }] }
+        }
+      });
+    }
+    if (url.includes('/status/job-b')) {
+      return Promise.resolve({
+        data: { status: 'COMPLETED', executionTime: 5, output: { images: [{ type: 'base64', data: 'Yw==' }] } }
+      });
+    }
+    return Promise.resolve({ data: {} });
+  }, { indexedDB: fake });
+  const { ctx, historyStore, calls } = harness;
+  assert.strictEqual(historyStore.isIndexedDbAvailable(), true, '历史存储必须真的走 IndexedDB 分支');
+  const toasts = [];
+  ctx.showUiToast = (...args) => toasts.push(args);
+  ctx.updateConnectionStatus = () => {};
+
+  ctx.requestHistory = [
+    makeRecord('h1', 'IN_PROGRESS', { jobId: 'job-a' }),
+    makeRecord('h2', 'IN_QUEUE', { jobId: 'job-b' })
+  ];
+  ctx.selectedHistoryId = 'h1';
+  ctx.latestHistoryId = 'h1';
+  ctx.isConfigValid = true;
+  // 后续队列任务：并发默认为 1，h1 释放槽位后才应启动
+  ctx.jobQueue = [makeTask('h2', { jobId: 'job-b', pollOnly: true, payload: null })];
+
+  const hold = fake.hold(info => info.mode === 'readwrite' && info.ops.some(op => op.type === 'put'));
+  ctx.startTask(makeTask('h1', { jobId: 'job-a', pollOnly: true, payload: null }));
+  await waitForCondition(() => hold.matched === 1, '图片写入事务被挂起');
+
+  const writtenIds = fake.ids('images');
+  assert.strictEqual(writtenIds.length, 2, '两张图已进入 IDB（提交被挂起）');
+  assert.strictEqual(recordOf(ctx, 'h1').images.length, 0, '写图期间图片尚未挂入记录');
+
+  // 真实取消入口：置标记 + 落 CANCELLED + 尽力调用 /cancel
+  assert.strictEqual(ctx.cancelTaskByHistoryId('h1'), true, '取消命中运行中的任务');
+  assert.strictEqual(recordOf(ctx, 'h1').status, 'CANCELLED');
+
+  hold.release();
+  await waitForCondition(() => ctx.activeJobs.length === 0 && ctx.jobQueue.length === 0, '槽位释放且队列清空');
+  await waitForCondition(
+    () => recordOf(ctx, 'h2') && recordOf(ctx, 'h2').status === 'COMPLETED',
+    '取消后后续队列任务被启动并完成'
+  );
+  await ctx.persistHistoryNow();
+  await settlePersist(ctx);
+
+  const cancelled = recordOf(ctx, 'h1');
+  assert.ok(cancelled, '记录不得被删除');
+  assert.strictEqual(cancelled.status, 'CANCELLED', '取消是终态，迟到的结果不得复活记录');
+  assert.strictEqual(cancelled.images.length, 0, '写图期间取消：新图片不得挂入记录');
+  assert.strictEqual(cancelled.executionTime, null, '不写迟到的结果元数据');
+  assert.strictEqual(ctx.selectedHistoryImageIndex, 0, '不跳到新图片');
+  assert.ok(
+    !toasts.some(t => String(t[0] || '').includes('已完成')),
+    '取消后不得弹“已完成”成功提示'
+  );
+  assert.ok(
+    calls.some(c => c.method === 'post' && c.url.includes('/cancel/job-a')),
+    '取消仍尽力通知远端'
+  );
+
+  const second = recordOf(ctx, 'h2');
+  assert.strictEqual(second.status, 'COMPLETED');
+  assert.strictEqual(second.images.length, 1, '后续任务正常落图');
+
+  // 新写入的 blob 不因守卫失败被无条件删除（可能被收藏引用），孤儿留给既有 load 清理
+  writtenIds.forEach(id => assert.ok(fake.has('images', id), '守卫返回时不得删除刚写入的 blob'));
+  const disk = diskRecordsOf(historyStore, harness.storage);
+  assert.strictEqual(disk.find(r => r.id === 'h1').status, 'CANCELLED', '落盘保持 CANCELLED');
+  assert.strictEqual(disk.find(r => r.id === 'h1').images.length, 0);
+
+  const loaded = await historyStore.load();
+  writtenIds.forEach(id => assert.strictEqual(fake.has('images', id), false, '孤儿 blob 由既有 load 清理'));
+  const secondIds = second.images.map(img => img.id);
+  secondIds.forEach(id => assert.ok(fake.has('images', id), '被引用的图片必须保留'));
+  assert.ok(loaded.records.some(r => r.id === 'h2'), 'load 能读回完成记录');
+  stopPersistTimer(ctx);
+});
+
+test('回归（R1）：写图期间记录被裁剪 → 不复活、不动已选记录、不报成功、不误删收藏', async () => {
+  const fake = createFakeIndexedDB();
+  const harness = createHarness((method, url) => {
+    if (url.includes('/status/job-old')) {
+      return Promise.resolve({
+        data: { status: 'COMPLETED', executionTime: 3, output: { images: [{ type: 'base64', data: 'b3JwaGFu' }] } }
+      });
+    }
+    return Promise.resolve({ data: {} });
+  }, { indexedDB: fake });
+  const { ctx, historyStore, storage } = harness;
+  const toasts = [];
+  ctx.showUiToast = (...args) => toasts.push(args);
+  ctx.updateConnectionStatus = () => {};
+
+  // 已有收藏（图片同时被 keep0 引用）
+  ctx.favorites = [makeFavorite('img-keep', 'keep0')];
+  ctx.favoriteImageCache = { 'img-keep': completedImage('img-keep', 'a2VlcA==') };
+  ctx.selectedFavoriteIndex = 0;
+  await historyStore.putImages([{ id: 'img-keep', filename: 'img-keep.png', type: 'base64', data: 'a2VlcA==' }]);
+
+  const records = [];
+  for (let i = 0; i < 30; i++) {
+    const rec = makeRecord(`keep${i}`, 'COMPLETED', { imageCount: i === 0 ? 1 : 0 });
+    if (i === 0) rec.images = [completedImage('img-keep', 'a2VlcA==')];
+    records.push(rec);
+  }
+  const victim = makeRecord('old', 'IN_PROGRESS', { jobId: 'job-old' });
+  ctx.requestHistory = [...records, victim];  // 第 31 条，会被上限 30 裁掉
+  ctx.selectedHistoryId = 'keep0';
+  ctx.latestHistoryId = 'keep0';
+  const selectedBefore = recordOf(ctx, 'keep0');
+
+  const hold = fake.hold(info => info.mode === 'readwrite' && info.ops.some(op => op.type === 'put'));
+  ctx.startTask(makeTask('old', { jobId: 'job-old', pollOnly: true, payload: null }));
+  await waitForCondition(() => hold.matched === 1, '写图事务被挂起');
+  const orphanIds = fake.ids('images').filter(id => id !== 'img-keep');
+  assert.strictEqual(orphanIds.length, 1, '新图片已写入 IDB（提交被挂起）');
+
+  // 写图挂起期间，另一轮真实保存按上限裁剪掉 victim（applyPrunedRecordsToMemory 直接移除该记录）
+  await ctx.persistHistoryNow();
+  await settlePersist(ctx);
+  assert.strictEqual(recordOf(ctx, 'old'), null, 'victim 已被裁剪出内存');
+
+  hold.release();
+  await waitForCondition(() => ctx.activeJobs.length === 0, 'activeJobs 释放');
+  await ctx.persistHistoryNow();
+  await settlePersist(ctx);
+
+  assert.strictEqual(recordOf(ctx, 'old'), null, '记录已移除：不得复活、不得插回');
+  assert.ok(!ctx.requestHistory.some(r => (r.images || []).some(img => orphanIds.includes(img.id))),
+    '新图片不得挂到任何记录上');
+  const selectedAfter = recordOf(ctx, 'keep0');
+  assert.ok(selectedAfter, '已选记录仍在');
+  assert.notStrictEqual(selectedAfter, selectedBefore, '裁剪会重建记录对象（所以守卫不能做身份比较）');
+  assert.deepStrictEqual(Array.from(selectedAfter.images, img => img.id), ['img-keep'], '已选记录的被收藏图片保持不变');
+  assert.strictEqual(selectedAfter.status, 'COMPLETED', '已选记录状态不被其它记录的结果影响');
+  assert.strictEqual(ctx.selectedHistoryId, 'keep0', '不改变当前查看对象');
+  assert.strictEqual(ctx.latestHistoryId, 'keep0', '不改“最新任务”指向');
+  assert.ok(!toasts.some(t => String(t[0] || '').includes('已完成')), '不得报成功');
+
+  assert.deepStrictEqual(Array.from(ctx.favorites, f => f.id), ['img-keep'], '收藏不被裁剪结果覆盖');
+  assert.ok(fake.has('images', 'img-keep'), '收藏图片不得被误删');
+  assert.deepStrictEqual(
+    JSON.parse(storage.get(historyStore.FAVORITES_KEY) || '[]').map(f => f.id),
+    ['img-keep'],
+    '收藏元数据仍在盘上'
+  );
+  orphanIds.forEach(id => assert.ok(fake.has('images', id), '孤儿 blob 不被无条件删除'));
+
+  await historyStore.load();
+  orphanIds.forEach(id => assert.strictEqual(fake.has('images', id), false, '孤儿 blob 交给既有 load 清理'));
+  assert.ok(fake.has('images', 'img-keep'), 'load 必须保留收藏图片');
+  stopPersistTimer(ctx);
+});
+
+// ---------- 18：正常完成落盘 / 收藏 / 裁剪不退化（真实 IDB 分支） ----------
+test('回归（R1）：正常完成落盘、收藏与上限裁剪在真实 IDB 分支下仍正确', async () => {
+  const fake = createFakeIndexedDB();
+  const harness = createHarness((method, url) => {
+    if (url.includes('/status/job-ok')) {
+      return Promise.resolve({
+        data: {
+          status: 'COMPLETED',
+          executionTime: 8,
+          output: { images: [{ type: 'base64', data: 'aW1nLTE=' }, { type: 'base64', data: 'aW1nLTI=' }] }
+        }
+      });
+    }
+    return Promise.resolve({ data: {} });
+  }, { indexedDB: fake });
+  const { ctx, historyStore, storage } = harness;
+  const toasts = [];
+  ctx.showUiToast = (...args) => toasts.push(args);
+  ctx.updateConnectionStatus = () => {};
+
+  ctx.favorites = [makeFavorite('fav-1', '')];
+  ctx.favoriteImageCache = { 'fav-1': { ...completedImage('fav-1', 'ZmF2'), imageUrl: 'data:image/png;base64,ZmF2' } };
+  ctx.selectedFavoriteIndex = 0;
+
+  // 已有 12 条记录 × 5 张图：非收藏图片合计 60，超过 maxImages=50，落盘时会真实裁剪
+  const records = [makeRecord('h1', 'IN_PROGRESS', { jobId: 'job-ok' }) ];
+  const oldImageIds = [];
+  for (let i = 0; i < 12; i++) {
+    const imgs = [];
+    for (let j = 0; j < 5; j++) {
+      const id = `r${i}-${j}`;
+      oldImageIds.push(id);
+      imgs.push({ id, filename: `${id}.png`, type: 'base64', data: 'b2xk', imageUrl: 'data:image/png;base64,b2xk', createdAt: 1 });
+    }
+    records.push(makeRecord(`rec${i}`, 'COMPLETED', { images: imgs, imageCount: 5 }));
+  }
+  ctx.requestHistory = records;
+  ctx.selectedHistoryId = 'h1';
+  ctx.latestHistoryId = 'h1';
+  await historyStore.putImages([
+    ...oldImageIds.map(id => ({ id, filename: `${id}.png`, type: 'base64', data: 'b2xk' })),
+    { id: 'fav-1', filename: 'fav-1.png', type: 'base64', data: 'ZmF2' }
+  ]);
+  assert.strictEqual(fake.ids('images').length, 61, '旧图片与收藏已落 IDB');
+
+  ctx.startTask(makeTask('h1', { jobId: 'job-ok', pollOnly: true, payload: null }));
+  await waitForCondition(() => ctx.activeJobs.length === 0, '任务收敛');
+  const completed = recordOf(ctx, 'h1');
+  assert.ok(completed, '记录仍在');
+  assert.strictEqual(completed.status, 'COMPLETED');
+  assert.strictEqual(completed.images.length, 2, '正常完成必须挂入新图片');
+  assert.strictEqual(completed.images[0].data, 'aW1nLTE=', '图片数据保留在内存中以供展示');
+  const newIds = Array.from(completed.images, img => img.id);
+  newIds.forEach(id => assert.ok(fake.has('images', id), '新图片真实写入 IDB'));
+  assert.ok(!toasts.some(t => String(t[0] || '').includes('失败')), '正常完成不报失败');
+
+  await ctx.persistHistoryNow();
+  await settlePersist(ctx);
+
+  const disk = diskRecordsOf(historyStore, storage);
+  const diskMain = disk.find(r => r.id === 'h1');
+  assert.ok(diskMain, '完成记录落盘');
+  assert.strictEqual(diskMain.status, 'COMPLETED');
+  assert.deepStrictEqual(Array.from(diskMain.images, img => img.id), newIds, '落盘引用最新图片');
+  assert.strictEqual(diskMain.executionTime, 8);
+
+  // 裁剪：非收藏图片上限 50，收藏独立保留
+  const totalRefs = (ctx.requestHistory || [])
+    .reduce((sum, r) => sum + (Array.isArray(r.images) ? r.images.length : 0), 0);
+  assert.strictEqual(totalRefs, historyStore.LIMITS.maxImages, `非收藏图片裁剪到 ${historyStore.LIMITS.maxImages}`);
+  assert.deepStrictEqual(Array.from(recordOf(ctx, 'h1').images, img => img.id), newIds, '新图片不被裁剪');
+  assert.strictEqual(recordOf(ctx, 'rec9').images.length, 3, '跨记录边界处按数量裁剪');
+  assert.strictEqual(recordOf(ctx, 'rec10').images.length, 0, '超限的尾部记录图片被裁剪');
+  assert.strictEqual(recordOf(ctx, 'rec11').images.length, 0);
+
+  // 裁剪精确到图片：r0–r8 全留（45）+ r9 前 3 张 + 新完成 2 张 = 50；其余 12 张从 IDB 删除
+  const expectedRemoved = ['r9-3', 'r9-4']
+    .concat(Array.from({ length: 5 }, (_, j) => `r10-${j}`))
+    .concat(Array.from({ length: 5 }, (_, j) => `r11-${j}`));
+  expectedRemoved.forEach(id => {
+    assert.strictEqual(fake.has('images', id), false, `超限图片必须从 IDB 删除：${id}`);
+  });
+  assert.strictEqual(oldImageIds.length - expectedRemoved.length, 48, '裁剪前 60 张、保留 48 张旧图');
+  const storeIds = fake.ids('images');
+  assert.strictEqual(storeIds.length, historyStore.LIMITS.maxImages + 1, 'IDB 只留上限内图片 + 收藏');
+  assert.ok(fake.has('images', 'fav-1'), '收藏图片独立于本地上限');
+  assert.deepStrictEqual(
+    JSON.parse(storage.get(historyStore.FAVORITES_KEY) || '[]').map(f => f.id),
+    ['fav-1'],
+    '收藏元数据落盘'
+  );
+  stopPersistTimer(ctx);
+});
+
+// ---------- 19：R3 显式保存接管防抖 timer ----------
+test('回归（R3）：静止状态的显式保存只落盘一轮，400ms 防抖 timer 被同步入口接管', async () => {
+  const harness = createHarness(() => Promise.resolve({ data: {} }));
+  const { ctx, historyStore, setCalls } = harness;
+  const saves = [];
+  const originalSave = historyStore.save;
+  historyStore.save = async function (state) {
+    saves.push(state);
+    return originalSave.call(historyStore, state);
+  };
+
+  ctx.requestHistory = [makeRecord('h1', 'IN_PROGRESS', { jobId: 'job-1' })];
+  ctx.selectedHistoryId = 'h1';
+  const setCallsBefore = setCalls.length;
+
+  ctx.updateHistoryEntry('h1', { status: 'COMPLETED' });  // 真实入口先排 400ms timer
+  assert.ok(ctx._persistTimer, '防抖 timer 已排');
+
+  await ctx.persistHistoryNow();  // 真实显式保存
+  await settlePersist(ctx);
+  assert.strictEqual(saves.length, 1, '显式保存本身只保存一轮');
+  assert.strictEqual(diskRecordsOf(historyStore, harness.storage)[0].status, 'COMPLETED');
+
+  // 等过 400ms：被接管的 timer 不得再补存一轮
+  await sleep(450);
+  assert.strictEqual(saves.length, 1, '显式保存已接管防抖 timer，不得再保存一轮');
+  const metaSetCalls = setCalls.slice(setCallsBefore)
+    .filter(key => key === historyStore.HISTORY_KEY || key === historyStore.FAVORITES_KEY);
+  assert.strictEqual(metaSetCalls.length, 2, '元数据落盘只有 2 次 setItem（记录 + 收藏）');
+  assert.strictEqual(ctx._persistTimer, null, '同步入口清空 timer 句柄，触发后也不残留');
+});
+
+test('回归（R3）：显式保存进行中产生的新更新不被吞掉，最终落盘最新状态', async () => {
+  const harness = createHarness(() => Promise.resolve({ data: {} }));
+  const { ctx, historyStore, storage } = harness;
+  ctx.showUiToast = () => {};
+  ctx.reanchorImageSelections = () => {};
+  ctx.requestHistory = [makeRecord('h1', 'IN_PROGRESS', { jobId: 'job-9' })];
+  ctx.selectedHistoryId = 'h1';
+
+  const entries = gateHistoryStoreSaves(historyStore, 1);
+  const saving = ctx.persistHistoryNow();
+  await waitForCondition(() => entries.length === 1, '显式保存已发起并挂起');
+
+  // 保存进行中的新变化：真实 updateHistoryEntry → 真实 queuePersistHistory 重排 timer
+  ctx.updateHistoryEntry('h1', { status: 'COMPLETED', executionTime: 42 });
+  assert.ok(ctx._persistTimer, '保存期间的新变化重排了 400ms timer');
+
+  entries[0].release();
+  await saving;
+  await settlePersist(ctx);
+  const savesAfterChain = entries.length;
+  assert.ok(savesAfterChain >= 2, '旧快照被丢弃并重存最新状态');
+  assert.strictEqual(diskRecordsOf(historyStore, storage)[0].status, 'COMPLETED');
+
+  await sleep(450);
+  assert.ok(entries.length > savesAfterChain, '保存期间重排的 timer 真的又保存了一轮（未被吞掉）');
+  assert.strictEqual(ctx._persistTimer, null, 'timer 触发后句柄置空');
+  const disk = diskRecordsOf(historyStore, storage);
+  assert.strictEqual(disk[0].status, 'COMPLETED');
+  assert.strictEqual(disk[0].executionTime, 42, '最终落盘是最新状态');
+  const memory = JSON.parse(JSON.stringify(ctx.serializeHistoryForStore()));
+  assert.deepStrictEqual(disk, memory, '落盘与最新内存一致');
+});
+
+// ---------- 20：既有竞态/fail-closed/收藏在真实 IDB 分支下不退化 ----------
+test('回归：真实 IDB 分支下旧快照回包不覆盖内存，收藏图不被裁剪误删', async () => {
+  const fake = createFakeIndexedDB();
+  const harness = createHarness(() => Promise.resolve({ data: {} }), { indexedDB: fake });
+  const { ctx, historyStore, storage } = harness;
+  ctx.showUiToast = () => {};
+  ctx.reanchorImageSelections = () => {};
+  ctx.favorites = [makeFavorite('img-1', 'h1')];
+  ctx.favoriteImageCache = { 'img-1': completedImage('img-1', 'aW1nMQ==') };
+  ctx.selectedFavoriteIndex = 0;
+  ctx.requestHistory = [makeRecord('h1', 'COMPLETED', { images: [completedImage('img-1', 'aW1nMQ==')], imageCount: 1 })];
+  ctx.selectedHistoryId = 'h1';
+  ctx.latestHistoryId = 'h1';
+  await historyStore.putImages([{ id: 'img-1', filename: 'img-1.png', type: 'base64', data: 'aW1nMQ==' }]);
+
+  const entries = gateHistoryStoreSaves(historyStore, 1);
+  const stale = ctx.persistHistoryNow();
+  await waitForCondition(() => entries.length === 1, '旧快照已落盘且回包被挂住');
+
+  ctx.updateHistoryEntry('h1', {
+    status: 'QUERY_INTERRUPTED',
+    interruptReason: 'timeout',
+    interruptStage: 'poll',
+    interruptedAt: Date.now()
+  });
+
+  entries[0].release();
+  await stale;
+  await settlePersist(ctx);
+
+  const rec = recordOf(ctx, 'h1');
+  assert.strictEqual(rec.status, 'QUERY_INTERRUPTED', '旧快照（COMPLETED）不得覆盖更新的状态');
+  assert.strictEqual(rec.images.length, 1, '内存图片不得被旧快照清空');
+  assert.strictEqual(diskRecordsOf(historyStore, storage)[0].status, 'QUERY_INTERRUPTED', '落盘收敛到最新状态');
+  assert.deepStrictEqual(Array.from(ctx.favorites, f => f.id), ['img-1'], '收藏不被旧快照覆盖');
+  assert.ok(fake.has('images', 'img-1'), '被收藏引用的图片不得被裁剪删除');
+  stopPersistTimer(ctx);
+});
+
+// 只验证“保留当前语义”：COMPLETED 已经展示后用户再点取消，既不会把记录改回 COMPLETED，
+// 也不会顺手清空已经挂上的图片。GLM 已把“完成后取消”的产品语义列为后续非阻塞问题，
+// 本用例不改变它、也不替它做决定。
+test('回归：终态落盘中取消 → 旧回包不回退成 COMPLETED、已有图片不被清空、槽位收敛', async () => {
+  const fake = createFakeIndexedDB();
+  const harness = createHarness((method, url) => {
+    if (url.includes('/status/job-done')) {
+      return Promise.resolve({
+        data: {
+          status: 'COMPLETED',
+          executionTime: 6,
+          output: { images: [{ type: 'base64', data: 'ZG9uZTE=' }, { type: 'base64', data: 'ZG9uZTI=' }] }
+        }
+      });
+    }
+    return Promise.resolve({ data: {} });
+  }, { indexedDB: fake });
+  const { ctx, historyStore } = harness;
+  ctx.showUiToast = () => {};
+  ctx.updateConnectionStatus = () => {};
+  ctx.requestHistory = [makeRecord('h1', 'IN_PROGRESS', { jobId: 'job-done' })];
+  ctx.selectedHistoryId = 'h1';
+  ctx.latestHistoryId = 'h1';
+
+  // 真实 startTask → runTask → pollExistingJob → finalizeHistoryEntry（先写图，再保存元数据）
+  const entries = gateHistoryStoreSaves(historyStore, 1);
+  ctx.startTask(makeTask('h1', { jobId: 'job-done', pollOnly: true, payload: null }));
+
+  // 等 finalize 里的真实 persistHistoryNow 发起保存并挂住回包：此时图片已挂、任务仍占着槽位
+  await waitForCondition(() => entries.length === 1, '终态元数据保存已发起并挂起');
+  const completed = recordOf(ctx, 'h1');
+  assert.strictEqual(completed.status, 'COMPLETED', '图片与终态已写入内存');
+  assert.strictEqual(completed.images.length, 2, '图片已挂入记录');
+  assert.strictEqual(ctx.activeJobs.length, 1, '保存未收敛前任务仍占槽位');
+
+  // 保存 await 窗口内用户点取消：真实入口会置标记 + 落 CANCELLED + 尽力 /cancel
+  assert.strictEqual(ctx.cancelTaskByHistoryId('h1'), true, '保存窗口内取消命中运行中的任务');
+  assert.strictEqual(recordOf(ctx, 'h1').status, 'CANCELLED');
+  assert.strictEqual(recordOf(ctx, 'h1').images.length, 2, '取消不清空已经展示的图片');
+
+  entries[0].release();
+  await waitForCondition(() => ctx.activeJobs.length === 0, '槽位收敛');
+  await settlePersist(ctx);
+
+  const rec = recordOf(ctx, 'h1');
+  assert.strictEqual(rec.status, 'CANCELLED', '旧快照（COMPLETED）回包不得把 CANCELLED 改回');
+  assert.strictEqual(rec.images.length, 2, '已有图片不得被旧回包清空');
+  assert.deepStrictEqual(Array.from(rec.images, img => img.id), Array.from(completed.images, img => img.id));
+  const disk = diskRecordsOf(historyStore, harness.storage);
+  assert.strictEqual(disk[0].status, 'CANCELLED', '最终落盘是 CANCELLED');
+  assert.strictEqual(disk[0].images.length, 2, '落盘保留已展示图片引用');
+  Array.from(rec.images, img => img.id).forEach(id => assert.ok(fake.has('images', id), '图片 blob 不被删除'));
+  stopPersistTimer(ctx);
 });
 
 (async () => {
