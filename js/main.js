@@ -106,26 +106,21 @@ const ImageUploadComponent = {
         <section class="init-images">
             <input type="file" ref="fileInput" @change="handleChooseFile"
                    style="display: none" accept="image/*">
-            <div class="scroll-hide border rounded d-flex flex-wrap align-content-center justify-content-center m-2"
-                 style="background-color: rgb(41, 40, 40);position: relative;"
-                 :style="'height: ' + uploaderHeight + 'px'">
-                <div class="m-2 text-light d-flex justify-content-center align-content-center align-items-center h-100 w-100"
-                     @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave"
-                     @drop.prevent="handleDrop"
-                     @click="triggerFileInput()"
-                     :class="{ 'cursor-pointer': !disabled, 'rp-upload-drop-active': isDragOver }"
-                     ref="uploadContainer">
-                    <span v-if="!PreviewimageSrc" class="text-light mx-auto text-center">
-                        点击或拖拽上传图片
-                    </span>
-                    <div v-if="PreviewimageSrc"
-                         class="position-absolute top-0 start-0 h-100 w-100 d-flex justify-content-center align-content-center">
-                        <img :src="PreviewimageSrc" alt=""
-                             class="m-auto h-auto mh-100 mw-100">
-                    </div>
-                </div>
-            </div>
-            <div v-if="PreviewimageSrc" class="d-flex gap-2 m-2 mt-0">
+            <button type="button" class="rp-upload-target"
+                    :style="{ minHeight: uploaderHeight + 'px' }"
+                    :disabled="disabled"
+                    :class="{ 'rp-upload-drop-active': isDragOver }"
+                    :aria-label="PreviewimageSrc ? '替换输入图片' : '选择输入图片'"
+                    @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave"
+                    @drop.prevent="handleDrop" @click="triggerFileInput()" ref="uploadContainer">
+                <img v-if="PreviewimageSrc" :src="PreviewimageSrc" alt="输入图片预览" :style="{ maxHeight: uploaderHeight + 'px' }">
+                <template v-else>
+                    <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
+                    <span class="fw-semibold">选择或拖入图片</span>
+                    <span class="rp-upload-hint">单张，每边 ≤ 3000 px；整个生成请求需小于或等于 10 MiB。</span>
+                </template>
+            </button>
+            <div v-if="PreviewimageSrc" class="d-flex gap-2 mt-2">
                 <button type="button" class="btn btn-outline-light btn-sm" :disabled="disabled"
                         @click.stop="chooseReplace" title="重新选择一张图片">
                     <i class="bi bi-arrow-repeat"></i> 替换
@@ -135,7 +130,7 @@ const ImageUploadComponent = {
                     <i class="bi bi-x-circle"></i> 移除
                 </button>
             </div>
-            <div v-if="statusMessage" class="small m-2 mt-0 rp-break"
+            <div v-if="statusMessage" class="small mt-2 rp-break"
                  :class="statusType === 'danger' ? 'text-danger' : 'text-warning'" role="alert">
                 <i class="bi" :class="statusType === 'danger' ? 'bi-exclamation-octagon' : 'bi-exclamation-triangle'"></i>
                 {{ statusMessage }}
@@ -494,7 +489,7 @@ const PromptTextareaComponent = {
         <div class="position-relative">
             <textarea
                 ref="ta"
-                class="form-control bg-dark text-light border-secondary"
+                class="form-control"
                 :rows="rows"
                 :placeholder="placeholder"
                 :disabled="disabled"
@@ -1139,6 +1134,7 @@ const app = Vue.createApp({
             // jobQueue:  [{ taskId, historyId, runMode, cancelRequested, jobId, payload, pollOnly? }]
             jobQueue: [],
             errorMessage: '',
+            actionNoticeStatus: '',
 
             // ========== 结果 ==========
             resultsTab: 'history', // 'history' | 'gallery'
@@ -1550,9 +1546,8 @@ const app = Vue.createApp({
             return (this.settings && this.settings.runMode) === 'run' ? '异步' : '同步';
         },
 
-        connectionStatusClass() {
-            if (!this.isConfigured) return 'bg-secondary';
-            return 'bg-success';
+        actionNoticeClass() {
+            return this.historyNoticeClass(this.actionNoticeStatus);
         },
 
         promptPresetMessageClass() {
@@ -4620,13 +4615,13 @@ const app = Vue.createApp({
                 try {
                     workflow = JSON.parse(workflow);
                 } catch (e) {
-                    this.errorMessage = '模板 workflow 解析失败: ' + e.message;
+                    this.setActionNotice('模板 workflow 解析失败: ' + e.message);
                     return;
                 }
             }
             // undefined/null/数组都不是可执行 workflow：不解析、不覆盖当前编辑内容
             if (!workflow || typeof workflow !== 'object' || Array.isArray(workflow)) {
-                this.errorMessage = '模板 workflow 无效：必须是对象';
+                this.setActionNotice('模板 workflow 无效：必须是对象');
                 return;
             }
             workflow = WorkflowEditor.deepClone(workflow);
@@ -5024,7 +5019,7 @@ const app = Vue.createApp({
                     this.loraDrafts = [];
                     this.isWorkflowEditorDirty = false;
                 } catch (err) {
-                    this.errorMessage = 'JSON 文件格式错误: ' + err.message;
+                    this.setActionNotice('JSON 文件格式错误: ' + err.message);
                 }
             };
             reader.readAsText(file);
@@ -5041,7 +5036,7 @@ const app = Vue.createApp({
             this.workflowEditorMeta = WorkflowEditor.normalizeEditor({});
             this.loraDrafts = [];
             this.isWorkflowEditorDirty = false;
-            this.errorMessage = '';
+            this.setActionNotice('');
         },
 
         // ========== 输入图片 ==========
@@ -5487,6 +5482,11 @@ const app = Vue.createApp({
             return !!(record && record.status === 'CANCELLED');
         },
 
+        setActionNotice(message, status = '') {
+            this.errorMessage = message;
+            this.actionNoticeStatus = status;
+        },
+
         isFocusedHistoryId(historyId) {
             if (!historyId) return false;
             const selected = this.selectedHistoryRecord;
@@ -5509,9 +5509,9 @@ const app = Vue.createApp({
             this.updateHistoryEntry(historyId, patch);
 
             if (this.isFocusedHistoryId(historyId)) {
-                this.errorMessage = msg;
+                this.setActionNotice(msg, patch.status);
             } else {
-                this.showUiToast(msg, 'danger', 2600);
+                this.showUiToast(msg, patch.status === 'CANCELLED' ? 'info' : 'danger', 2600);
             }
             return msg;
         },
@@ -5580,7 +5580,7 @@ const app = Vue.createApp({
                 interruptedAt: Date.now()
             });
             if (this.isFocusedHistoryId(historyId)) {
-                this.errorMessage = msg;
+                this.setActionNotice(msg, 'QUERY_INTERRUPTED');
             } else {
                 this.showUiToast(msg, 'warning', 4000);
             }
@@ -5758,6 +5758,10 @@ const app = Vue.createApp({
             return this.getManualRetryState(record).ok;
         },
 
+        shouldShowHistoryRecovery(record) {
+            return !!record && (record.status === 'QUERY_INTERRUPTED' || this.canManualRetryRecord(record));
+        },
+
         onHistoryStatusClick(record) {
             if (!record || !record.id) return;
             const state = this.getManualRetryState(record);
@@ -5793,7 +5797,7 @@ const app = Vue.createApp({
                 pollOnly: true
             };
 
-            this.errorMessage = '';
+            this.setActionNotice('');
             this.updateHistoryEntry(historyId, {
                 status: 'IN_PROGRESS',
                 errorMessage: '',
@@ -6102,11 +6106,11 @@ const app = Vue.createApp({
 
             const accept = this.getNewTaskAcceptance();
             if (accept.mode === 'reject') {
-                this.errorMessage = accept.message;
+                this.setActionNotice(accept.message);
                 return;
             }
 
-            this.errorMessage = '';
+            this.setActionNotice('');
 
             // 每次生成前随机 seed
             if (this.seedRandomEachRun && this.hasSeedPlaceholder) {
@@ -6115,7 +6119,7 @@ const app = Vue.createApp({
 
             const build = this.buildPayloadForCurrentInput();
             if (!build.success) {
-                this.errorMessage = build.message;
+                this.setActionNotice(build.message);
                 return;
             }
 
@@ -6610,13 +6614,17 @@ const app = Vue.createApp({
         },
 
         getStatusBadgeClass(status) {
-            if (status === 'COMPLETED') return 'bg-success';
-            if (status === 'FAILED' || status === 'TIMED_OUT') return 'bg-danger';
-            if (status === 'CANCELLED') return 'bg-warning text-dark';
-            if (status === 'QUERY_INTERRUPTED') return 'bg-warning text-dark';
-            if (status === 'IN_PROGRESS') return 'bg-info';
-            if (status === 'IN_QUEUE') return 'bg-secondary';
-            return 'bg-secondary';
+            if (status === 'COMPLETED') return 'rp-tone-success';
+            if (status === 'FAILED' || status === 'TIMED_OUT') return 'rp-tone-danger';
+            if (status === 'QUERY_INTERRUPTED') return 'rp-tone-warning';
+            if (status === 'IN_PROGRESS' || status === 'SUBMITTING') return 'rp-tone-info';
+            return 'rp-tone-neutral';
+        },
+
+        historyNoticeClass(status) {
+            if (status === 'QUERY_INTERRUPTED') return 'alert-warning';
+            if (status === 'CANCELLED') return 'alert-secondary';
+            return 'alert-danger';
         },
 
         // ========== 工作区面板（结果 / 预设与片段） ==========

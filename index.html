@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-bs-theme="dark">
 
 <head>
     <meta charset="UTF-8">
@@ -10,8 +10,8 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
 </head>
 
-<body class="bg-dark">
-    <div class="container bg-dark" id="app">
+<body>
+    <div class="container" id="app">
         <!-- 顶部导航 -->
         <nav class="navbar navbar-expand-lg navbar-dark rp-navbar">
             <div class="container-fluid">
@@ -19,23 +19,24 @@
                     <span class="rp-brand-mark"><i class="bi bi-stars"></i></span>
                     <span>RunPod ComfyUI</span>
                 </a>
-                <div class="rp-nav-links d-flex align-items-center gap-1 me-auto ms-lg-3">
-                    <button class="rp-nav-link" :class="{ active: mainView === 'generate' }" @click="switchMainView('generate')">生图</button>
-                    <button class="rp-nav-link" :class="{ active: mainView === 'library' }" @click="switchMainView('library')">资源库</button>
+                <div class="rp-nav-links d-flex align-items-center gap-1 me-auto ms-lg-3" role="group" aria-label="主页面">
+                    <button type="button" class="rp-nav-link" :class="{ active: mainView === 'generate' }" :aria-pressed="mainView === 'generate'" @click="switchMainView('generate')">生图</button>
+                    <button type="button" class="rp-nav-link" :class="{ active: mainView === 'library' }" :aria-pressed="mainView === 'library'" @click="switchMainView('library')">资源库</button>
                 </div>
                 <div class="d-flex align-items-center flex-wrap gap-1">
-                    <span class="badge me-2 rp-conn-badge" :class="connectionStatusClass">
-                        <span class="rp-conn-dot" :class="{ 'is-online': isConfigured, 'is-busy': activeJobCount > 0 }"></span>
+                    <span class="badge me-2 rp-conn-badge rp-tone-neutral">
+                        <i class="bi bi-sliders" aria-hidden="true"></i>
                         {{ connectionStatus }}
                     </span>
-                    <button class="btn btn-outline-warning btn-sm me-2" @click="toggleFavoritesPanel" title="本地收藏">
-                        <i class="bi" :class="showFavoritesPanel ? 'bi-star-fill' : 'bi-star'"></i>
+                    <button class="btn btn-outline-secondary btn-sm" @click="toggleFavoritesPanel"
+                            aria-haspopup="dialog" aria-controls="favorites-panel" :aria-expanded="showFavoritesPanel" title="本地收藏">
+                        <i class="bi" :class="favoriteCount ? 'bi-star-fill text-warning' : 'bi-star'" aria-hidden="true"></i>
                         本地收藏
-                        <span class="badge bg-dark text-warning border border-warning ms-1">{{ favoriteCount }}</span>
+                        <span class="badge rp-tone-neutral ms-1">{{ favoriteCount }}</span>
                     </button>
-                    <a class="btn btn-outline-info btn-sm me-2 rp-admin-link" href="/admin/" title="管理控制台">
-                        <i class="bi bi-shield-lock"></i>
-                        <span class="rp-admin-link-label ms-1">管理控制台</span>
+                    <a class="btn btn-outline-secondary btn-sm rp-admin-link" href="/admin/" aria-label="管理控制台" title="管理控制台">
+                        <i class="bi bi-shield-lock" aria-hidden="true"></i>
+                        <span>管理<span class="rp-admin-link-label-suffix">控制台</span></span>
                     </a>
                     <button class="btn btn-outline-light btn-sm" @click="openSettings">
                         <i class="bi bi-gear"></i> 设置
@@ -45,15 +46,17 @@
         </nav>
 
         <!-- 收藏侧边栏 -->
-        <div v-if="showFavoritesPanel" data-overlay="favorites" class="rp-fav-backdrop" @click="closeFavoritesPanel"></div>
-        <aside class="rp-fav-panel" :class="{ 'rp-fav-panel-show': showFavoritesPanel }">
-            <div class="rp-fav-header border-bottom border-secondary d-flex justify-content-between align-items-center">
+        <div v-if="showFavoritesPanel" class="rp-fav-backdrop" aria-hidden="true" @click="closeFavoritesPanel"></div>
+        <aside id="favorites-panel" class="rp-fav-panel" :class="{ 'rp-fav-panel-show': showFavoritesPanel }"
+               data-overlay="favorites" role="dialog" aria-labelledby="favorites-title"
+               :aria-modal="showFavoritesPanel ? 'true' : null" :inert="showFavoritesPanel ? null : ''">
+            <div class="rp-fav-header border-bottom d-flex justify-content-between align-items-center">
                 <div class="text-light fw-semibold d-flex align-items-center gap-2">
                     <i class="bi bi-star-fill text-warning"></i>
-                    <span>收藏</span>
-                    <span class="badge bg-secondary">{{ favoriteCount }}/50</span>
+                    <span id="favorites-title">收藏</span>
+                    <span class="badge rp-tone-neutral">{{ favoriteCount }}/50</span>
                 </div>
-                <button class="btn btn-outline-light btn-sm" @click="closeFavoritesPanel" aria-label="Close favorites">
+                <button class="btn btn-outline-light btn-sm" @click="closeFavoritesPanel" aria-label="关闭收藏" data-overlay-autofocus>
                     <i class="bi bi-x-lg"></i>
                 </button>
             </div>
@@ -61,14 +64,14 @@
                 <div v-if="favoriteImages.length === 0" class="text-muted text-center py-5">暂无收藏图片</div>
                 <div v-else class="rp-fav-grid">
                     <div v-for="(img, idx) in favoriteImages" :key="img.id" class="rp-fav-card">
-                        <div class="rp-fav-card-thumb border border-secondary rounded overflow-hidden" @click="openPreviewFromFavorites(idx)" :title="img.filename || 'image.png'">
+                        <div class="rp-fav-card-thumb border rounded overflow-hidden" @click="openPreviewFromFavorites(idx)" :title="img.filename || 'image.png'">
                             <img :src="img.imageUrl" alt="" style="width: 100%; height: 100%; object-fit: cover;">
                             <div class="rp-fav-card-top">
                                 <div class="rp-fav-card-actions d-flex gap-1">
-                                    <button class="btn btn-dark btn-sm border border-secondary" @click.stop="toggleFavorite(img)" title="取消收藏">
+                                    <button class="btn btn-dark btn-sm border" @click.stop="toggleFavorite(img)" title="取消收藏">
                                         <i class="bi bi-star-fill text-warning"></i>
                                     </button>
-                                    <button class="btn btn-dark btn-sm border border-secondary" @click.stop="deleteImage(img)" title="删除">
+                                    <button class="btn btn-dark btn-sm border" @click.stop="deleteImage(img)" title="删除">
                                         <i class="bi bi-trash"></i>
                                     </button>
                                 </div>
@@ -86,38 +89,38 @@
         <main>
             <!-- 资源库（统一库只读 / 我的本地） -->
             <section v-show="mainView === 'library'" class="rp-library mb-4">
-                <div class="card bg-dark border-secondary">
-                    <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <h5 class="mb-0 text-light"><i class="bi bi-collection"></i> 资源库</h5>
                         <div class="d-flex align-items-center gap-2 flex-wrap">
-                            <span class="badge bg-secondary">{{ catalogSourceLabel }}</span>
+                            <span class="badge rp-tone-neutral">{{ catalogSourceLabel }}</span>
                             <button class="btn btn-outline-light btn-sm" @click="loadCatalogIfNeeded(true)" :disabled="libraryLoading">
                                 <i class="bi bi-arrow-repeat"></i> 刷新
                             </button>
                         </div>
                     </div>
                     <div class="card-body">
-                        <ul class="nav nav-tabs rp-tabs mb-3">
+                        <ul class="nav rp-tabs mb-3">
                             <li class="nav-item" v-for="k in [{id:'template',label:'工作流模板'},{id:'preset',label:'提示词预设'},{id:'snippet',label:'片段'}]" :key="k.id">
                                 <button class="nav-link" :class="{ active: libraryKind === k.id }" @click="libraryKind = k.id; libraryCategory = ''">{{ k.label }}</button>
                             </li>
                         </ul>
                         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-                            <div class="btn-group" role="group" aria-label="资源来源">
-                                <button class="btn btn-sm" :class="librarySource === 'shared' ? 'btn-primary' : 'btn-outline-secondary'" @click="librarySource = 'shared'">统一库</button>
-                                <button class="btn btn-sm" :class="librarySource === 'local' ? 'btn-primary' : 'btn-outline-secondary'" @click="librarySource = 'local'">我的本地</button>
+                            <div class="rp-segmented" role="group" aria-label="资源来源">
+                                <button class="rp-segment" :aria-pressed="librarySource === 'shared'" @click="librarySource = 'shared'">统一库</button>
+                                <button class="rp-segment" :aria-pressed="librarySource === 'local'" @click="librarySource = 'local'">我的本地</button>
                             </div>
                             <div class="d-flex gap-2 flex-wrap align-items-center">
-                                <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary rp-library-search" v-model="librarySearch"
+                                <input type="text" class="form-control form-control-sm rp-library-search" v-model="librarySearch"
                                        :placeholder="libraryKind === 'template' ? '搜索名称/分类/描述' : '搜索名称/已加载正文'"
                                        aria-label="搜索资源库">
-                                <select class="form-select form-select-sm bg-dark text-light border-secondary" v-model="libraryCategory" v-if="libraryCategories.length > 0" aria-label="按分类筛选">
+                                <select class="form-select form-select-sm" v-model="libraryCategory" v-if="libraryCategories.length > 0" aria-label="按分类筛选">
                                     <option value="">全部分类</option>
                                     <option v-for="c in libraryCategories" :key="c" :value="c">{{ c }}</option>
                                 </select>
                                 <template v-if="librarySource === 'local'">
-                                    <button class="btn btn-outline-info btn-sm" @click="exportLocalKind"><i class="bi bi-download"></i> 导出</button>
-                                    <button class="btn btn-outline-warning btn-sm" @click="triggerLocalImport"><i class="bi bi-upload"></i> 导入</button>
+                                    <button class="btn btn-outline-secondary btn-sm" @click="exportLocalKind"><i class="bi bi-download"></i> 导出</button>
+                                    <button class="btn btn-outline-secondary btn-sm" @click="triggerLocalImport"><i class="bi bi-upload"></i> 导入</button>
                                     <input type="file" ref="localImportFile" class="d-none" accept=".json" @change="handleLocalImportFile">
                                 </template>
                             </div>
@@ -143,7 +146,7 @@
                         </div>
                         <div v-else class="row g-3">
                             <div v-for="item in libraryVisibleItems" :key="librarySource + ':' + item.id" class="col-12 col-md-6 col-xl-4 col-xxl-3">
-                                <div class="card bg-dark border-secondary h-100 rp-library-card">
+                                <div class="card h-100 rp-library-card">
                                     <div class="card-body d-flex flex-column">
                                         <!-- 模板：预览图为主；无图时用模板信息块，不留大块空图 -->
                                         <template v-if="item.kind === 'template'">
@@ -169,7 +172,7 @@
                                                     @click="openLibraryPromptPreview(item)"
                                                     :title="'查看全文：' + item.name" :aria-label="'查看全文：' + item.name">{{ item.name }}</button>
                                             <div v-else class="text-light fw-semibold text-break">{{ item.name }}</div>
-                                            <span class="badge flex-shrink-0" :class="librarySource === 'shared' ? 'bg-info text-dark' : 'bg-secondary'">{{ librarySource === 'shared' ? '统一库' : '本地' }}</span>
+                                            <span class="badge rp-tone-neutral flex-shrink-0">{{ librarySource === 'shared' ? '统一库' : '本地' }}</span>
                                         </div>
                                         <template v-if="item.kind !== 'template'">
                                             <div class="rp-library-body mt-1">
@@ -199,7 +202,7 @@
                                         <div class="small text-muted mt-2 d-flex flex-wrap gap-2">
                                             <span v-if="item.category">{{ item.category }}</span>
                                         </div>
-                                        <div class="d-flex gap-2 flex-wrap mt-3 pt-2 border-top border-secondary">
+                                        <div class="d-flex gap-2 flex-wrap mt-3 pt-2 border-top">
                                             <button class="btn btn-outline-primary btn-sm" @click="useLibraryItem(item)" :disabled="libraryDetailLoadingId === item.id || (item.kind !== 'template' && isParamsLocked)">{{ libraryUseLabel }}</button>
                                             <button v-if="item.kind !== 'template'" class="btn btn-outline-light btn-sm" @click="openLibraryPromptPreview(item)" :disabled="librarySummaryFor(item).loading">全文</button>
                                             <button v-if="librarySource === 'shared'" class="btn btn-outline-light btn-sm" @click="copyLibraryItemToLocal(item)" :disabled="libraryDetailLoadingId === item.id">复制到本地</button>
@@ -243,8 +246,8 @@
 
             <!-- 模板选择区 -->
             <section class="mb-4" id="template-section">
-                <div class="card bg-dark border-secondary">
-                    <div class="card-header border-secondary">
+                <div class="card">
+                    <div class="card-header">
                         <h5 class="mb-0 text-light">
                             <i class="bi bi-journal-bookmark"></i> 模板
                         </h5>
@@ -254,7 +257,7 @@
                             <!-- 模板下拉 -->
                             <div class="col-md-6">
                                 <label class="form-label text-light">选择模板</label>
-                                <select class="form-select bg-dark text-light border-secondary"
+                                <select class="form-select"
                                         v-model="selectedTemplateId"
                                         :disabled="isParamsLocked">
                                     <option value="">-- 自定义 Workflow --</option>
@@ -296,11 +299,11 @@
                                                     :disabled="!canDeleteTemplate">
                                                 <i class="bi bi-trash"></i> 删除
                                             </button>
-                                            <button class="btn btn-outline-info btn-sm" @click="exportTemplate"
+                                            <button class="btn btn-outline-secondary btn-sm" @click="exportTemplate"
                                                     :disabled="!selectedTemplate">
                                                 <i class="bi bi-download"></i> 导出
                                             </button>
-                                            <button class="btn btn-outline-warning btn-sm" @click="importTemplateDialog">
+                                            <button class="btn btn-outline-secondary btn-sm" @click="importTemplateDialog">
                                                 <i class="bi bi-upload"></i> 导入
                                             </button>
                                         </div>
@@ -321,8 +324,8 @@
 
             <!-- 参数面板 -->
             <section class="mb-4" v-if="placeholders.length > 0" id="params-panel">
-                <div class="card bg-dark border-secondary">
-                    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0 text-light">
                             <i class="bi bi-sliders"></i> 参数
                         </h5>
@@ -339,12 +342,12 @@
                                         @click.stop="toggleParamSection('size')" :aria-expanded="paramSectionsOpen.size" aria-controls="param-body-size">
                                     <i class="bi bi-aspect-ratio text-light"></i>
                                     <span class="text-light fw-semibold">图片尺寸</span>
-                                    <span class="badge bg-secondary" v-if="placeholderValues.width !== undefined && placeholderValues.height !== undefined">
+                                    <span class="badge rp-tone-neutral" v-if="placeholderValues.width !== undefined && placeholderValues.height !== undefined">
                                         {{ placeholderValues.width }}x{{ placeholderValues.height }}
                                     </span>
                                 </button>
                                 <div class="d-flex align-items-center gap-2">
-                                    <select class="form-select form-select-sm rp-size-quick bg-dark text-light border-secondary"
+                                    <select class="form-select form-select-sm rp-size-quick"
                                             v-model="selectedSizePreset" title="快速选择预设尺寸" @click.stop>
                                         <option value="">预设尺寸</option>
                                         <option v-for="preset in sizePresets" :key="preset.name" :value="preset">
@@ -360,7 +363,7 @@
                                     <!-- 宽高 -->
                                     <div class="col-md-5">
                                         <label class="form-label text-light small">宽度</label>
-                                        <input type="number" class="form-control bg-dark text-light border-secondary"
+                                        <input type="number" class="form-control"
                                                v-model.number="placeholderValues.width"
                                                @change="onSizeChange"
                                                min="64" max="2048" step="64">
@@ -372,7 +375,7 @@
                                     </div>
                                     <div class="col-md-5">
                                         <label class="form-label text-light small">高度</label>
-                                        <input type="number" class="form-control bg-dark text-light border-secondary"
+                                        <input type="number" class="form-control"
                                                v-model.number="placeholderValues.height"
                                                @change="onSizeChange"
                                                min="64" max="2048" step="64">
@@ -391,13 +394,13 @@
                                     <span class="text-light fw-semibold">提示词</span>
                                 </button>
                                 <div class="d-flex align-items-center gap-2">
-                                    <button class="btn btn-outline-info btn-sm" @click.stop="togglePromptRefs" title="标签参考站点">
+                                    <button class="btn btn-outline-secondary btn-sm" @click.stop="togglePromptRefs" title="标签参考站点">
                                         <i class="bi bi-link-45deg"></i> 参考
                                     </button>
                                     <button class="btn btn-outline-secondary btn-sm" @click.stop="togglePromptInputOptions" title="输入选项">
                                         <i class="bi bi-sliders"></i>
                                     </button>
-                                    <button class="btn btn-outline-warning btn-sm" @click.stop="openPromptSidePanel"
+                                    <button class="btn btn-outline-secondary btn-sm" @click.stop="openPromptSidePanel"
                                             title="打开右栏的预设与片段" aria-controls="prompt-side-panel">
                                         <i class="bi bi-bookmark-star"></i> 预设/片段
                                     </button>
@@ -406,7 +409,7 @@
                             </div>
 
                             <div class="rp-param-body" id="param-body-prompt" v-show="paramSectionsOpen.prompt">
-                                <div v-if="showPromptRefs" class="mb-3 p-3 border border-secondary rounded">
+                                <div v-if="showPromptRefs" class="mb-3 p-3 border rounded">
                                     <div class="d-flex justify-content-between align-items-center mb-2">
                                         <div class="rp-ac-hint"><i class="bi bi-link-45deg"></i> 参考站点（新窗口打开）</div>
                                         <button type="button" class="btn-close btn-close-white" style="font-size: .6rem;" @click="togglePromptRefs" aria-label="收起"></button>
@@ -418,14 +421,14 @@
                                             <span class="d-flex align-items-center gap-2 min-w-0">
                                                 <i class="bi" :class="site.icon || 'bi-link-45deg'"></i>
                                                 <span class="text-truncate">{{ site.name }}</span>
-                                                <span v-if="site.badge" class="badge bg-secondary rp-ac-cat">{{ site.badge }}</span>
+                                                <span v-if="site.badge" class="badge rp-tone-neutral rp-ac-cat">{{ site.badge }}</span>
                                             </span>
                                             <span class="rp-ref-desc" v-if="site.desc">{{ site.desc }}</span>
                                         </a>
                                     </div>
                                 </div>
 
-                                <div v-if="showPromptInputOptions" class="mb-3 p-3 border border-secondary rounded">
+                                <div v-if="showPromptInputOptions" class="mb-3 p-3 border rounded">
                                     <div class="form-check form-switch">
                                         <input class="form-check-input" type="checkbox" id="promptKeepUnderscoreToggle"
                                                v-model="promptInsertOptions.keepUnderscore"
@@ -536,11 +539,11 @@
                                             <span>{{ p.label }}</span>
                                             <span class="d-flex align-items-center gap-2">
                                                 <button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button>
-                                                <span class="badge bg-secondary">{{ placeholderValues.seed }}</span>
+                                                <span class="badge rp-tone-neutral">{{ placeholderValues.seed }}</span>
                                             </span>
                                         </label>
                                         <div class="d-flex gap-2 align-items-center">
-                                            <input type="number" class="form-control bg-dark text-light border-secondary"
+                                            <input type="number" class="form-control"
                                                    v-model.number="placeholderValues.seed"
                                                    :min="p.min" :max="p.max" :step="p.step"
                                                    :disabled="seedRandomEachRun">
@@ -563,7 +566,7 @@
                                     <!-- 下拉选择 -->
                                     <div v-else-if="p.type === 'select'" class="col-md-6">
                                         <label class="form-label text-light d-flex justify-content-between align-items-center"><span>{{ p.label }}</span><button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button></label>
-                                        <select class="form-select bg-dark text-light border-secondary"
+                                        <select class="form-select"
                                                 v-model="placeholderValues[p.name]">
                                             <option v-for="opt in p.options" :key="opt" :value="opt">
                                                 {{ opt }}
@@ -577,7 +580,7 @@
                                             <span>{{ p.label }}</span>
                                             <span class="d-flex align-items-center gap-2">
                                                 <button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button>
-                                                <span class="badge bg-secondary">{{ placeholderValues[p.name] }}</span>
+                                                <span class="badge rp-tone-neutral">{{ placeholderValues[p.name] }}</span>
                                             </span>
                                         </label>
                                         <div class="rp-range-row">
@@ -586,7 +589,7 @@
                                                    :min="p.min" :max="p.max" :step="p.step">
                                             <div class="rp-number-stepper">
                                                 <button type="button" class="rp-step-btn" @click="stepPlaceholder(p, -1)" aria-label="减少"><i class="bi bi-dash"></i></button>
-                                                <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary rp-range-number"
+                                                <input type="number" class="form-control form-control-sm rp-range-number"
                                                        v-model.number="placeholderValues[p.name]"
                                                        :min="p.min" :max="p.max" :step="p.step">
                                                 <button type="button" class="rp-step-btn" @click="stepPlaceholder(p, 1)" aria-label="增加"><i class="bi bi-plus"></i></button>
@@ -597,7 +600,7 @@
                                     <!-- 数字输入 -->
                                     <div v-else class="col-md-6">
                                         <label class="form-label text-light d-flex justify-content-between align-items-center"><span>{{ p.label }}</span><button v-if="workflowParameterBindings.some(binding => binding.id === p.name)" type="button" class="btn btn-outline-secondary btn-sm py-0" @click="focusWorkflowParameter(p.name)" title="在流程图中定位"><i class="bi bi-crosshair"></i></button></label>
-                                        <input type="number" class="form-control bg-dark text-light border-secondary"
+                                        <input type="number" class="form-control"
                                                v-model.number="placeholderValues[p.name]"
                                                :min="p.min" :max="p.max" :step="p.step">
                                     </div>
@@ -621,7 +624,7 @@
 
                             <div class="rp-param-body" id="param-body-inputImage" v-show="paramSectionsOpen.inputImage">
                                 <div class="mb-2">
-                                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2"
+                                    <input type="text" class="form-control form-control-sm mb-2"
                                            v-model="placeholderValues.input_image"
                                            placeholder="输入图片文件名（如 input.png）">
                                 </div>
@@ -643,7 +646,7 @@
                                         @click.stop="toggleParamSection('other')" :aria-expanded="paramSectionsOpen.other" aria-controls="param-body-other">
                                     <i class="bi bi-three-dots text-light"></i>
                                     <span class="text-light fw-semibold">其他参数</span>
-                                    <span class="badge bg-secondary">{{ otherPlaceholders.length }}</span>
+                                    <span class="badge rp-tone-neutral">{{ otherPlaceholders.length }}</span>
                                 </button>
                                 <i class="bi rp-param-chevron" :class="paramSectionsOpen.other ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
                             </div>
@@ -660,17 +663,17 @@
                                                 <input class="form-check-input" type="checkbox" v-model="placeholderValues[p.name]" :id="'workflow-param-' + p.name" :disabled="isParamsLocked">
                                                 <label class="form-check-label text-light" :for="'workflow-param-' + p.name">{{ placeholderValues[p.name] ? '开启' : '关闭' }}</label>
                                             </div>
-                                            <textarea v-else-if="p.type === 'textarea'" class="form-control bg-dark text-light border-secondary" v-model="placeholderValues[p.name]" :rows="p.rows || 3" :placeholder="p.default" :disabled="isParamsLocked"></textarea>
+                                            <textarea v-else-if="p.type === 'textarea'" class="form-control" v-model="placeholderValues[p.name]" :rows="p.rows || 3" :placeholder="p.default" :disabled="isParamsLocked"></textarea>
                                             <div v-else-if="p.type === 'range'" class="rp-range-row">
                                                 <input type="range" class="form-range rp-range" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
                                                 <div class="rp-number-stepper">
                                                     <button type="button" class="rp-step-btn" @click="stepPlaceholder(p, -1)" :disabled="isParamsLocked" aria-label="减少"><i class="bi bi-dash"></i></button>
-                                                    <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary rp-range-number" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
+                                                    <input type="number" class="form-control form-control-sm rp-range-number" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
                                                     <button type="button" class="rp-step-btn" @click="stepPlaceholder(p, 1)" :disabled="isParamsLocked" aria-label="增加"><i class="bi bi-plus"></i></button>
                                                 </div>
                                             </div>
-                                            <input v-else-if="p.type === 'number'" type="number" class="form-control bg-dark text-light border-secondary" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
-                                            <input v-else type="text" class="form-control bg-dark text-light border-secondary" v-model="placeholderValues[p.name]" :placeholder="p.default" :disabled="isParamsLocked">
+                                            <input v-else-if="p.type === 'number'" type="number" class="form-control" v-model.number="placeholderValues[p.name]" :min="p.min" :max="p.max" :step="p.step" :disabled="isParamsLocked">
+                                            <input v-else type="text" class="form-control" v-model="placeholderValues[p.name]" :placeholder="p.default" :disabled="isParamsLocked">
                                         </div>
                                     </template>
                                 </div>
@@ -690,12 +693,12 @@
 
             <!-- Workflow 编辑区 -->
             <section class="mb-4" id="workflow-section">
-                <div class="card bg-dark border-secondary rp-workflow-card">
-                    <div class="card-header border-secondary d-flex justify-content-between align-items-center gap-3">
+                <div class="card rp-workflow-card">
+                    <div class="card-header d-flex justify-content-between align-items-center gap-3">
                         <div class="min-w-0">
                             <h5 class="mb-1 text-light">
                                 <i class="bi bi-diagram-3"></i> Workflow 编辑器
-                                <span v-if="isWorkflowEditorDirty" class="badge bg-warning text-dark ms-2">未保存</span>
+                                <span v-if="isWorkflowEditorDirty" class="badge rp-tone-warning ms-2">未保存</span>
                             </h5>
                             <div class="small text-muted">
                                 {{ workflowGraph.nodes.length }} 个节点 · {{ workflowGraph.edges.length }} 条连线
@@ -709,16 +712,18 @@
                         </div>
                     </div>
                     <div class="card-body p-0" v-show="!isWorkflowCollapsed">
-                        <div class="rp-workflow-tabs border-bottom border-secondary px-3 pt-2">
-                            <button class="btn btn-sm" :class="workflowView === 'graph' ? 'btn-primary' : 'btn-outline-secondary'" @click="workflowView = 'graph'">
-                                <i class="bi bi-diagram-3"></i> 流程图
-                            </button>
-                            <button class="btn btn-sm" :class="workflowView === 'template' ? 'btn-primary' : 'btn-outline-secondary'" @click="workflowView = 'template'">
-                                <i class="bi bi-file-code"></i> 模板 JSON
-                            </button>
-                            <button class="btn btn-sm" :class="workflowView === 'execution' ? 'btn-primary' : 'btn-outline-secondary'" @click="workflowView = 'execution'" :disabled="!finalWorkflow">
-                                <i class="bi bi-braces"></i> 执行 JSON
-                            </button>
+                        <div class="rp-workflow-tabs border-bottom px-3 py-2">
+                            <div class="rp-segmented" role="group" aria-label="Workflow 视图">
+                                <button type="button" class="rp-segment" :aria-pressed="workflowView === 'graph'" @click="workflowView = 'graph'">
+                                    <i class="bi bi-diagram-3"></i> 流程图
+                                </button>
+                                <button type="button" class="rp-segment" :aria-pressed="workflowView === 'template'" @click="workflowView = 'template'">
+                                    <i class="bi bi-file-code"></i> 模板 JSON
+                                </button>
+                                <button type="button" class="rp-segment" :aria-pressed="workflowView === 'execution'" @click="workflowView = 'execution'" :disabled="!finalWorkflow">
+                                    <i class="bi bi-braces"></i> 执行 JSON
+                                </button>
+                            </div>
                         </div>
 
                         <div v-show="workflowView === 'graph'" class="rp-workflow-workspace">
@@ -739,10 +744,10 @@
                                 </div>
                             </div>
 
-                            <aside class="rp-workflow-inspector border-start border-secondary">
+                            <aside class="rp-workflow-inspector border-start">
                                 <div class="rp-inspector-header d-flex justify-content-between align-items-center">
                                     <span class="text-light fw-semibold"><i class="bi bi-sliders2"></i> 节点检查器</span>
-                                    <span v-if="selectedWorkflowNode" class="badge bg-secondary">{{ selectedWorkflowNode.id }}</span>
+                                    <span v-if="selectedWorkflowNode" class="badge rp-tone-neutral">{{ selectedWorkflowNode.id }}</span>
                                 </div>
                                 <div v-if="!selectedWorkflowNode" class="text-muted small p-3">
                                     未选择节点
@@ -756,7 +761,7 @@
                                     <div v-if="canEditLoraChain" class="rp-lora-panel mb-3">
                                         <div class="d-flex justify-content-between align-items-center mb-2">
                                             <span class="text-light fw-semibold"><i class="bi bi-layers"></i> LoRA 链</span>
-                                            <button class="btn btn-outline-warning btn-sm" @click="addWorkflowLora" :disabled="isParamsLocked">
+                                            <button class="btn btn-outline-secondary btn-sm" @click="addWorkflowLora" :disabled="isParamsLocked">
                                                 <i class="bi bi-plus-lg"></i> 添加
                                             </button>
                                         </div>
@@ -768,10 +773,10 @@
                                                 <button class="btn btn-sm btn-outline-secondary" @click="moveWorkflowLora(index, 1)" :disabled="index === loraDrafts.length - 1 || isParamsLocked" title="下移"><i class="bi bi-chevron-down"></i></button>
                                                 <button class="btn btn-sm btn-outline-danger" @click="removeWorkflowLora(index)" :disabled="isParamsLocked" title="删除"><i class="bi bi-trash"></i></button>
                                             </div>
-                                            <input class="form-control form-control-sm bg-dark text-light border-secondary mb-1" v-model="lora.name" @change="applyWorkflowLoraDrafts" placeholder="远端 LoRA 文件名">
+                                            <input class="form-control form-control-sm mb-1" v-model="lora.name" @change="applyWorkflowLoraDrafts" placeholder="远端 LoRA 文件名">
                                             <div class="row g-1">
-                                                <div class="col-6"><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model.number="lora.strengthModel" @change="applyWorkflowLoraDrafts" min="-100" max="100" step="0.01" placeholder="模型强度"></div>
-                                                <div class="col-6"><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model.number="lora.strengthClip" @change="applyWorkflowLoraDrafts" min="-100" max="100" step="0.01" placeholder="CLIP 强度"></div>
+                                                <div class="col-6"><input type="number" class="form-control form-control-sm" v-model.number="lora.strengthModel" @change="applyWorkflowLoraDrafts" min="-100" max="100" step="0.01" placeholder="模型强度"></div>
+                                                <div class="col-6"><input type="number" class="form-control form-control-sm" v-model.number="lora.strengthClip" @change="applyWorkflowLoraDrafts" min="-100" max="100" step="0.01" placeholder="CLIP 强度"></div>
                                             </div>
                                         </div>
                                         <div v-if="workflowEditorErrors.length > 0" class="text-warning small mt-2">{{ workflowEditorErrors.join('；') }}</div>
@@ -782,12 +787,12 @@
                                         <div v-for="input in selectedWorkflowNode.primitiveInputs" :key="input.name" class="rp-node-input mb-2">
                                             <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
                                                 <code class="text-info small text-break">{{ input.name }}</code>
-                                                <span v-if="getWorkflowInputBinding(selectedWorkflowNode.id, input.name)" class="badge bg-success">参数</span>
+                                                <span v-if="getWorkflowInputBinding(selectedWorkflowNode.id, input.name)" class="badge rp-tone-success">参数</span>
                                             </div>
-                                            <input v-if="isWorkflowLoaderFilename(selectedWorkflowNode.id, input.name)" class="form-control form-control-sm bg-dark text-light border-secondary" :value="input.value" @change="updateWorkflowPrimitiveInput(selectedWorkflowNode.id, input.name, $event.target.value)" :disabled="isParamsLocked">
+                                            <input v-if="isWorkflowLoaderFilename(selectedWorkflowNode.id, input.name)" class="form-control form-control-sm" :value="input.value" @change="updateWorkflowPrimitiveInput(selectedWorkflowNode.id, input.name, $event.target.value)" :disabled="isParamsLocked">
                                             <div v-else class="d-flex align-items-start gap-2">
                                                 <div class="small text-muted text-break flex-grow-1 rp-node-input-value">{{ String(input.value) }}</div>
-                                                <button v-if="!getWorkflowInputBinding(selectedWorkflowNode.id, input.name)" class="btn btn-outline-info btn-sm flex-shrink-0" @click="startExposeWorkflowInput(selectedWorkflowNode.id, input.name, input.value)" :disabled="isParamsLocked" title="加入参数"><i class="bi bi-sliders"></i></button>
+                                                <button v-if="!getWorkflowInputBinding(selectedWorkflowNode.id, input.name)" class="btn btn-outline-secondary btn-sm flex-shrink-0" @click="startExposeWorkflowInput(selectedWorkflowNode.id, input.name, input.value)" :disabled="isParamsLocked" title="加入参数"><i class="bi bi-sliders"></i></button>
                                                 <button v-else class="btn btn-outline-secondary btn-sm flex-shrink-0" @click="removeWorkflowParameter(getWorkflowInputBinding(selectedWorkflowNode.id, input.name).id)" :disabled="isParamsLocked" title="移除参数"><i class="bi bi-link-45deg"></i></button>
                                             </div>
                                         </div>
@@ -817,13 +822,13 @@
                                     <button v-for="chip in placeholderChips" :key="chip" class="btn btn-outline-secondary btn-sm" @click="insertPlaceholder(chip)" :disabled="isParamsLocked">{{ chip }}</button>
                                 </div>
                             </div>
-                            <textarea class="form-control bg-dark text-light border-secondary font-monospace rp-workflow-json" v-model="workflowJson" @input="isWorkflowEditorDirty = true" @focus="saveCursorPosition" @keyup="saveCursorPosition" @click="saveCursorPosition" placeholder="在此粘贴 ComfyUI Workflow JSON（使用 Workflow > Export API 导出）&#10;支持占位符如 {{width}}, {{height}}, {{prompt}} 等" :disabled="isParamsLocked" ref="workflowTextarea"></textarea>
+                            <textarea class="form-control font-monospace rp-workflow-json" v-model="workflowJson" @input="isWorkflowEditorDirty = true" @focus="saveCursorPosition" @keyup="saveCursorPosition" @click="saveCursorPosition" placeholder="在此粘贴 ComfyUI Workflow JSON（使用 Workflow > Export API 导出）&#10;支持占位符如 {{width}}, {{height}}, {{prompt}} 等" :disabled="isParamsLocked" ref="workflowTextarea"></textarea>
                             <div v-if="workflowError" class="alert alert-danger mt-2 mb-0"><i class="bi bi-exclamation-circle"></i> {{ workflowError }}</div>
                         </div>
 
                         <div v-show="workflowView === 'execution'" class="p-3">
                             <div class="small text-muted mb-3">执行 JSON · 本次提交内容</div>
-                            <pre class="bg-dark text-light border rounded p-3 mb-0 rp-workflow-json-output">{{ executionWorkflowJson }}</pre>
+                            <pre class="text-light border rounded p-3 mb-0 rp-workflow-json-output">{{ executionWorkflowJson }}</pre>
                         </div>
                     </div>
                 </div>
@@ -831,7 +836,7 @@
 
             <!-- 执行状态 -->
             <section class="mb-4" v-if="activeJobCount || queuedJobCount || (selectedHistoryRecord && (selectedHistoryRecord.jobId || selectedHistoryRecord.delayTime !== null || selectedHistoryRecord.executionTime !== null))">
-                <div class="card bg-dark border-secondary">
+                <div class="card">
                     <div class="card-body">
                         <div v-if="activeJobCount || queuedJobCount" class="d-flex justify-content-between align-items-center mb-2">
                             <span class="text-light small">运行中 / 排队中:</span>
@@ -862,13 +867,13 @@
                 <span class="rp-gen-splitter-grip" aria-hidden="true"></span>
             </div>
             <aside class="rp-gen-side">
-                <div class="rp-side-tabs" role="tablist" aria-label="工作区面板">
-                    <button type="button" class="rp-side-tab" :class="{ active: rightPanelTab === 'results' }"
+                <div class="rp-side-tabs rp-segmented" role="tablist" aria-label="工作区面板">
+                    <button type="button" class="rp-side-tab rp-segment" :class="{ active: rightPanelTab === 'results' }"
                             role="tab" :aria-selected="rightPanelTab === 'results'"
                             @click="setRightPanelTab('results')">
                         <i class="bi bi-image"></i> 结果
                     </button>
-                    <button type="button" class="rp-side-tab" :class="{ active: rightPanelTab === 'prompts' }"
+                    <button type="button" class="rp-side-tab rp-segment" :class="{ active: rightPanelTab === 'prompts' }"
                             role="tab" :aria-selected="rightPanelTab === 'prompts'"
                             @click="setRightPanelTab('prompts')">
                         <i class="bi bi-bookmark-star"></i> 预设与片段
@@ -877,17 +882,17 @@
 
                 <!-- 预设与片段面板 -->
                 <div v-show="rightPanelTab === 'prompts'" class="rp-side-panel" id="prompt-side-panel" ref="promptSidePanel">
-                    <div class="card bg-dark border-secondary rp-quick-panel mb-3">
-                        <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                    <div class="card rp-quick-panel mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
                             <span class="text-light fw-semibold"><i class="bi bi-bookmark-star"></i> 快捷提示词库</span>
                             <button class="btn btn-outline-light btn-sm" @click="showQuickPromptPanel = !showQuickPromptPanel"><i class="bi" :class="showQuickPromptPanel ? 'bi-chevron-up' : 'bi-chevron-down'"></i></button>
                         </div>
                         <div class="card-body" v-show="showQuickPromptPanel">
-                            <div class="btn-group btn-group-sm mb-2">
-                                <button class="btn" :class="quickPromptTab === 'presets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'presets'">预设 {{ promptBlockPresets.length }}</button>
-                                <button class="btn" :class="quickPromptTab === 'snippets' ? 'btn-primary' : 'btn-outline-secondary'" @click="quickPromptTab = 'snippets'">片段 {{ promptSnippetPresets.length }}</button>
+                            <div class="rp-segmented mb-2" role="group" aria-label="快捷提示词类型">
+                                <button class="rp-segment" :aria-pressed="quickPromptTab === 'presets'" @click="quickPromptTab = 'presets'">预设 {{ promptBlockPresets.length }}</button>
+                                <button class="rp-segment" :aria-pressed="quickPromptTab === 'snippets'" @click="quickPromptTab = 'snippets'">片段 {{ promptSnippetPresets.length }}</button>
                             </div>
-                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-2" v-model="quickPromptSearch" placeholder="搜索名称或正文">
+                            <input type="text" class="form-control form-control-sm mb-2" v-model="quickPromptSearch" placeholder="搜索名称或正文">
                             <div class="rp-ac-hint mb-2">
                                 <i class="bi bi-crosshair" aria-hidden="true"></i>
                                 默认插入目标：{{ promptInsertTargetLabel }}；正/负按钮固定插入对应字段。
@@ -927,7 +932,7 @@
                                                         :disabled="isParamsLocked" :title="'插入到当前编辑框：' + promptInsertTargetLabel">插入当前</button>
                                                 <button class="btn btn-outline-light btn-sm" @click="insertSnippetToPrompt(s, 'prompt')"
                                                         :disabled="isParamsLocked" title="插入到正向提示词（该字段光标处）">正</button>
-                                                <button class="btn btn-outline-danger btn-sm" @click="insertSnippetToPrompt(s, 'negative_prompt')"
+                                                <button class="btn btn-outline-secondary btn-sm" @click="insertSnippetToPrompt(s, 'negative_prompt')"
                                                         :disabled="isParamsLocked" title="插入到负向提示词（该字段光标处）">负</button>
                                                 <button class="btn btn-outline-secondary btn-sm" @click="copySnippet(s.text)" title="复制正文">
                                                     <i class="bi bi-clipboard" aria-hidden="true"></i><span class="visually-hidden">复制正文</span>
@@ -942,7 +947,7 @@
                                 </template>
                             </div>
                             <div class="d-flex gap-2 mt-2 flex-wrap">
-                                <button class="btn btn-outline-warning btn-sm" @click="openPromptPresets"><i class="bi bi-gear"></i> 管理预设/片段</button>
+                                <button class="btn btn-outline-secondary btn-sm" @click="openPromptPresets"><i class="bi bi-gear"></i> 管理预设/片段</button>
                                 <button v-if="promptUndo" class="btn btn-outline-light btn-sm" @click="undoPromptApply" :disabled="isParamsLocked"><i class="bi bi-arrow-counterclockwise"></i> 撤销上次应用</button>
                             </div>
                         </div>
@@ -958,8 +963,8 @@
                         </button>
                     </div>
                     <section class="mb-4 rp-gen-results" :class="{ 'rp-mobile-open': mobileResultsOpen }" id="results-section">
-                        <div class="card bg-dark border-secondary">
-                            <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                                 <h5 class="mb-0 text-light">
                                     <i class="bi bi-image"></i> 生成结果
                                 </h5>
@@ -968,18 +973,18 @@
                                 </div>
                             </div>
                             <div class="card-body">
-                                <ul class="nav nav-tabs rp-tabs mb-3">
+                                <ul class="nav rp-tabs mb-3">
                                     <li class="nav-item">
-                                        <a class="nav-link" href="#" :class="{ active: resultsTab === 'history' }" @click.prevent="resultsTab = 'history'">
+                                        <button type="button" class="nav-link" :class="{ active: resultsTab === 'history' }" :aria-pressed="resultsTab === 'history'" @click="resultsTab = 'history'">
                                             请求历史
-                                            <span class="badge bg-secondary ms-1">{{ requestHistory.length }}</span>
-                                        </a>
+                                            <span class="badge rp-tone-neutral ms-1">{{ requestHistory.length }}</span>
+                                        </button>
                                     </li>
                                     <li class="nav-item">
-                                        <a class="nav-link" href="#" :class="{ active: resultsTab === 'gallery' }" @click.prevent="resultsTab = 'gallery'">
+                                        <button type="button" class="nav-link" :class="{ active: resultsTab === 'gallery' }" :aria-pressed="resultsTab === 'gallery'" @click="resultsTab = 'gallery'">
                                             图库
-                                            <span class="badge bg-secondary ms-1">{{ galleryImages.length }}</span>
-                                        </a>
+                                            <span class="badge rp-tone-neutral ms-1">{{ galleryImages.length }}</span>
+                                        </button>
                                     </li>
                                 </ul>
 
@@ -1003,7 +1008,7 @@
                                             <div class="rp-history-current">
                                                 <label class="form-label text-light small mb-1" for="history-current-select">当前请求</label>
                                                 <select id="history-current-select"
-                                                        class="form-select form-select-sm bg-dark text-light border-secondary"
+                                                        class="form-select form-select-sm"
                                                         v-model="selectedHistoryId"
                                                         @change="selectHistoryRecord(selectedHistoryId)">
                                                     <option v-for="item in requestHistory" :key="item.id" :value="item.id">
@@ -1025,16 +1030,15 @@
                                         <div v-show="historyPanelOpen" class="rp-history-panel">
                                             <div class="rp-history-panel-filters">
                                                 <div class="input-group input-group-sm">
-                                                    <span class="input-group-text bg-dark text-light border-secondary"><i class="bi bi-search"></i></span>
-                                                    <input type="search" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                                    <input type="search" class="form-control form-control-sm"
                                                            v-model="historySearch"
                                                            placeholder="搜索模板名 / 正向 / 负向提示词"
                                                            aria-label="搜索历史记录">
                                                 </div>
                                                 <div class="d-flex flex-wrap gap-1" role="group" aria-label="按状态筛选">
                                                     <button v-for="f in historyFilterOptions" :key="f.value" type="button"
-                                                            class="btn btn-sm"
-                                                            :class="historyFilter === f.value ? 'btn-primary' : 'btn-outline-secondary'"
+                                                            class="rp-segment rp-filter-option" :aria-pressed="historyFilter === f.value"
                                                             @click="historyFilter = f.value">{{ f.label }}</button>
                                                 </div>
                                                 <div class="d-flex justify-content-between align-items-center gap-2 small text-muted">
@@ -1071,219 +1075,218 @@
                                         </div>
 
                                         <!-- 结果详情 -->
-                                        <div v-if="selectedHistoryRecord" class="card bg-dark border-secondary rp-result-detail">
-                                            <div class="card-body">
-                                                <div class="rp-result-head">
-                                                    <div class="min-w-0">
-                                                        <div class="rp-result-title">{{ selectedHistoryRecord.templateName || '自定义 Workflow' }}</div>
-                                                        <div class="small text-muted mt-1">
-                                                            {{ formatDateTime(selectedHistoryRecord.createdAt) }}
-                                                            <span class="badge ms-1" :class="getStatusBadgeClass(selectedHistoryRecord.status)">{{ historyStatusLabel(selectedHistoryRecord.status) }}</span>
-                                                        </div>
-                                                    </div>
-                                                    <div class="rp-result-actions">
-                                                        <button type="button" class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(selectedHistoryRecord)">
-                                                            <i class="bi bi-arrow-up"></i> 应用参数
-                                                        </button>
-                                                        <button v-if="canCancelSelected" type="button" class="btn btn-outline-warning btn-sm"
-                                                                @click="cancelGeneration" title="取消当前选中的运行/排队任务">
-                                                            <i class="bi bi-x-circle"></i> 取消
-                                                        </button>
-                                                        <button type="button" class="btn btn-outline-light btn-sm"
-                                                                @click="onHistoryStatusClick(selectedHistoryRecord)"
-                                                                :disabled="!canManualRetryRecord(selectedHistoryRecord)"
-                                                                :title="getManualRetryTitle(selectedHistoryRecord)">
-                                                            <i class="bi bi-arrow-repeat"></i> 恢复查询
-                                                        </button>
-                                                        <button type="button" class="btn btn-outline-light btn-sm" @click="resultsTab = 'gallery'">
-                                                            <i class="bi bi-grid-3x3-gap"></i> 图库
-                                                        </button>
+                                        <section v-if="selectedHistoryRecord" class="rp-result-detail" aria-label="当前请求详情">
+                                            <div class="rp-result-head">
+                                                <div class="min-w-0">
+                                                    <div class="rp-result-title">{{ selectedHistoryRecord.templateName || '自定义 Workflow' }}</div>
+                                                    <div class="small text-muted mt-1">
+                                                        {{ formatDateTime(selectedHistoryRecord.createdAt) }}
+                                                        <span class="badge ms-1" :class="getStatusBadgeClass(selectedHistoryRecord.status)">{{ historyStatusLabel(selectedHistoryRecord.status) }}</span>
                                                     </div>
                                                 </div>
-
-                                                <div v-if="getManualRetryBlockedReason(selectedHistoryRecord)" class="small text-warning mt-2 mb-0">
-                                                    <i class="bi bi-info-circle"></i> 无法恢复查询：{{ getManualRetryBlockedReason(selectedHistoryRecord) }}
+                                                <div class="rp-result-actions">
+                                                    <button type="button" class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(selectedHistoryRecord)">
+                                                        <i class="bi bi-arrow-up"></i> 应用参数
+                                                    </button>
+                                                    <button v-if="canCancelSelected" type="button" class="btn btn-outline-secondary btn-sm"
+                                                            @click="cancelGeneration" title="取消当前选中的运行/排队任务">
+                                                        <i class="bi bi-x-circle"></i> 取消
+                                                    </button>
+                                                    <button v-if="shouldShowHistoryRecovery(selectedHistoryRecord)" type="button" class="btn btn-outline-light btn-sm"
+                                                            @click="onHistoryStatusClick(selectedHistoryRecord)"
+                                                            :disabled="!canManualRetryRecord(selectedHistoryRecord)"
+                                                            :title="getManualRetryTitle(selectedHistoryRecord)">
+                                                        <i class="bi bi-arrow-repeat"></i> 恢复查询
+                                                    </button>
+                                                    <button type="button" class="btn btn-outline-light btn-sm" @click="resultsTab = 'gallery'">
+                                                        <i class="bi bi-grid-3x3-gap"></i> 图库
+                                                    </button>
                                                 </div>
-
-                                                <div v-if="selectedHistoryRecord.errorMessage" class="alert alert-danger py-2 mt-3 mb-0 rp-break small">
-                                                    <i class="bi bi-exclamation-triangle-fill"></i> {{ selectedHistoryRecord.errorMessage }}
-                                                </div>
-
-                                                <!-- 主图 + 缩略图条 -->
-                                                <div v-if="selectedHistoryImage" class="mt-3">
-                                                    <div class="rp-history-main border border-secondary rounded overflow-hidden position-relative"
-                                                         @click="openPreviewFromHistory(selectedHistoryRecord.id, selectedHistoryImageIndex)">
-                                                        <img :src="selectedHistoryImage.imageUrl" class="w-100 rp-history-main-img" alt="">
-
-                                                        <div class="rp-image-actions position-absolute top-0 end-0 m-2 d-flex gap-2">
-                                                            <button class="btn btn-dark btn-sm border border-secondary" @click.stop="toggleFavorite(selectedHistoryImage)"
-                                                                    :title="isFavorited(selectedHistoryImage.id) ? '取消收藏' : '收藏'">
-                                                                <i class="bi" :class="isFavorited(selectedHistoryImage.id) ? 'bi-star-fill text-warning' : 'bi-star text-warning'"></i>
-                                                            </button>
-                                                            <button class="btn btn-dark btn-sm border border-secondary" @click.stop="downloadImage(selectedHistoryImage)" title="下载/打开">
-                                                                <i class="bi bi-download"></i>
-                                                            </button>
-                                                            <button class="btn btn-dark btn-sm border border-secondary" @click.stop="deleteImage(selectedHistoryImage, { recordId: selectedHistoryRecord.id })" title="删除">
-                                                                <i class="bi bi-trash"></i>
-                                                            </button>
-                                                        </div>
-
-                                                        <button class="rp-history-nav rp-history-prev" type="button"
-                                                                @click.stop="historyPrevImage"
-                                                                :disabled="selectedHistoryImageIndex <= 0" aria-label="Previous image">
-                                                            <i class="bi bi-chevron-left"></i>
-                                                        </button>
-                                                        <button class="rp-history-nav rp-history-next" type="button"
-                                                                @click.stop="historyNextImage"
-                                                                :disabled="selectedHistoryImageIndex >= selectedHistoryImages.length - 1" aria-label="Next image">
-                                                            <i class="bi bi-chevron-right"></i>
-                                                        </button>
-
-                                                        <span class="badge bg-dark border border-secondary position-absolute bottom-0 end-0 m-2">
-                                                            {{ selectedHistoryImageIndex + 1 }} / {{ selectedHistoryImages.length }}
-                                                        </span>
-                                                    </div>
-
-                                                    <div class="rp-thumb-strip mt-2 d-flex gap-2 overflow-auto pb-1" v-if="selectedHistoryImages.length > 1">
-                                                        <div v-for="(img, idx) in selectedHistoryImages" :key="img.id"
-                                                             class="rp-thumb-mini border border-secondary rounded overflow-hidden"
-                                                             :class="{ 'rp-thumb-mini-active': idx === selectedHistoryImageIndex }"
-                                                             @click.stop="setHistoryImageIndex(idx)">
-                                                            <img :src="img.imageUrl" alt="" style="width: 96px; height: 72px; object-fit: cover;">
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div v-else class="rp-history-noimage mt-3">
-                                                    <i class="bi" :class="historyRecordThumbIcon(selectedHistoryRecord)" aria-hidden="true"></i>
-                                                    <div>{{ historyEmptyImageText(selectedHistoryRecord) }}</div>
-                                                </div>
-
-                                                <!-- 常用参数 -->
-                                                <div class="rp-result-stats mt-2">
-                                                    <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.width && selectedHistoryRecord.placeholderValues.height">
-                                                        <span class="rp-stat-label">尺寸</span>
-                                                        <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.width }}×{{ selectedHistoryRecord.placeholderValues.height }}</span>
-                                                    </span>
-                                                    <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.seed !== undefined">
-                                                        <span class="rp-stat-label">Seed</span>
-                                                        <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.seed }}</span>
-                                                    </span>
-                                                    <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.steps !== undefined">
-                                                        <span class="rp-stat-label">Steps</span>
-                                                        <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.steps }}</span>
-                                                    </span>
-                                                    <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.cfg !== undefined">
-                                                        <span class="rp-stat-label">CFG</span>
-                                                        <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.cfg }}</span>
-                                                    </span>
-                                                    <span class="rp-stat" v-if="selectedHistoryRecord.executionTime !== null && selectedHistoryRecord.executionTime !== undefined">
-                                                        <span class="rp-stat-label">耗时</span>
-                                                        <span class="rp-stat-value">{{ formatDurationMs(selectedHistoryRecord.executionTime) }}</span>
-                                                    </span>
-                                                </div>
-
-                                                <!-- 提示词（可折叠、可复制） -->
-                                                <details class="rp-details-block rp-detail-section mt-3"
-                                                         v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.prompt">
-                                                    <summary class="text-light small"><i class="bi bi-chat-left-text"></i> 正向提示词</summary>
-                                                    <div class="mt-2">
-                                                        <div class="d-flex justify-content-end mb-1">
-                                                            <button class="btn btn-outline-success btn-sm" type="button"
-                                                                    @click="copyText(selectedHistoryRecord.placeholderValues.prompt, 'Prompt')" title="复制正向提示词">
-                                                                <i class="bi bi-clipboard"></i> 复制
-                                                            </button>
-                                                        </div>
-                                                        <pre class="rp-prompt-box small mb-0">{{ selectedHistoryRecord.placeholderValues.prompt }}</pre>
-                                                    </div>
-                                                </details>
-
-                                                <details class="rp-details-block rp-detail-section mt-2"
-                                                         v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.negative_prompt">
-                                                    <summary class="text-light small"><i class="bi bi-slash-circle"></i> 负向提示词</summary>
-                                                    <div class="mt-2">
-                                                        <div class="d-flex justify-content-end mb-1">
-                                                            <button class="btn btn-outline-danger btn-sm" type="button"
-                                                                    @click="copyText(selectedHistoryRecord.placeholderValues.negative_prompt, 'Negative Prompt')" title="复制负向提示词">
-                                                                <i class="bi bi-clipboard"></i> 复制
-                                                            </button>
-                                                        </div>
-                                                        <pre class="rp-prompt-box rp-prompt-box-negative small mb-0">{{ selectedHistoryRecord.placeholderValues.negative_prompt }}</pre>
-                                                    </div>
-                                                </details>
-
-                                                <!-- 低频技术信息 -->
-                                                <details class="rp-details-block rp-detail-section mt-3">
-                                                    <summary class="text-light small"><i class="bi bi-info-circle"></i> 任务详情</summary>
-                                                    <div class="mt-2">
-                                                        <dl class="rp-detail-kv">
-                                                            <div class="rp-detail-row">
-                                                                <dt>Job ID</dt>
-                                                                <dd>
-                                                                    <code class="rp-break">{{ selectedHistoryRecord.jobId || '-' }}</code>
-                                                                    <button v-if="selectedHistoryRecord.jobId" type="button"
-                                                                            class="btn btn-outline-light btn-sm ms-2"
-                                                                            @click="copyText(selectedHistoryRecord.jobId, 'Job ID')" title="复制 Job ID">
-                                                                        <i class="bi bi-clipboard"></i>
-                                                                    </button>
-                                                                </dd>
-                                                            </div>
-                                                            <div class="rp-detail-row">
-                                                                <dt>运行模式</dt>
-                                                                <dd>{{ selectedHistoryRecord.runMode || '-' }}</dd>
-                                                            </div>
-                                                            <div class="rp-detail-row">
-                                                                <dt>Endpoint</dt>
-                                                                <dd class="rp-break">{{ selectedHistoryRecord.endpointId || '-' }}</dd>
-                                                            </div>
-                                                            <div class="rp-detail-row">
-                                                                <dt>排队时间</dt>
-                                                                <dd>{{ selectedHistoryRecord.delayTime !== null && selectedHistoryRecord.delayTime !== undefined ? formatDurationMs(selectedHistoryRecord.delayTime) : '-' }}</dd>
-                                                            </div>
-                                                            <div class="rp-detail-row">
-                                                                <dt>执行时间</dt>
-                                                                <dd>{{ selectedHistoryRecord.executionTime !== null && selectedHistoryRecord.executionTime !== undefined ? formatDurationMs(selectedHistoryRecord.executionTime) : '-' }}</dd>
-                                                            </div>
-                                                            <div class="rp-detail-row">
-                                                                <dt>请求大小</dt>
-                                                                <dd>{{ formatBytes(selectedHistoryRecord.payloadSize) }}</dd>
-                                                            </div>
-                                                            <div class="rp-detail-row">
-                                                                <dt>图片数</dt>
-                                                                <dd>{{ (selectedHistoryRecord.images || []).length }}</dd>
-                                                            </div>
-                                                            <div class="rp-detail-row" v-if="selectedHistoryRecord.deletedImages && selectedHistoryRecord.deletedImages.length">
-                                                                <dt>已删图片</dt>
-                                                                <dd>{{ selectedHistoryRecord.deletedImages.length }}</dd>
-                                                            </div>
-                                                        </dl>
-
-                                                        <details class="rp-details-block mt-3" v-if="selectedHistoryRecord.placeholderValues">
-                                                            <summary class="text-light small">生成参数 JSON（不含 Prompt）</summary>
-                                                            <pre class="mt-2 mb-0 small">{{ JSON.stringify(selectedHistoryParamsForJson, null, 2) }}</pre>
-                                                        </details>
-
-                                                        <details class="rp-details-block mt-3" v-if="selectedHistoryRecord.deletedImages && selectedHistoryRecord.deletedImages.length">
-                                                            <summary class="text-light small">已删除图片（{{ selectedHistoryRecord.deletedImages.length }}）</summary>
-                                                            <div class="mt-2 small">
-                                                                <div v-for="d in selectedHistoryRecord.deletedImages" :key="d.id" class="text-muted">
-                                                                    {{ d.filename || d.id }} · {{ formatDateTime(d.deletedAt) }}
-                                                                </div>
-                                                            </div>
-                                                        </details>
-                                                    </div>
-                                                </details>
                                             </div>
-                                        </div>
+
+                                            <div v-if="getManualRetryBlockedReason(selectedHistoryRecord)" class="small text-warning mt-2 mb-0">
+                                                <i class="bi bi-info-circle"></i> 无法恢复查询：{{ getManualRetryBlockedReason(selectedHistoryRecord) }}
+                                            </div>
+
+                                            <div v-if="selectedHistoryRecord.errorMessage" class="alert py-2 mt-3 mb-0 rp-break small"
+                                                 :class="historyNoticeClass(selectedHistoryRecord.status)">
+                                                <i class="bi bi-exclamation-triangle-fill"></i> {{ selectedHistoryRecord.errorMessage }}
+                                            </div>
+
+                                            <!-- 主图 + 缩略图条 -->
+                                            <div v-if="selectedHistoryImage" class="mt-3">
+                                                <div class="rp-history-main border rounded overflow-hidden position-relative"
+                                                     @click="openPreviewFromHistory(selectedHistoryRecord.id, selectedHistoryImageIndex)">
+                                                    <img :src="selectedHistoryImage.imageUrl" class="w-100 rp-history-main-img" alt="">
+
+                                                    <div class="rp-image-actions position-absolute top-0 end-0 m-2 d-flex gap-2">
+                                                        <button class="btn btn-dark btn-sm border" @click.stop="toggleFavorite(selectedHistoryImage)"
+                                                                :title="isFavorited(selectedHistoryImage.id) ? '取消收藏' : '收藏'">
+                                                            <i class="bi" :class="isFavorited(selectedHistoryImage.id) ? 'bi-star-fill text-warning' : 'bi-star text-warning'"></i>
+                                                        </button>
+                                                        <button class="btn btn-dark btn-sm border" @click.stop="downloadImage(selectedHistoryImage)" title="下载/打开">
+                                                            <i class="bi bi-download"></i>
+                                                        </button>
+                                                        <button class="btn btn-dark btn-sm border" @click.stop="deleteImage(selectedHistoryImage, { recordId: selectedHistoryRecord.id })" title="删除">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    </div>
+
+                                                    <button class="rp-history-nav rp-history-prev" type="button"
+                                                            @click.stop="historyPrevImage"
+                                                            :disabled="selectedHistoryImageIndex <= 0" aria-label="Previous image">
+                                                        <i class="bi bi-chevron-left"></i>
+                                                    </button>
+                                                    <button class="rp-history-nav rp-history-next" type="button"
+                                                            @click.stop="historyNextImage"
+                                                            :disabled="selectedHistoryImageIndex >= selectedHistoryImages.length - 1" aria-label="Next image">
+                                                        <i class="bi bi-chevron-right"></i>
+                                                    </button>
+
+                                                    <span class="badge bg-dark border position-absolute bottom-0 end-0 m-2">
+                                                        {{ selectedHistoryImageIndex + 1 }} / {{ selectedHistoryImages.length }}
+                                                    </span>
+                                                </div>
+
+                                                <div class="rp-thumb-strip mt-2 d-flex gap-2 overflow-auto pb-1" v-if="selectedHistoryImages.length > 1">
+                                                    <div v-for="(img, idx) in selectedHistoryImages" :key="img.id"
+                                                         class="rp-thumb-mini border rounded overflow-hidden"
+                                                         :class="{ 'rp-thumb-mini-active': idx === selectedHistoryImageIndex }"
+                                                         @click.stop="setHistoryImageIndex(idx)">
+                                                        <img :src="img.imageUrl" alt="" style="width: 96px; height: 72px; object-fit: cover;">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div v-else class="rp-history-noimage mt-3">
+                                                <i class="bi" :class="historyRecordThumbIcon(selectedHistoryRecord)" aria-hidden="true"></i>
+                                                <div>{{ historyEmptyImageText(selectedHistoryRecord) }}</div>
+                                            </div>
+
+                                            <!-- 常用参数 -->
+                                            <div class="rp-result-stats mt-2">
+                                                <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.width && selectedHistoryRecord.placeholderValues.height">
+                                                    <span class="rp-stat-label">尺寸</span>
+                                                    <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.width }}×{{ selectedHistoryRecord.placeholderValues.height }}</span>
+                                                </span>
+                                                <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.seed !== undefined">
+                                                    <span class="rp-stat-label">Seed</span>
+                                                    <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.seed }}</span>
+                                                </span>
+                                                <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.steps !== undefined">
+                                                    <span class="rp-stat-label">Steps</span>
+                                                    <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.steps }}</span>
+                                                </span>
+                                                <span class="rp-stat" v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.cfg !== undefined">
+                                                    <span class="rp-stat-label">CFG</span>
+                                                    <span class="rp-stat-value">{{ selectedHistoryRecord.placeholderValues.cfg }}</span>
+                                                </span>
+                                                <span class="rp-stat" v-if="selectedHistoryRecord.executionTime !== null && selectedHistoryRecord.executionTime !== undefined">
+                                                    <span class="rp-stat-label">耗时</span>
+                                                    <span class="rp-stat-value">{{ formatDurationMs(selectedHistoryRecord.executionTime) }}</span>
+                                                </span>
+                                            </div>
+
+                                            <!-- 提示词（可折叠、可复制） -->
+                                            <details class="rp-details-block rp-detail-section mt-3"
+                                                     v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.prompt">
+                                                <summary class="text-light small"><i class="bi bi-chat-left-text"></i> 正向提示词</summary>
+                                                <div class="mt-2">
+                                                    <div class="d-flex justify-content-end mb-1">
+                                                        <button class="btn btn-outline-secondary btn-sm" type="button"
+                                                                @click="copyText(selectedHistoryRecord.placeholderValues.prompt, 'Prompt')" title="复制正向提示词">
+                                                            <i class="bi bi-clipboard"></i> 复制
+                                                        </button>
+                                                    </div>
+                                                    <pre class="rp-prompt-box small mb-0">{{ selectedHistoryRecord.placeholderValues.prompt }}</pre>
+                                                </div>
+                                            </details>
+
+                                            <details class="rp-details-block rp-detail-section mt-2"
+                                                     v-if="selectedHistoryRecord.placeholderValues && selectedHistoryRecord.placeholderValues.negative_prompt">
+                                                <summary class="text-light small"><i class="bi bi-slash-circle"></i> 负向提示词</summary>
+                                                <div class="mt-2">
+                                                    <div class="d-flex justify-content-end mb-1">
+                                                        <button class="btn btn-outline-secondary btn-sm" type="button"
+                                                                @click="copyText(selectedHistoryRecord.placeholderValues.negative_prompt, 'Negative Prompt')" title="复制负向提示词">
+                                                            <i class="bi bi-clipboard"></i> 复制
+                                                        </button>
+                                                    </div>
+                                                    <pre class="rp-prompt-box rp-prompt-box-negative small mb-0">{{ selectedHistoryRecord.placeholderValues.negative_prompt }}</pre>
+                                                </div>
+                                            </details>
+
+                                            <!-- 低频技术信息 -->
+                                            <details class="rp-details-block rp-detail-section mt-3">
+                                                <summary class="text-light small"><i class="bi bi-info-circle"></i> 任务详情</summary>
+                                                <div class="mt-2">
+                                                    <dl class="rp-detail-kv">
+                                                        <div class="rp-detail-row">
+                                                            <dt>Job ID</dt>
+                                                            <dd>
+                                                                <code class="rp-break">{{ selectedHistoryRecord.jobId || '-' }}</code>
+                                                                <button v-if="selectedHistoryRecord.jobId" type="button"
+                                                                        class="btn btn-outline-light btn-sm ms-2"
+                                                                        @click="copyText(selectedHistoryRecord.jobId, 'Job ID')" title="复制 Job ID">
+                                                                    <i class="bi bi-clipboard"></i>
+                                                                </button>
+                                                            </dd>
+                                                        </div>
+                                                        <div class="rp-detail-row">
+                                                            <dt>运行模式</dt>
+                                                            <dd>{{ selectedHistoryRecord.runMode || '-' }}</dd>
+                                                        </div>
+                                                        <div class="rp-detail-row">
+                                                            <dt>Endpoint</dt>
+                                                            <dd class="rp-break">{{ selectedHistoryRecord.endpointId || '-' }}</dd>
+                                                        </div>
+                                                        <div class="rp-detail-row">
+                                                            <dt>排队时间</dt>
+                                                            <dd>{{ selectedHistoryRecord.delayTime !== null && selectedHistoryRecord.delayTime !== undefined ? formatDurationMs(selectedHistoryRecord.delayTime) : '-' }}</dd>
+                                                        </div>
+                                                        <div class="rp-detail-row">
+                                                            <dt>执行时间</dt>
+                                                            <dd>{{ selectedHistoryRecord.executionTime !== null && selectedHistoryRecord.executionTime !== undefined ? formatDurationMs(selectedHistoryRecord.executionTime) : '-' }}</dd>
+                                                        </div>
+                                                        <div class="rp-detail-row">
+                                                            <dt>请求大小</dt>
+                                                            <dd>{{ formatBytes(selectedHistoryRecord.payloadSize) }}</dd>
+                                                        </div>
+                                                        <div class="rp-detail-row">
+                                                            <dt>图片数</dt>
+                                                            <dd>{{ (selectedHistoryRecord.images || []).length }}</dd>
+                                                        </div>
+                                                        <div class="rp-detail-row" v-if="selectedHistoryRecord.deletedImages && selectedHistoryRecord.deletedImages.length">
+                                                            <dt>已删图片</dt>
+                                                            <dd>{{ selectedHistoryRecord.deletedImages.length }}</dd>
+                                                        </div>
+                                                    </dl>
+
+                                                    <details class="rp-details-block mt-3" v-if="selectedHistoryRecord.placeholderValues">
+                                                        <summary class="text-light small">生成参数 JSON（不含 Prompt）</summary>
+                                                        <pre class="mt-2 mb-0 small">{{ JSON.stringify(selectedHistoryParamsForJson, null, 2) }}</pre>
+                                                    </details>
+
+                                                    <details class="rp-details-block mt-3" v-if="selectedHistoryRecord.deletedImages && selectedHistoryRecord.deletedImages.length">
+                                                        <summary class="text-light small">已删除图片（{{ selectedHistoryRecord.deletedImages.length }}）</summary>
+                                                        <div class="mt-2 small">
+                                                            <div v-for="d in selectedHistoryRecord.deletedImages" :key="d.id" class="text-muted">
+                                                                {{ d.filename || d.id }} · {{ formatDateTime(d.deletedAt) }}
+                                                            </div>
+                                                        </div>
+                                                    </details>
+                                                </div>
+                                            </details>
+                                        </section>
                                     </template>
                                 </div>
                         <!-- 图库 -->
                         <div v-show="resultsTab === 'gallery'">
                             <div class="d-flex justify-content-end align-items-center gap-2 flex-wrap mb-3">
                                 <span class="small text-muted">缩略图显示</span>
-                                <div class="btn-group btn-group-sm" role="group" aria-label="图库图片显示方式">
-                                    <button type="button" class="btn btn-outline-light" :class="{ active: galleryImageFit === 'cover' }"
+                                <div class="rp-segmented" role="group" aria-label="图库图片显示方式">
+                                    <button type="button" class="rp-segment"
                                             :aria-pressed="galleryImageFit === 'cover'" @click="setGalleryImageFit('cover')" title="裁剪图片以填满缩略图">填满</button>
-                                    <button type="button" class="btn btn-outline-light" :class="{ active: galleryImageFit === 'contain' }"
+                                    <button type="button" class="rp-segment"
                                             :aria-pressed="galleryImageFit === 'contain'" @click="setGalleryImageFit('contain')" title="按最长边适应缩略图，保留完整画面">完整显示</button>
                                 </div>
                             </div>
@@ -1291,14 +1294,14 @@
                             <template v-else>
                                 <div class="row g-2">
                                     <div v-for="(img, idx) in galleryImages" :key="img.id" class="col-6 col-md-4 col-xl-3">
-                                        <div class="rp-thumb border border-secondary rounded overflow-hidden position-relative" @click="openPreviewFromGallery(idx)">
+                                        <div class="rp-thumb border rounded overflow-hidden position-relative" @click="openPreviewFromGallery(idx)">
                                             <img :src="img.imageUrl" class="rp-gallery-image" :style="{ objectFit: galleryImageFit }" :alt="img.filename || '生成图片'">
                                             <span class="badge bg-dark position-absolute top-0 start-0 m-2">{{ idx + 1 }}</span>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div v-if="detailImage && detailRecord" class="card bg-dark border-secondary mt-3 rp-gallery-detail">
+                                <div v-if="detailImage && detailRecord" class="card mt-3 rp-gallery-detail">
                                     <div class="card-body">
                                         <div class="rp-gallery-detail-head">
                                             <div class="rp-gallery-detail-title">
@@ -1309,8 +1312,9 @@
                                                 <button class="btn btn-outline-light btn-sm" @click="applyParamsFromRecord(detailRecord)" title="应用参数">
                                                     <i class="bi bi-arrow-up"></i>
                                                 </button>
-                                                <button class="btn btn-outline-warning btn-sm" @click="toggleFavorite(detailImage)"
-                                                        :title="isFavorited(detailImage.id) ? '取消收藏' : '收藏'">
+                                                <button class="btn btn-outline-secondary btn-sm" @click="toggleFavorite(detailImage)"
+                                                        :aria-pressed="isFavorited(detailImage.id)"
+                                                        :class="{ 'text-warning': isFavorited(detailImage.id) }" :title="isFavorited(detailImage.id) ? '取消收藏' : '收藏'">
                                                     <i class="bi" :class="isFavorited(detailImage.id) ? 'bi-star-fill' : 'bi-star'"></i>
                                                 </button>
                                                 <button class="btn btn-outline-light btn-sm" @click="downloadImage(detailImage)" title="下载/打开">
@@ -1322,7 +1326,7 @@
                                             </div>
                                         </div>
 
-                                        <div class="mt-3 rp-thumb border border-secondary rounded overflow-hidden">
+                                        <div class="mt-3 rp-thumb border rounded overflow-hidden">
                                             <img :src="detailImage.imageUrl" class="w-100" style="max-height: 320px; object-fit: contain; background:#111;" @click="openPreviewFromGallery(selectedGalleryIndex)">
                                         </div>
 
@@ -1350,8 +1354,9 @@
 
             <!-- 固定底部操作栏 -->
             <section class="rp-action-bar">
-                <div v-if="errorMessage" class="alert alert-danger rp-action-error mb-2 py-2">
-                    <i class="bi bi-exclamation-triangle-fill"></i> {{ errorMessage }}
+                <div v-if="errorMessage" class="alert rp-action-error mb-2 py-2 rp-break" :class="actionNoticeClass" role="status">
+                    <i class="bi" :class="actionNoticeClass === 'alert-danger' ? 'bi-exclamation-triangle-fill' : 'bi-info-circle'" aria-hidden="true"></i>
+                    {{ errorMessage }}
                 </div>
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div class="rp-generate-actions">
@@ -1364,7 +1369,7 @@
                                 :title="generateButtonTitle">
                             <i class="bi bi-play-fill"></i> {{ generateButtonLabel }}
                         </button>
-                        <button class="btn btn-secondary btn-lg rp-generate-btn"
+                        <button class="btn btn-outline-secondary btn-lg rp-generate-btn"
                                 @click="cancelGeneration"
                                 :disabled="!canCancelSelected"
                                 title="取消当前选中记录对应的运行/排队任务">
@@ -1385,12 +1390,12 @@
                         <button type="button" class="btn btn-link btn-sm p-0 flex-shrink-0" @click="focusGenerateBlocker">{{ (generateBlocker && generateBlocker.actionLabel) || '去修正' }}</button>
                     </div>
                     <div class="text-light rp-generate-status">
-                        <span class="badge bg-secondary me-2">{{ runModeLabel }}</span>
-                        <span v-if="activeJobCount > 0" class="badge bg-info me-2">
+                        <span class="badge rp-tone-neutral">{{ runModeLabel }}</span>
+                        <span v-if="activeJobCount > 0" class="badge rp-tone-info">
                             <span class="spinner-border spinner-border-sm me-1" style="vertical-align: -0.1em;"></span>
                             运行中 {{ activeJobCount }}
                         </span>
-                        <span v-if="queuedJobCount > 0" class="badge bg-secondary">
+                        <span v-if="queuedJobCount > 0" class="badge rp-tone-neutral">
                             排队 {{ queuedJobCount }}
                         </span>
                     </div>
@@ -1401,8 +1406,8 @@
         <!-- 设置模态框 -->
         <div data-overlay="settings" class="modal fade" :class="{ show: showSettings }" :style="{ display: showSettings ? 'block' : 'none', zIndex: 1075 }">
             <div class="modal-dialog modal-dialog-centered modal-lg">
-                <div class="modal-content bg-dark border-secondary">
-                    <div class="modal-header border-secondary">
+                <div class="modal-content">
+                    <div class="modal-header">
                         <h5 class="modal-title text-light">
                             <i class="bi bi-gear"></i> 设置
                         </h5>
@@ -1412,7 +1417,7 @@
                         <!-- Endpoint ID -->
                         <div class="mb-3">
                             <label class="form-label text-light">Endpoint ID</label>
-                            <input type="text" class="form-control bg-dark text-light border-secondary"
+                            <input type="text" class="form-control"
                                    v-model="settingsForm.endpointId"
                                    @blur="extractEndpointId"
                                    placeholder="输入 Endpoint ID 或完整 URL">
@@ -1426,7 +1431,7 @@
                             <label class="form-label text-light">API Key</label>
                             <div class="input-group">
                                 <input :type="showApiKey ? 'text' : 'password'"
-                                       class="form-control bg-dark text-light border-secondary"
+                                       class="form-control"
                                        v-model="settingsForm.apiKey"
                                        placeholder="输入 RunPod API Key">
                                 <button class="btn btn-outline-secondary" type="button" @click="showApiKey = !showApiKey">
@@ -1447,7 +1452,7 @@
                         <!-- 运行模式 -->
                         <div class="mb-3">
                             <label class="form-label text-light">运行模式</label>
-                            <select class="form-select bg-dark text-light border-secondary"
+                            <select class="form-select"
                                     v-model="settingsForm.runMode">
                                 <option value="run">异步 (/run) - 推荐</option>
                                 <option value="runsync">同步 (/runsync) - 最多等待 5 分钟</option>
@@ -1469,7 +1474,7 @@
 
                         <div class="mb-3">
                             <label class="form-label text-light">首次轮询延时（毫秒）</label>
-                            <input type="number" class="form-control bg-dark text-light border-secondary"
+                            <input type="number" class="form-control"
                                    v-model.number="settingsForm.initialPollDelayMs"
                                    :disabled="settingsForm.runMode !== 'run' || !settingsForm.initialPollDelayEnabled"
                                    min="0" max="60000" step="500">
@@ -1478,7 +1483,7 @@
                         <!-- 轮询间隔 -->
                         <div class="mb-3">
                             <label class="form-label text-light">轮询间隔（毫秒）</label>
-                            <input type="number" class="form-control bg-dark text-light border-secondary"
+                            <input type="number" class="form-control"
                                    v-model.number="settingsForm.pollIntervalMs"
                                    min="1000" max="10000" step="500">
                         </div>
@@ -1486,7 +1491,7 @@
                         <!-- 状态查询超时 -->
                         <div class="mb-3">
                             <label class="form-label text-light">单次状态查询超时（秒）</label>
-                            <input type="number" class="form-control bg-dark text-light border-secondary"
+                            <input type="number" class="form-control"
                                    v-model.number="settingsForm.statusTimeoutSeconds"
                                    min="5" max="120" step="1"
                                    :disabled="settingsForm.runMode !== 'run'">
@@ -1498,7 +1503,7 @@
                             </div>
                         </div>
 
-                        <hr class="border-secondary my-4">
+                        <hr class="my-4">
 
                         <!-- 生成行为 -->
                         <h6 class="text-light mb-3">
@@ -1527,7 +1532,7 @@
 
                         <div class="mb-3">
                             <label class="form-label text-light">并发上限</label>
-                            <input type="number" class="form-control bg-dark text-light border-secondary"
+                            <input type="number" class="form-control"
                                    v-model.number="settingsForm.maxConcurrent"
                                    :disabled="!settingsForm.allowConcurrent"
                                    min="1" max="30" step="1">
@@ -1546,7 +1551,7 @@
 
                         <div class="mb-3">
                             <label class="form-label text-light">排队上限</label>
-                            <input type="number" class="form-control bg-dark text-light border-secondary"
+                            <input type="number" class="form-control"
                                    v-model.number="settingsForm.maxQueue"
                                    :disabled="!settingsForm.allowQueue"
                                    min="0" max="30" step="1">
@@ -1584,7 +1589,7 @@
 
                         <!-- 测试连接 -->
                         <div class="mb-3">
-                            <button class="btn btn-outline-info" @click="testConnection"
+                            <button class="btn btn-outline-secondary" @click="testConnection"
                                     :disabled="!canTestConnection || testingConnection">
                                 <span v-if="testingConnection">
                                     <span class="spinner-border spinner-border-sm"></span> 测试中...
@@ -1605,7 +1610,7 @@
                             <pre v-if="connectionTestResult.data" class="mt-2 mb-0 small rp-test-result-pre">{{ JSON.stringify(connectionTestResult.data, null, 2) }}</pre>
                         </div>
                     </div>
-                    <div class="modal-footer border-secondary">
+                    <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" @click="closeSettings">取消</button>
                         <button type="button" class="btn btn-primary" @click="saveSettings">保存设置</button>
                     </div>
@@ -1619,8 +1624,8 @@
         <!-- 保存模板模态框 -->
         <div data-overlay="saveTemplate" class="modal fade" :class="{ show: showSaveTemplate }" :style="{ display: showSaveTemplate ? 'block' : 'none', zIndex: 1065 }">
             <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content bg-dark border-secondary">
-                    <div class="modal-header border-secondary">
+                <div class="modal-content">
+                    <div class="modal-header">
                         <h5 class="modal-title text-light">
                             <i class="bi bi-save"></i> 保存模板
                         </h5>
@@ -1629,19 +1634,19 @@
                     <div class="modal-body">
                         <div class="mb-3">
                             <label class="form-label text-light">模板名称</label>
-                            <input type="text" class="form-control bg-dark text-light border-secondary"
+                            <input type="text" class="form-control"
                                    v-model="newTemplateName"
                                    placeholder="输入模板名称">
                         </div>
                         <div class="mb-3">
                             <label class="form-label text-light">描述（可选）</label>
-                            <textarea class="form-control bg-dark text-light border-secondary"
+                            <textarea class="form-control"
                                       v-model="newTemplateDescription"
                                       rows="2"
                                       placeholder="描述这个模板的用途"></textarea>
                         </div>
                     </div>
-                    <div class="modal-footer border-secondary">
+                    <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" @click="showSaveTemplate = false">取消</button>
                         <button type="button" class="btn btn-primary" @click="confirmSaveTemplate">保存</button>
                     </div>
@@ -1655,8 +1660,8 @@
         <!-- 导入模板模态框 -->
         <div data-overlay="importTemplate" class="modal fade" :class="{ show: showImportTemplate }" :style="{ display: showImportTemplate ? 'block' : 'none', zIndex: 1070 }">
             <div class="modal-dialog modal-dialog-centered modal-lg">
-                <div class="modal-content bg-dark border-secondary">
-                    <div class="modal-header border-secondary">
+                <div class="modal-content">
+                    <div class="modal-header">
                         <h5 class="modal-title text-light">
                             <i class="bi bi-upload"></i> 导入模板
                         </h5>
@@ -1671,7 +1676,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label text-light">或粘贴 JSON（模板/工作流）</label>
-                            <textarea class="form-control bg-dark text-light border-secondary font-monospace"
+                            <textarea class="form-control font-monospace"
                                       v-model="importTemplateJson"
                                       rows="10"
                                       placeholder="粘贴模板 JSON 或 ComfyUI workflow JSON..."></textarea>
@@ -1680,7 +1685,7 @@
                             <i class="bi bi-exclamation-circle"></i> {{ importError }}
                         </div>
                     </div>
-                    <div class="modal-footer border-secondary">
+                    <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" @click="showImportTemplate = false">取消</button>
                         <button type="button" class="btn btn-primary" @click="confirmImportTemplate">导入</button>
                     </div>
@@ -1694,34 +1699,34 @@
         <!-- 提示词预设模态框 -->
         <div data-overlay="promptPresets" class="modal fade" :class="{ show: showPromptPresets }" :style="{ display: showPromptPresets ? 'block' : 'none', zIndex: 1060 }">
             <div class="modal-dialog modal-dialog-centered modal-lg">
-                <div class="modal-content bg-dark border-secondary">
-                    <div class="modal-header border-secondary">
+                <div class="modal-content">
+                    <div class="modal-header">
                         <h5 class="modal-title text-light">
                             <i class="bi bi-bookmark-star"></i> 预设与片段
                         </h5>
                         <button type="button" class="btn-close btn-close-white" @click="closePromptPresets" aria-label="关闭预设与片段"></button>
                     </div>
                     <div class="modal-body">
-                        <ul class="nav nav-tabs rp-tabs mb-3">
+                        <ul class="nav rp-tabs mb-3">
                             <li class="nav-item">
                                 <button class="nav-link" :class="{ active: promptPresetTab === 'blocks' }" @click="promptPresetTab = 'blocks'">
                                     整块预设
-                                    <span class="badge bg-secondary ms-1">{{ promptBlockPresets.length }}</span>
+                                    <span class="badge rp-tone-neutral ms-1">{{ promptBlockPresets.length }}</span>
                                 </button>
                             </li>
                             <li class="nav-item">
                                 <button class="nav-link" :class="{ active: promptPresetTab === 'snippets' }" @click="promptPresetTab = 'snippets'">
                                     片段库
-                                    <span class="badge bg-secondary ms-1">{{ promptSnippetPresets.length }}</span>
+                                    <span class="badge rp-tone-neutral ms-1">{{ promptSnippetPresets.length }}</span>
                                 </button>
                             </li>
                         </ul>
 
                         <div class="input-group mb-3">
-                            <span class="input-group-text bg-dark text-light border-secondary">
+                            <span class="input-group-text">
                                 <i class="bi bi-search"></i>
                             </span>
-                            <input type="text" class="form-control bg-dark text-light border-secondary"
+                            <input type="text" class="form-control"
                                    v-model="promptPresetSearch" placeholder="搜索名称或正文">
                             <button class="btn btn-outline-secondary" type="button"
                                     @click="promptPresetSearch = ''" :disabled="!promptPresetSearch">
@@ -1737,10 +1742,10 @@
                         <div v-show="promptPresetTab === 'blocks'">
                             <div class="text-muted small mb-2">应用会整块覆盖当前正向/负向提示词（模板没有的字段保持不变）；应用后可撤销。</div>
                             <div class="input-group mb-3">
-                                <span class="input-group-text bg-dark text-light border-secondary">
+                                <span class="input-group-text">
                                     <i class="bi bi-pencil"></i>
                                 </span>
-                                <input type="text" class="form-control bg-dark text-light border-secondary"
+                                <input type="text" class="form-control"
                                        v-model="newPromptBlockName" placeholder="预设名称（用于保存当前提示词）">
                                 <button class="btn btn-primary" type="button" @click="saveCurrentAsBlockPreset" title="保存当前正向/负向为整块预设">
                                     <i class="bi bi-plus-lg"></i>
@@ -1757,13 +1762,13 @@
                                 </template>
                             </div>
                             <div v-else class="list-group rp-preset-list">
-                                <div v-for="p in filteredPromptBlockPresets" :key="p.id" class="list-group-item bg-dark border-secondary rp-preset-item"
+                                <div v-for="p in filteredPromptBlockPresets" :key="p.id" class="list-group-item rp-preset-item"
                                      :class="{ 'rp-preset-applied': appliedBlockPresetId === p.id }">
                                     <div class="d-flex justify-content-between align-items-start gap-3">
                                         <div class="min-w-0">
                                             <div class="d-flex align-items-center gap-2">
                                                 <div class="text-light fw-semibold text-truncate">{{ p.name }}</div>
-                                                <span v-if="appliedBlockPresetId === p.id" class="badge bg-success rp-applied-badge"><i class="bi bi-check2"></i> 已应用</span>
+                                                <span v-if="appliedBlockPresetId === p.id" class="badge rp-tone-success rp-applied-badge"><i class="bi bi-check2"></i> 已应用</span>
                                             </div>
                                             <div class="small text-muted rp-clamp-2">正: {{ p.prompt || '-' }}</div>
                                             <div class="small text-muted rp-clamp-2">负: {{ p.negative_prompt || '-' }}</div>
@@ -1815,7 +1820,7 @@
                                         <span class="ms-1 d-none d-sm-inline">从正向填充</span>
                                     </button>
 
-                                    <button class="btn btn-outline-danger" type="button" @click="fillSnippetFromCurrent('negative_prompt')" :disabled="!placeholderValues.negative_prompt"
+                                    <button class="btn btn-outline-secondary" type="button" @click="fillSnippetFromCurrent('negative_prompt')" :disabled="!placeholderValues.negative_prompt"
                                             title="从当前负向提示词填充">
                                         <i class="bi bi-arrow-down"></i>
                                         <span class="ms-1 d-sm-none">负向</span>
@@ -1824,17 +1829,17 @@
                                 </div>
 
                                 <div class="col-md-4">
-                                    <input type="text" class="form-control bg-dark text-light border-secondary"
+                                    <input type="text" class="form-control"
                                            v-model="newPromptSnippetName" placeholder="片段名称">
                                 </div>
                                 <div class="col-md-4">
-                                    <select class="form-select bg-dark text-light border-secondary" v-model="newPromptSnippetTarget" aria-label="片段默认插入目标">
+                                    <select class="form-select" v-model="newPromptSnippetTarget" aria-label="片段默认插入目标">
                                         <option value="positive">默认插入正向</option>
                                         <option value="negative">默认插入负向</option>
                                     </select>
                                 </div>
                                 <div class="col-md-8">
-                                    <textarea class="form-control bg-dark text-light border-secondary" rows="3"
+                                    <textarea class="form-control" rows="3"
                                               v-model="newPromptSnippetText" placeholder="片段内容（例如画师/风格串）"></textarea>
                                 </div>
                             </div>
@@ -1848,7 +1853,7 @@
                                 </template>
                             </div>
                             <div v-else class="list-group rp-preset-list">
-                                <div v-for="s in filteredPromptSnippetPresets" :key="s.id" class="list-group-item bg-dark border-secondary rp-preset-item">
+                                <div v-for="s in filteredPromptSnippetPresets" :key="s.id" class="list-group-item rp-preset-item">
                                     <div class="d-flex justify-content-between align-items-start gap-3">
                                         <div class="min-w-0">
                                             <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -1866,7 +1871,7 @@
                                                 <i class="bi bi-arrow-down-left"></i>
                                                 <span class="d-none d-sm-inline ms-1">插入正向</span>
                                             </button>
-                                            <button class="btn btn-outline-danger btn-sm" type="button" @click="insertSnippetToPrompt(s, 'negative_prompt')" :disabled="isParamsLocked" title="插入到负向提示词（该字段光标处；无光标则追加末尾）">
+                                            <button class="btn btn-outline-secondary btn-sm" type="button" @click="insertSnippetToPrompt(s, 'negative_prompt')" :disabled="isParamsLocked" title="插入到负向提示词（该字段光标处；无光标则追加末尾）">
                                                 <i class="bi bi-arrow-down-left"></i>
                                                 <span class="d-none d-sm-inline ms-1">插入负向</span>
                                             </button>
@@ -1874,11 +1879,11 @@
                                                 <i class="bi bi-clipboard"></i>
                                                 <span class="d-none d-sm-inline ms-1">复制</span>
                                             </button>
-                                            <button v-if="isLocalPromptSnippet(s)" class="btn btn-outline-info btn-sm" type="button" @click="openEditSnippet(s)" title="编辑本地副本">
+                                            <button v-if="isLocalPromptSnippet(s)" class="btn btn-outline-secondary btn-sm" type="button" @click="openEditSnippet(s)" title="编辑本地副本">
                                                 <i class="bi bi-pencil-square"></i>
                                                 <span class="d-none d-sm-inline ms-1">编辑</span>
                                             </button>
-                                            <button class="btn btn-outline-secondary btn-sm" type="button" @click="deleteSnippetPreset(s)" title="删除此片段">
+                                            <button class="btn btn-outline-danger btn-sm" type="button" @click="deleteSnippetPreset(s)" title="删除此片段">
                                                 <i class="bi bi-trash"></i>
                                                 <span class="visually-hidden">删除</span>
                                             </button>
@@ -1888,7 +1893,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="modal-footer border-secondary">
+                    <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" @click="closePromptPresets">关闭</button>
                     </div>
                 </div>
@@ -1901,9 +1906,9 @@
         <!-- 片段/预设全文预览：纯文本、可复制、可键盘展开与显式插入 -->
         <div data-overlay="promptPreview" class="modal fade" :class="{ show: showPromptPreview }" :style="{ display: showPromptPreview ? 'block' : 'none', zIndex: 1090 }">
             <div class="modal-dialog modal-dialog-centered modal-lg">
-                <div class="modal-content bg-dark border-secondary" ref="promptPreviewDialog" tabindex="-1"
+                <div class="modal-content" ref="promptPreviewDialog" tabindex="-1"
                      role="dialog" aria-modal="true" :aria-label="'提示词全文预览：' + promptPreview.name">
-                    <div class="modal-header border-secondary">
+                    <div class="modal-header">
                         <h5 class="modal-title text-light text-break">
                             <i class="bi bi-card-text"></i> {{ promptPreview.name }}
                         </h5>
@@ -1911,7 +1916,7 @@
                     </div>
                     <div class="modal-body">
                         <div class="d-flex flex-wrap gap-2 align-items-center mb-2 small text-muted">
-                            <span class="badge bg-secondary">{{ promptPreview.kind === 'preset' ? '整块预设' : '片段' }}</span>
+                            <span class="badge rp-tone-neutral">{{ promptPreview.kind === 'preset' ? '整块预设' : '片段' }}</span>
                             <span v-if="promptPreview.sourceLabel">{{ promptPreview.sourceLabel }}</span>
                             <span v-if="promptPreview.kind === 'snippet'">目标：{{ promptPreview.target === 'negative' ? '负向提示词' : '正向提示词' }}</span>
                         </div>
@@ -1932,7 +1937,7 @@
                                     <pre class="rp-preview-text">{{ promptPreview.positive || '（空）' }}</pre>
                                     <div class="d-flex gap-2 mt-2 flex-wrap">
                                         <button type="button" class="btn btn-outline-light btn-sm" @click="copyPromptPreviewPart('positive')">复制正向</button>
-                                        <button type="button" class="btn btn-outline-info btn-sm" @click="insertPromptPreviewPart('prompt')"
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" @click="insertPromptPreviewPart('prompt')"
                                                 :disabled="isParamsLocked || !hasPromptField('prompt')">插入正向</button>
                                     </div>
                                 </div>
@@ -1941,7 +1946,7 @@
                                     <pre class="rp-preview-text">{{ promptPreview.negative || '（空）' }}</pre>
                                     <div class="d-flex gap-2 mt-2 flex-wrap">
                                         <button type="button" class="btn btn-outline-light btn-sm" @click="copyPromptPreviewPart('negative')">复制负向</button>
-                                        <button type="button" class="btn btn-outline-danger btn-sm" @click="insertPromptPreviewPart('negative_prompt')"
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" @click="insertPromptPreviewPart('negative_prompt')"
                                                 :disabled="isParamsLocked || !hasPromptField('negative_prompt')">插入负向</button>
                                     </div>
                                 </div>
@@ -1950,15 +1955,15 @@
                                 <pre class="rp-preview-text">{{ promptPreview.text || '（空）' }}</pre>
                                 <div class="d-flex gap-2 mt-2 flex-wrap">
                                     <button type="button" class="btn btn-outline-light btn-sm" @click="copyPromptPreviewPart('text')">复制正文</button>
-                                    <button type="button" class="btn btn-outline-info btn-sm" @click="insertPromptPreviewPart('prompt')"
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" @click="insertPromptPreviewPart('prompt')"
                                             :disabled="isParamsLocked || !hasPromptField('prompt')">插入正向</button>
-                                    <button type="button" class="btn btn-outline-danger btn-sm" @click="insertPromptPreviewPart('negative_prompt')"
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" @click="insertPromptPreviewPart('negative_prompt')"
                                             :disabled="isParamsLocked || !hasPromptField('negative_prompt')">插入负向</button>
                                 </div>
                             </template>
                         </template>
                     </div>
-                    <div class="modal-footer border-secondary">
+                    <div class="modal-footer">
                         <button v-if="promptPreview.kind === 'preset'" type="button" class="btn btn-primary"
                                 @click="applyPromptPreviewPreset" :disabled="isParamsLocked || promptPreview.loading || !!promptPreview.error">
                             应用（{{ presetScopeLabel(promptPreview) }}）
@@ -1989,13 +1994,13 @@
         <!-- 图片预览模态框 -->
         <div data-overlay="image" class="modal fade" :class="{ show: showImageModal }" :style="{ display: showImageModal ? 'block' : 'none', zIndex: 1055 }">
             <div class="modal-dialog modal-fullscreen">
-                <div class="modal-content bg-dark">
+                <div class="modal-content">
                     <div class="modal-body d-flex align-items-center justify-content-center p-0 position-relative"
                          @touchstart="onPreviewTouchStart" @touchmove="onPreviewTouchMove" @touchend="onPreviewTouchEnd"
                          @click.self="onPreviewBackgroundClick">
                         <div class="rp-preview-top position-absolute top-0 start-0 w-100 d-flex justify-content-between align-items-center p-3">
                             <div class="text-light small d-flex align-items-center gap-2">
-                                <span class="badge bg-dark border border-secondary">{{ previewIndicatorText }}</span>
+                                <span class="badge bg-dark border">{{ previewIndicatorText }}</span>
                                 <span v-if="previewImage" class="text-truncate d-inline-block" style="max-width: 60vw;">
                                     {{ previewImage.filename }}
                                 </span>
@@ -2029,20 +2034,21 @@
                                 <button class="btn btn-outline-primary btn-sm" v-if="previewParamValues" @click.stop="applyParamsFromPreview" title="应用参数">
                                     <i class="bi bi-arrow-up"></i>
                                 </button>
-                                <button class="btn btn-outline-success btn-sm" v-if="previewParamValues && previewParamValues.prompt" @click.stop="copyPreviewText('prompt')" title="复制 Prompt">
+                                <button class="btn btn-outline-secondary btn-sm" v-if="previewParamValues && previewParamValues.prompt" @click.stop="copyPreviewText('prompt')" title="复制 Prompt">
                                     <i class="bi bi-clipboard"></i>
                                     <span class="d-none d-sm-inline ms-1">Prompt</span>
                                 </button>
-                                <button class="btn btn-outline-danger btn-sm" v-if="previewParamValues && previewParamValues.negative_prompt" @click.stop="copyPreviewText('negative')" title="复制 Negative Prompt">
+                                <button class="btn btn-outline-secondary btn-sm" v-if="previewParamValues && previewParamValues.negative_prompt" @click.stop="copyPreviewText('negative')" title="复制 Negative Prompt">
                                     <i class="bi bi-clipboard"></i>
                                     <span class="d-none d-sm-inline ms-1">Negative</span>
                                 </button>
-                                <button class="btn btn-outline-info btn-sm" v-if="previewImage" @click.stop="togglePreviewParams"
+                                <button class="btn btn-outline-secondary btn-sm" v-if="previewImage" @click.stop="togglePreviewParams"
                                         :class="{ active: showPreviewParams }" title="参数">
                                     <i class="bi bi-sliders"></i>
                                 </button>
-                                <button class="btn btn-outline-warning btn-sm" v-if="previewImage" @click.stop="toggleFavorite(previewImage)"
-                                        :title="isFavorited(previewImage.id) ? '取消收藏' : '收藏'">
+                                <button class="btn btn-outline-secondary btn-sm" v-if="previewImage" @click.stop="toggleFavorite(previewImage)"
+                                        :aria-pressed="isFavorited(previewImage.id)"
+                                        :class="{ 'text-warning': isFavorited(previewImage.id) }" :title="isFavorited(previewImage.id) ? '取消收藏' : '收藏'">
                                     <i class="bi" :class="isFavorited(previewImage.id) ? 'bi-star-fill' : 'bi-star'"></i>
                                 </button>
                                 <button class="btn btn-outline-light btn-sm" v-if="previewImage" @click.stop="downloadImage(previewImage)" title="下载/打开">
@@ -2056,8 +2062,8 @@
                         </div>
 
                         <div v-if="showPreviewParams && previewParamValues" class="rp-preview-params">
-                            <div class="card bg-dark border-secondary">
-                                <div class="card-header border-secondary d-flex justify-content-between align-items-center py-2">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center py-2">
                                     <div class="text-light small">
                                         <i class="bi bi-sliders"></i>
                                         参数
@@ -2068,12 +2074,12 @@
                                 </div>
                                 <div class="card-body py-2">
                                     <div class="d-flex flex-wrap gap-2 mb-2">
-                                        <span v-if="previewParamValues.width && previewParamValues.height" class="badge bg-secondary">
+                                        <span v-if="previewParamValues.width && previewParamValues.height" class="badge rp-tone-neutral">
                                             {{ previewParamValues.width }}x{{ previewParamValues.height }}
                                         </span>
-                                        <span v-if="previewParamValues.seed !== undefined" class="badge bg-secondary">Seed {{ previewParamValues.seed }}</span>
-                                        <span v-if="previewParamValues.steps !== undefined" class="badge bg-secondary">Steps {{ previewParamValues.steps }}</span>
-                                        <span v-if="previewParamValues.cfg !== undefined" class="badge bg-secondary">CFG {{ previewParamValues.cfg }}</span>
+                                        <span v-if="previewParamValues.seed !== undefined" class="badge rp-tone-neutral">Seed {{ previewParamValues.seed }}</span>
+                                        <span v-if="previewParamValues.steps !== undefined" class="badge rp-tone-neutral">Steps {{ previewParamValues.steps }}</span>
+                                        <span v-if="previewParamValues.cfg !== undefined" class="badge rp-tone-neutral">CFG {{ previewParamValues.cfg }}</span>
                                     </div>
                                     <pre class="mb-0 small rp-preview-json">{{ JSON.stringify(previewParamValues, null, 2) }}</pre>
                                 </div>
@@ -2099,8 +2105,8 @@
         <!-- 暴露参数弹窗 -->
         <div v-if="pendingExposeInput" data-overlay="expose" class="modal fade show" style="display: block; z-index: 1080;" role="dialog" aria-modal="true">
             <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content bg-dark border-secondary">
-                    <div class="modal-header border-secondary">
+                <div class="modal-content">
+                    <div class="modal-header">
                         <h5 class="modal-title text-light"><i class="bi bi-sliders"></i> 加入参数</h5>
                         <button type="button" class="btn-close btn-close-white" @click="cancelExposeWorkflowInput"></button>
                     </div>
@@ -2108,15 +2114,15 @@
                         <div class="small text-muted mb-3">节点 {{ pendingExposeInput.nodeId }} 的 {{ pendingExposeInput.inputName }} 将替换为占位符。</div>
                         <div class="mb-3">
                             <label class="form-label text-light">参数 ID</label>
-                            <input class="form-control bg-dark text-light border-secondary" v-model="exposeForm.id">
+                            <input class="form-control" v-model="exposeForm.id">
                         </div>
                         <div class="mb-3">
                             <label class="form-label text-light">显示名称</label>
-                            <input class="form-control bg-dark text-light border-secondary" v-model="exposeForm.label">
+                            <input class="form-control" v-model="exposeForm.label">
                         </div>
                         <div class="mb-3">
                             <label class="form-label text-light">控件类型</label>
-                            <select class="form-select bg-dark text-light border-secondary" v-model="exposeForm.control">
+                            <select class="form-select" v-model="exposeForm.control">
                                 <option value="text">单行文本</option>
                                 <option value="textarea">多行文本</option>
                                 <option value="number">数字</option>
@@ -2125,12 +2131,12 @@
                             </select>
                         </div>
                         <div v-if="exposeForm.control === 'number' || exposeForm.control === 'range'" class="row g-2">
-                            <div class="col-4"><label class="form-label text-light small">最小值</label><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model="exposeForm.min"></div>
-                            <div class="col-4"><label class="form-label text-light small">最大值</label><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model="exposeForm.max"></div>
-                            <div class="col-4"><label class="form-label text-light small">步长</label><input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" v-model="exposeForm.step"></div>
+                            <div class="col-4"><label class="form-label text-light small">最小值</label><input type="number" class="form-control form-control-sm" v-model="exposeForm.min"></div>
+                            <div class="col-4"><label class="form-label text-light small">最大值</label><input type="number" class="form-control form-control-sm" v-model="exposeForm.max"></div>
+                            <div class="col-4"><label class="form-label text-light small">步长</label><input type="number" class="form-control form-control-sm" v-model="exposeForm.step"></div>
                         </div>
                     </div>
-                    <div class="modal-footer border-secondary">
+                    <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" @click="cancelExposeWorkflowInput">取消</button>
                         <button type="button" class="btn btn-primary" @click="confirmExposeWorkflowInput">加入参数</button>
                     </div>
@@ -2140,13 +2146,13 @@
         <div v-if="pendingExposeInput" class="modal-backdrop fade show" style="z-index: 1079;"></div>
 
         <!-- 重命名弹窗 -->
-        <div v-if="renameState.show" data-overlay="rename" class="rp-ui-dialog-backdrop" @click.self="renameState.show = false">
-            <div class="rp-ui-dialog card bg-dark border-secondary" role="dialog" aria-modal="true">
-                <div class="card-header border-secondary text-light fw-semibold">重命名本地资源</div>
+        <div v-if="renameState.show" data-overlay="rename" class="rp-ui-dialog-backdrop rp-rename-backdrop" @click.self="renameState.show = false">
+            <div class="rp-ui-dialog card" role="dialog" aria-modal="true">
+                <div class="card-header text-light fw-semibold">重命名本地资源</div>
                 <div class="card-body">
-                    <input type="text" class="form-control bg-dark text-light border-secondary" v-model="renameState.value" @keyup.enter="confirmRenameLocalItem">
+                    <input type="text" class="form-control" v-model="renameState.value" @keyup.enter="confirmRenameLocalItem">
                 </div>
-                <div class="card-footer border-secondary d-flex justify-content-end gap-2">
+                <div class="card-footer d-flex justify-content-end gap-2">
                     <button class="btn btn-outline-light" @click="renameState.show = false">取消</button>
                     <button class="btn btn-primary" @click="confirmRenameLocalItem">保存</button>
                 </div>
@@ -2157,8 +2163,8 @@
         <div v-if="pendingParamsApply" data-overlay="paramsApply" class="modal fade show"
              style="display: block; z-index: 1082;" role="dialog" aria-modal="true" aria-label="应用历史参数">
             <div class="modal-dialog modal-dialog-centered modal-lg">
-                <div class="modal-content bg-dark border-secondary" data-overlay-autofocus tabindex="-1">
-                    <div class="modal-header border-secondary">
+                <div class="modal-content" data-overlay-autofocus tabindex="-1">
+                    <div class="modal-header">
                         <h5 class="modal-title text-light"><i class="bi bi-arrow-up-circle"></i> 应用历史参数</h5>
                         <button type="button" class="btn-close btn-close-white" @click="resolveParamsApply(false)" aria-label="取消"></button>
                     </div>
@@ -2166,7 +2172,7 @@
                         <ul class="rp-apply-summary small text-light mb-3">
                             <li v-for="(line, idx) in pendingParamsApply.summary.lines" :key="idx">{{ line }}</li>
                         </ul>
-                        <div v-if="pendingParamsApply.summary.hasSeed" class="rp-seed-choice border border-secondary rounded p-2">
+                        <div v-if="pendingParamsApply.summary.hasSeed" class="rp-seed-choice border rounded p-2">
                             <div class="small text-light mb-2">
                                 Seed：当前 <code>{{ pendingParamsApply.summary.currentSeed }}</code>
                                 · 历史 <code>{{ pendingParamsApply.summary.incomingSeed }}</code>
@@ -2185,7 +2191,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="modal-footer border-secondary">
+                    <div class="modal-footer">
                         <button type="button" class="btn btn-outline-light" @click="resolveParamsApply(false)">取消</button>
                         <button type="button" class="btn btn-primary" @click="resolveParamsApply(true)">应用参数</button>
                     </div>
@@ -2196,15 +2202,15 @@
 
         <!-- 自定义确认弹窗 -->
         <div v-if="uiDialog.show" data-overlay="uiDialog" class="rp-ui-dialog-backdrop" @click.self="onUiDialogBackdropClick">
-            <div class="rp-ui-dialog card bg-dark border-secondary" role="dialog" aria-modal="true">
-                <div class="card-header border-secondary d-flex align-items-center gap-2">
+            <div class="rp-ui-dialog card" role="dialog" aria-modal="true">
+                <div class="card-header d-flex align-items-center gap-2">
                     <i class="bi" :class="getUiNoticeIcon(uiDialog.type)"></i>
                     <span class="text-light fw-semibold">{{ uiDialog.title }}</span>
                 </div>
                 <div class="card-body">
                     <div class="text-light rp-ui-dialog-message">{{ uiDialog.message }}</div>
                 </div>
-                <div class="card-footer border-secondary d-flex justify-content-end gap-2">
+                <div class="card-footer d-flex justify-content-end gap-2">
                     <button v-if="uiDialog.showCancel" class="btn btn-outline-light" type="button" @click="resolveUiDialog(false)">
                         {{ uiDialog.cancelText }}
                     </button>

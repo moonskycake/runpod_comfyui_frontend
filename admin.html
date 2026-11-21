@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-bs-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="./css/style.css">
   <link rel="stylesheet" href="./css/catalog-admin.css">
 </head>
-<body class="bg-dark ca-body">
+<body class="ca-body">
   <div id="catalog-admin-app" v-cloak>
     <header class="ca-header">
       <div class="ca-header-main">
@@ -79,10 +79,10 @@
         </nav>
 
         <div class="ca-workspace">
-          <div class="ca-mobile-tabs" role="tablist" aria-label="移动端面板">
-            <button type="button" role="tab" :aria-selected="mobilePane === 'list'" :class="{ 'is-active': mobilePane === 'list' }" @click="showMobilePane('list')">列表</button>
-            <button type="button" role="tab" :aria-selected="mobilePane === 'edit'" :class="{ 'is-active': mobilePane === 'edit' }" @click="showMobilePane('edit')">编辑</button>
-            <button type="button" role="tab" :aria-selected="mobilePane === 'preview'" :class="{ 'is-active': mobilePane === 'preview' }" @click="showMobilePane('preview')">预览</button>
+          <div class="ca-mobile-tabs rp-segmented" role="tablist" aria-label="移动端面板">
+            <button type="button" role="tab" class="rp-segment" :aria-selected="mobilePane === 'list'" :class="{ 'is-active': mobilePane === 'list' }" @click="showMobilePane('list')">列表</button>
+            <button type="button" role="tab" class="rp-segment" :aria-selected="mobilePane === 'edit'" :class="{ 'is-active': mobilePane === 'edit' }" @click="showMobilePane('edit')">编辑</button>
+            <button type="button" role="tab" class="rp-segment" :aria-selected="mobilePane === 'preview'" :class="{ 'is-active': mobilePane === 'preview' }" @click="showMobilePane('preview')">预览</button>
           </div>
 
           <section class="ca-list" :class="{ 'ca-pane-hidden': mobilePane !== 'list' }" aria-label="资源列表">
@@ -191,9 +191,9 @@
                 <button class="btn btn-outline-secondary btn-sm" type="button" @click="exportAll">导出全部</button>
               </div>
 
-              <div class="ca-editor-tabs" role="tablist" aria-label="编辑与预览">
-                <button type="button" role="tab" id="ca-tab-form" :aria-selected="editorTab === 'form'" :class="{ 'is-active': editorTab === 'form' }" @click="editorTab = 'form'">表单</button>
-                <button type="button" role="tab" id="ca-tab-preview" :aria-selected="editorTab === 'preview'" :class="{ 'is-active': editorTab === 'preview' }" @click="editorTab = 'preview'">预览</button>
+              <div class="ca-editor-tabs rp-tabs" role="tablist" aria-label="编辑与预览">
+                <button type="button" role="tab" class="nav-link" id="ca-tab-form" :aria-selected="editorTab === 'form'" :class="{ 'is-active': editorTab === 'form' }" @click="editorTab = 'form'">表单</button>
+                <button type="button" role="tab" class="nav-link" id="ca-tab-preview" :aria-selected="editorTab === 'preview'" :class="{ 'is-active': editorTab === 'preview' }" @click="editorTab = 'preview'">预览</button>
               </div>
 
               <div class="ca-alert ca-alert-error" role="alert" v-if="saveError">
@@ -338,11 +338,12 @@
                           decoding="async"
                           @error="previewBroken = true"
                         >
-                        <div class="ca-stage-empty" v-else>
-                          <span v-if="previewBroken">已保存图片加载失败</span>
-                          <span v-else>尚未设置预览图</span>
-                          <span class="ca-stage-empty-hint">点击、拖入或在此粘贴图片</span>
-                        </div>
+                        <button type="button" class="ca-stage-empty rp-upload-target" v-else
+                                :disabled="saveBusy || pictureLoading" @click="openPicturePicker">
+                          <span class="fw-semibold">选择预览图</span>
+                          <span class="rp-upload-hint" v-if="previewBroken">已保存图片加载失败，可重新选择。</span>
+                          <span class="rp-upload-hint" v-else>也可拖入或在此区域粘贴图片。</span>
+                        </button>
                         <div class="ca-stage-overlay" v-if="pictureDragActive">松开即可载入图片</div>
                         <div class="ca-stage-busy" v-if="pictureLoading">正在读取图片…</div>
                       </div>
@@ -375,20 +376,18 @@
                       </div>
 
                       <div class="ca-picture-controls" v-if="pictureHasLocal">
-                        <div class="ca-mode-row" role="group" aria-label="成品显示方式">
+                        <div class="rp-segmented" role="group" aria-label="成品显示方式">
                           <button
                             type="button"
-                            class="ca-mode-btn"
+                            class="rp-segment"
                             :aria-pressed="pictureGeom.mode === 'cover'"
-                            :class="{ 'is-active': pictureGeom.mode === 'cover' }"
                             :disabled="saveBusy"
                             @click="setPictureMode('cover')"
                           >裁剪填满</button>
                           <button
                             type="button"
-                            class="ca-mode-btn"
+                            class="rp-segment"
                             :aria-pressed="pictureGeom.mode === 'contain'"
-                            :class="{ 'is-active': pictureGeom.mode === 'contain' }"
                             :disabled="saveBusy"
                             @click="setPictureMode('contain')"
                           >完整显示</button>
@@ -417,7 +416,7 @@
                         <div class="ca-picture-buttons">
                           <button class="btn btn-outline-light btn-sm" type="button" @click="openPicturePicker" :disabled="saveBusy">重新选择</button>
                           <button class="btn btn-outline-light btn-sm" type="button" @click="resetPictureGeometry" :disabled="saveBusy || pictureGeom.mode === 'contain'">重置</button>
-                          <button class="btn btn-outline-danger btn-sm" type="button" @click="cancelPictureEdit" :disabled="saveBusy">取消本地调整</button>
+                          <button class="btn btn-outline-secondary btn-sm" type="button" @click="cancelPictureEdit" :disabled="saveBusy">取消本地调整</button>
                         </div>
                       </div>
                       <div class="ca-picture-actions" v-else>

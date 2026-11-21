@@ -176,7 +176,10 @@ test('状态查询超时记为查询中断，不冒充远端 FAILED，保留 job
   assert.match(record.errorMessage, /可恢复/);
   assert.match(record.errorMessage, /未判定为生成失败/);
   assert.match(record.errorMessage, /超时/);
-  assert.strictEqual(ctx.errorMessage, record.errorMessage, '当前查看的记录在顶部显示原因');
+  assert.strictEqual(ctx.errorMessage, record.errorMessage, '当前查看的记录在操作栏显示原因');
+  assert.strictEqual(ctx.actionNoticeClass, 'alert-warning', '实时中断在操作栏也不是失败');
+  ctx.setActionNotice('JSON 文件格式错误');
+  assert.strictEqual(ctx.actionNoticeClass, 'alert-danger', '非任务表单错误不能沿用旧任务色');
 });
 
 // ---------- 2：恢复只轮询原 job ----------
@@ -386,6 +389,12 @@ test('查询中断有独立文案、badge、筛选分组与空图提示', () => 
     ctx.getStatusBadgeClass('FAILED'),
     '中断与失败区分颜色'
   );
+  assert.notStrictEqual(ctx.getStatusBadgeClass('QUERY_INTERRUPTED'), ctx.getStatusBadgeClass('CANCELLED'));
+  assert.strictEqual(ctx.historyNoticeClass('QUERY_INTERRUPTED'), 'alert-warning');
+  assert.strictEqual(ctx.historyNoticeClass('CANCELLED'), 'alert-secondary');
+  assert.strictEqual(ctx.historyNoticeClass('FAILED'), 'alert-danger');
+  assert.strictEqual(ctx.shouldShowHistoryRecovery(ctx.requestHistory[0]), false, '完成任务不放置禁用的恢复按钮');
+  assert.strictEqual(ctx.shouldShowHistoryRecovery(ctx.requestHistory[2]), true, '中断任务即使不可恢复也保留入口和原因');
   assert.strictEqual(ctx.historyStatusGroup('QUERY_INTERRUPTED'), 'interrupted');
   assert.ok(
     ctx.historyFilterOptions.some(o => o.value === 'interrupted'),
@@ -472,6 +481,9 @@ test('未配置 Endpoint/API Key 时恢复被禁用且正文可见原因', () =>
   ctx.isConfigValid = true;
   assert.strictEqual(ctx.canManualRetryRecord(interrupted), true, '配好配置后即可恢复');
   assert.strictEqual(ctx.getManualRetryBlockedReason(interrupted), '');
+  assert.strictEqual(ctx.shouldShowHistoryRecovery(running), true, '刷新后的活跃记录不丢失原 Job 恢复入口');
+  ctx.activeJobs = [makeTask(running.id)];
+  assert.strictEqual(ctx.shouldShowHistoryRecovery(running), false, '已在本地查询的任务不显示不可用入口');
 });
 
 test('状态查询超时只作用于 /status，提交与 runsync 超时不变', async () => {

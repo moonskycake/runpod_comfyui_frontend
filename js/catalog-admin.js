@@ -33,6 +33,132 @@
     maxSide: 480,
     maxOutputBytes: 64 * 1024
   };
+  var DIALOG_SELECTOR = '.ca-dialog[role="dialog"][aria-modal="true"]';
+  var FOCUSABLE_SELECTOR = [
+    'a[href]',
+    'button:not([disabled])',
+    'input:not([disabled]):not([type="hidden"])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])'
+  ].join(', ');
+  var DIALOG_NAMES = {
+    'ca-publish-title': 'publish',
+    'ca-disable-title': 'disable',
+    'ca-delete-title': 'delete',
+    'ca-discard-title': 'discard',
+    'ca-import-title': 'import',
+    'ca-session-title': 'session'
+  };
+
+  function dialogName(element) {
+    var labelledBy = element && typeof element.getAttribute === 'function'
+      ? element.getAttribute('aria-labelledby') : '';
+    return DIALOG_NAMES[labelledBy] || '';
+  }
+
+  function visibleDialogs(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return [];
+    return Array.prototype.slice.call(root.querySelectorAll(DIALOG_SELECTOR)).filter(function (dialog) {
+      return typeof dialog.getClientRects !== 'function' || dialog.getClientRects().length > 0;
+    });
+  }
+
+  function topDialog(root) {
+    var dialogs = visibleDialogs(root);
+    for (var i = dialogs.length - 1; i >= 0; i -= 1) {
+      if (dialogName(dialogs[i]) === 'session') return dialogs[i];
+    }
+    return dialogs.length ? dialogs[dialogs.length - 1] : null;
+  }
+
+  function focusables(container) {
+    if (!container || typeof container.querySelectorAll !== 'function') return [];
+    return Array.prototype.slice.call(container.querySelectorAll(FOCUSABLE_SELECTOR)).filter(function (element) {
+      if (element.disabled || element.getAttribute('disabled') != null) return false;
+      if (element.getAttribute('aria-disabled') === 'true') return false;
+      var tabindex = element.getAttribute('tabindex');
+      if (tabindex != null && Number(tabindex) < 0) return false;
+      // 只检查元素自身：display:contents 的祖先没有盒子，但按钮本身仍有盒子。
+      return typeof element.getClientRects !== 'function' || element.getClientRects().length > 0;
+    });
+  }
+
+  function focusElement(element) {
+    if (!element || typeof element.focus !== 'function') return false;
+    element.focus();
+    return true;
+  }
+
+  function focusDialogOrFirst(dialog) {
+    if (!dialog) return null;
+    var list = focusables(dialog);
+    if (list.length) {
+      focusElement(list[0]);
+      return list[0];
+    }
+    if (!dialog.hasAttribute('tabindex')) dialog.setAttribute('tabindex', '-1');
+    focusElement(dialog);
+    return dialog;
+  }
+
+  function trapTab(event, dialog, root) {
+    if (!root || !dialog || !event || event.key !== 'Tab') return false;
+    var list = focusables(dialog);
+    if (!list.length) {
+      event.preventDefault();
+      focusDialogOrFirst(dialog);
+      return true;
+    }
+    var index = list.indexOf(root.activeElement);
+    var target = null;
+    if (index < 0) target = event.shiftKey ? list[list.length - 1] : list[0];
+    else if (event.shiftKey && index === 0) target = list[list.length - 1];
+    else if (!event.shiftKey && index === list.length - 1) target = list[0];
+    if (!target) return false;
+    event.preventDefault();
+    focusElement(target);
+    return true;
+  }
+
+  function restoreFocus(trigger, root, fallback) {
+    var candidates = [trigger, fallback];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var element = candidates[i];
+      if (!root || !element || element === root || element === root.body || element === root.documentElement) continue;
+      if (typeof root.contains !== 'function' || !root.contains(element)) continue;
+      if (element.disabled || element.getAttribute('aria-disabled') === 'true') continue;
+      if (typeof element.getClientRects === 'function' && element.getClientRects().length === 0) continue;
+      if (typeof element.focus !== 'function') continue;
+      element.focus();
+      return element;
+    }
+    return null;
+  }
+
+  function keyAction(options) {
+    var opts = options || {};
+    var top = opts.topDialog || '';
+    var anyDialog = !!opts.anyDialogOpen || !!top;
+    var sessionBlocked = !!opts.sessionExpired || top === 'session';
+    if (opts.key === 'Tab') {
+      if (top) return { action: 'trap', dialog: top };
+      if (sessionBlocked || anyDialog) return { action: 'block' };
+      return { action: 'none' };
+    }
+    if (opts.key === 'Escape') {
+      if (sessionBlocked) return { action: 'block' };
+      if (top) return { action: 'close', dialog: top };
+      return { action: 'none' };
+    }
+    var saveKey = (opts.ctrlKey || opts.metaKey) && (opts.key === 's' || opts.key === 'S');
+    if (saveKey) {
+      if (sessionBlocked || anyDialog) return { action: 'block-save' };
+      if (opts.canSave === false) return { action: 'none' };
+      return { action: 'save' };
+    }
+    return { action: 'none' };
+  }
 
   function isPlainObject(value) {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -600,6 +726,12 @@
     },
     computed: {
       isReady: function () { return this.auth.status === 'ready'; },
+      // The bundled production Vue runtime only watches top-level keys.
+      publishDialogOpen: function () { return this.publishDialog.open; },
+      disableDialogOpen: function () { return this.disableDialog.open; },
+      deleteDialogOpen: function () { return this.deleteDialog.open; },
+      discardDialogOpen: function () { return this.discardDialog.open; },
+      importDialogOpen: function () { return this.importDialog.open; },
       filteredItems: function () {
         return CatalogAdmin.filterItems(this.kindItems, this.filters);
       },
@@ -689,6 +821,12 @@
     },
     watch: {
       'filters.query': function () { this.mobilePane = 'list'; },
+      publishDialogOpen: function (open) { this.handleDialogVisibilityChange('publish', open); },
+      disableDialogOpen: function (open) { this.handleDialogVisibilityChange('disable', open); },
+      deleteDialogOpen: function (open) { this.handleDialogVisibilityChange('delete', open); },
+      discardDialogOpen: function (open) { this.handleDialogVisibilityChange('discard', open); },
+      importDialogOpen: function (open) { this.handleDialogVisibilityChange('import', open); },
+      sessionExpired: function (open) { this.handleDialogVisibilityChange('session', open); },
       kind: function (kind) {
         if (kind !== 'preset' && kind !== 'snippet') this.resetPictureState();
       },
@@ -704,6 +842,7 @@
       this._sequence = 0;
       this._saveToken = 0;
       this._pictureToken = 0;
+      this._dialogTriggers = {};
       this.checkSession();
       document.addEventListener('keydown', this.onKeydown);
       document.addEventListener('paste', this.onDocumentPaste);
@@ -723,6 +862,7 @@
       document.removeEventListener('click', this.onDocumentRegionChange, true);
       document.removeEventListener('focusin', this.onDocumentRegionChange, true);
       window.removeEventListener('beforeunload', this._beforeUnload);
+      this._dialogTriggers = {};
       this.releaseLocalPicture();
     },
     methods: {
@@ -731,15 +871,83 @@
       formatDate: function (iso) { return CatalogAdmin.formatDate(iso); },
       previewMetaLabel: function (preview) { return CatalogAdmin.previewMetaLabel(preview); },
       onKeydown: function (event) {
-        if (event.key === 'Escape' && this.anyDialogOpen && !this.sessionExpired) {
-          this.closeDialogs();
+        var top = topDialog(document);
+        var decision = keyAction({
+          key: event.key,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          sessionExpired: this.sessionExpired,
+          anyDialogOpen: this.anyDialogOpen,
+          canSave: this.isReady,
+          topDialog: top ? dialogName(top) : ''
+        });
+        if (decision.action === 'trap') {
+          trapTab(event, top, document);
+          return;
         }
-        if ((event.ctrlKey || event.metaKey) && (event.key === 's' || event.key === 'S')) {
-          if (this.isReady && !this.anyDialogOpen) {
-            event.preventDefault();
-            this.saveDraft();
+        if (decision.action === 'block' || decision.action === 'block-save') {
+          event.preventDefault();
+          return;
+        }
+        if (decision.action === 'close') {
+          event.preventDefault();
+          this.closeDialogByName(decision.dialog);
+          return;
+        }
+        if (decision.action === 'save') {
+          event.preventDefault();
+          this.saveDraft();
+        }
+      },
+      closeDialogByName: function (name) {
+        if (name === 'publish') this.publishDialog.open = false;
+        else if (name === 'disable') this.disableDialog.open = false;
+        else if (name === 'delete') this.deleteDialog.open = false;
+        else if (name === 'discard') this.discardDialog.open = false;
+        else if (name === 'import') this.importDialog.open = false;
+      },
+      handleDialogVisibilityChange: function (name, open) {
+        if (open) {
+          this.rememberDialogTrigger(name);
+          this.focusDialogOnOpen(name);
+          return;
+        }
+        this.restoreDialogTrigger(name);
+      },
+      focusDialogOnOpen: function (name) {
+        this.$nextTick(function () {
+          var top = topDialog(document);
+          if (!top || dialogName(top) !== name) return;
+          var active = document.activeElement;
+          if (active && top.contains(active)) return;
+          focusDialogOrFirst(top);
+        });
+      },
+      rememberDialogTrigger: function (name) {
+        if (!this._dialogTriggers) this._dialogTriggers = {};
+        if (this._dialogTriggers[name]) return;
+        var active = document.activeElement;
+        if (!active || active === document.body || active === document.documentElement) return;
+        if (typeof document.contains === 'function' && !document.contains(active)) return;
+        this._dialogTriggers[name] = active;
+      },
+      restoreDialogTrigger: function (name) {
+        var self = this;
+        var triggers = this._dialogTriggers || {};
+        var trigger = triggers[name];
+        delete triggers[name];
+        this.$nextTick(function () {
+          var top = topDialog(document);
+          if (top) {
+            var active = document.activeElement;
+            if (active && top.contains(active)) return;
+            if (trigger && top.contains(trigger) && restoreFocus(trigger, document, null)) return;
+            focusDialogOrFirst(top);
+            return;
           }
-        }
+          var fallback = self.$refs && self.$refs.nameInput ? self.$refs.nameInput : null;
+          restoreFocus(trigger, document, fallback);
+        });
       },
       closeDialogs: function () {
         this.publishDialog.open = false;
