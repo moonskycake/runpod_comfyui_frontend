@@ -6,8 +6,8 @@
  * 说明：
  * - 直接加载线上源码 js/tag-index.js 与 js/main.js 中的 PromptTextareaComponent
  *   （切片后放入 vm，不复制/重写业务逻辑）
- * - 只桩化浏览器边界：fetch、document.execCommand、textarea DOM 与 Vue 的 $refs/$emit/$nextTick
- * - 词库用小 fixture（内容取自 tags/danbooru.csv 的真实行格式），不读大词库
+ * - 只桩化浏览器边界：fetch、时钟/定时器、document.execCommand、textarea DOM 与 Vue 的 $refs/$emit/$nextTick
+ * - 使用带真实行格式的 fixture，不读大词库
  */
 'use strict';
 
@@ -70,11 +70,12 @@ function buildEnv(options) {
     JSON,
     RegExp,
     parseInt,
-    setTimeout,
+    setTimeout: opts.setTimeout || setTimeout,
+    performance: opts.performance || performance,
     __el: null
   };
 
-  sandbox.fetch = async (url) => {
+  sandbox.fetch = opts.fetch || (async (url) => {
     const target = String(url);
     if (target.indexOf('manifest.json') !== -1) {
       return { ok: true, json: async () => ({ version: 'test', zhVersion: 'test' }) };
@@ -83,7 +84,7 @@ function buildEnv(options) {
       return { ok: true, text: async () => ZH_FIXTURE };
     }
     return { ok: true, text: async () => CSV_FIXTURE };
-  };
+  });
 
   sandbox.document = {
     // 模拟浏览器 execCommand('insertText')：成功分支真正改值并前移光标
@@ -664,9 +665,86 @@ async function runComponentCases() {
   }
 }
 
+async function runChunkedLoadCases() {
+  // Include matches at both ends of a fixture that spans several slices.
+  const extraTags = Array.from({ length: 400 }, (_, i) => `other_${i},0,10,`);
+  const extraZh = Array.from({ length: 400 }, (_, i) => `other_${i},其他`);
+  const csv = [...extraTags.slice(0, 200), CSV_FIXTURE, ...extraTags.slice(200), 'long_braid,0,2,']
+    .join('\r\n');
+  const zh = ['long_hair,"长发，带有""蝴蝶结"""', ...extraZh, ZH_FIXTURE, 'long_braid,长发辫']
+    .join('\r\n');
+  let now = 0;
+  let englishFetches = 0;
+  let chineseFetches = 0;
+  let englishYields = 0;
+  let chineseYields = 0;
+  let visiblePartialIndex = false;
+  let failFirstChineseYield = true;
+  let TI;
+  const env = buildEnv({
+    performance: { now() { now += 10; return now; } },
+    fetch: async (url) => {
+      if (url.includes('manifest.json')) return { ok: true, json: async () => ({}) };
+      if (url.includes('zhcn.csv')) {
+        chineseFetches++;
+        return { ok: true, text: async () => zh };
+      }
+      englishFetches++;
+      return { ok: true, text: async () => csv };
+    },
+    setTimeout(callback, delay) {
+      if (chineseFetches && failFirstChineseYield) {
+        failFirstChineseYield = false;
+        throw new Error('fixture interrupted Chinese index build');
+      }
+      return setTimeout(() => {
+        // This callback runs in a real timer task between slices, before resuming the build.
+        if (chineseFetches) {
+          chineseYields++;
+          visiblePartialIndex ||= TI.isZhLoaded() || TI.getZh('long_hair') !== '' ||
+            TI.searchZh('长发').length > 0;
+        } else {
+          englishYields++;
+          visiblePartialIndex ||= TI.isLoaded() || TI.search('long').length > 0 ||
+            TI.search('', { artistOnly: true }).length > 0;
+        }
+        callback();
+      }, delay);
+    }
+  });
+  TI = env.TagIndex;
+
+  await Promise.all([TI.ensureLoaded(), TI.ensureLoaded()]);
+  checkEq(englishFetches, 1, '英文建索引期间复用在途加载');
+  checkTrue(englishYields > 1, '英文索引跨多个事件循环任务构建');
+  checkEq(tagsOf(TI.search('long')), ['long_hair', 'long_braid'], '英文分块保持索引顺序');
+
+  const first = await Promise.allSettled([TI.ensureZhLoaded(), TI.ensureZhLoaded()]);
+  checkEq(first.map(result => result.status), ['rejected', 'rejected'], '中文分块失败传给所有等待方');
+  checkEq(chineseFetches, 1, '失败的并发中文加载只取一次 CSV');
+  checkEq(TI.isZhLoaded(), false, '失败后中文索引不进入 ready');
+  checkEq(TI.isLoaded(), true, '中文失败不使已构建的英文索引失效');
+
+  const inst = makeInstance(env);
+  const chineseSearch = typeValue(inst, '樱花');
+  checkEq(inst.menuLoading, true, '中文索引重试期间显示加载状态');
+  await typeValue(inst, '@s');
+  await Promise.all([chineseSearch, TI.ensureZhLoaded()]);
+  checkEq(tagsOf(inst.menuItems), ['sakimichan'], '较晚完成的中文加载不会覆盖新画师候选');
+  checkEq(chineseFetches, 2, '失败后可重试且并发重试不会重复取 CSV');
+  checkEq(englishFetches, 1, '中文重试不会重复取英文 CSV');
+  // The fake clock reaches the budget every 64 items. Each phase has ~400
+  // items and can only yield 6 times alone, so this covers both Chinese loops.
+  checkTrue(chineseYields > 6, '中文映射解析和搜索索引都跨多个事件循环任务构建');
+  checkEq(visiblePartialIndex, false, '分块期间同步查询不会读取未完成的索引');
+  checkEq(TI.getZh('long_hair'), '长发，带有"蝴蝶结"', 'CRLF 下保留中文 CSV 引号及首条释义');
+  checkEq(tagsOf(TI.searchZh('长发')), ['long_hair', 'long_braid'], '中文分块保持索引顺序');
+}
+
 (async () => {
   const env = buildEnv();
   await runTagIndexCases(env);
+  await runChunkedLoadCases();
   await runComponentCases();
 
   if (fail > 0) {

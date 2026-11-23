@@ -22,6 +22,8 @@
   const DANBOORU_MANIFEST_URL = './tags/manifest.json';
   const PREFIX_LEN = 2;
   const TOP_ARTIST_COUNT = 60;
+  const BUILD_SLICE_MS = 8;
+  const BUILD_CLOCK_INTERVAL = 64;
 
   /**
    * @type {{
@@ -172,6 +174,36 @@
     }
   }
 
+  function yieldForInput() {
+    return new Promise(resolve => {
+      if (typeof MessageChannel !== 'function') {
+        setTimeout(resolve, 0);
+        return;
+      }
+      // Post a new task without the nested timer delay after every slice.
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        channel.port1.close();
+        channel.port2.close();
+        resolve();
+      };
+      channel.port2.postMessage(null);
+    });
+  }
+
+  async function buildInSlices(length, visit) {
+    const now = typeof performance !== 'undefined' ? () => performance.now() : Date.now;
+    let sliceStart = now();
+    for (let i = 0; i < length;) {
+      const end = Math.min(i + BUILD_CLOCK_INTERVAL, length);
+      for (; i < end; i++) visit(i);
+      if (i < length && now() - sliceStart >= BUILD_SLICE_MS) {
+        await yieldForInput();
+        sliceStart = now();
+      }
+    }
+  }
+
   async function loadDanbooru() {
     if (state.loaded) return;
     if (state.loadingPromise) return state.loadingPromise;
@@ -191,9 +223,9 @@
       const artistByInitial = Object.create(null);
       const topArtists = [];
 
-      for (let i = 0; i < lines.length; i++) {
+      await buildInSlices(lines.length, i => {
         const parsed = parseDanbooruLine(lines[i]);
-        if (!parsed) continue;
+        if (!parsed) return;
 
         const idx = tags.length;
         const key = normalizeKey(parsed.tag);
@@ -218,7 +250,7 @@
           addToBucket(artistByInitial, key.charAt(0), idx);
           if (topArtists.length < TOP_ARTIST_COUNT) topArtists.push(idx);
         }
-      }
+      });
 
       state.tags = tags;
       state.wordPrefixMap = wordPrefixMap;
@@ -428,25 +460,25 @@
       const lines = text.split(/\r?\n/);
 
       const zhByTag = new Map();
-      for (let i = 0; i < lines.length; i++) {
+      await buildInSlices(lines.length, i => {
         const parsed = parseZhLine(lines[i]);
-        if (!parsed) continue;
+        if (!parsed) return;
         if (!zhByTag.has(parsed.en)) zhByTag.set(parsed.en, parsed.zh);
-      }
+      });
 
       // 只保留当前标签库里的词条；按标签下标顺序写桶，保证结果 ≈ 热度降序
       const zhIndex = new Map();
       const tags = state.tags;
-      for (let idx = 0; idx < tags.length; idx++) {
+      await buildInSlices(tags.length, idx => {
         const zh = zhByTag.get(tags[idx].key);
-        if (!zh) continue;
+        if (!zh) return;
         const compact = normalizeZh(zh);
-        if (!compact) continue;
+        if (!compact) return;
         for (let i = 0; i < compact.length; i++) {
           addZhGram(zhIndex, compact.charAt(i), idx);
           if (i + 1 < compact.length) addZhGram(zhIndex, compact.slice(i, i + 2), idx);
         }
-      }
+      });
 
       state.zhByTag = zhByTag;
       state.zhIndex = zhIndex;
